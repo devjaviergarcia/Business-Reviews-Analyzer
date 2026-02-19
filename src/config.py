@@ -12,7 +12,8 @@ class Settings(BaseSettings):
     mongo_uri: str = "mongodb://localhost:27017"
     db_name: str = "business_reviews_analyzer"
 
-    openai_api_key: str = ""
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-1.5-flash"
 
     scraper_headless: bool = False
     scraper_slow_mo_ms: int = 50

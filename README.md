@@ -22,7 +22,7 @@ This repository is the Phase 1 foundation for an end-to-end workflow:
 - Python + FastAPI
 - Playwright (browser automation)
 - MongoDB (Motor/PyMongo)
-- OpenAI SDK (LLM stage scaffolded)
+- Gemini API (`google-genai`)
 - `uv` for Python dependency and environment management
 - Docker Compose for local orchestration
 
@@ -40,6 +40,7 @@ src/
   services/
 scripts/
   bootstrap_google_maps_login.py
+  smoke_test_gemini_flash.py
   smoke_test_google_maps_search.py
 docs/
 tests/
@@ -71,6 +72,11 @@ Important scraper vars:
 - `SCRAPER_BROWSER_CHANNEL`: optional browser channel (`msedge`, `chrome`, empty = bundled Chromium).
 - `SCRAPER_MIN_CLICK_DELAY_MS` / `SCRAPER_MAX_CLICK_DELAY_MS`: click spacing.
 - `SCRAPER_MIN_KEY_DELAY_MS` / `SCRAPER_MAX_KEY_DELAY_MS`: per-key typing delay.
+
+Important LLM vars:
+
+- `GEMINI_API_KEY`: API key for Gemini.
+- `GEMINI_MODEL`: preferred model (default `gemini-1.5-flash`; automatic fallback to available Flash models).
 
 ### 3) Install Playwright browser
 
@@ -120,6 +126,12 @@ Then run the smoke test:
 uv run python scripts/smoke_test_google_maps_search.py "Restaurante Casa Pepe Madrid"
 ```
 
+Gemini connectivity smoke test:
+
+```bash
+uv run python scripts/smoke_test_gemini_flash.py --model gemini-1.5-flash
+```
+
 Expected output includes:
 
 - business page URL
@@ -145,4 +157,3 @@ uv run pytest
 
 - This project uses dynamic selectors and fallback strategies to avoid brittle ID-based scraping.
 - Use responsibly and always comply with website terms of service and applicable laws.
-
