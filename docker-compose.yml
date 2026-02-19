@@ -1,0 +1,37 @@
+services:
+  mongodb:
+    image: mongo:7
+    container_name: bra-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bra-api
+    restart: unless-stopped
+    environment:
+      MONGO_URI: ${MONGO_URI:-mongodb://mongodb:27017}
+      DB_NAME: ${DB_NAME:-business_reviews_analyzer}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    ports:
+      - "8000:8000"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app
+
+volumes:
+  mongo_data:
