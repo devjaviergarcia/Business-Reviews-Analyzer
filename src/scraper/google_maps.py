@@ -221,7 +221,7 @@ class GoogleMapsScraper:
             if not author_name:
                 author_name = self._clean_text(await card.get_attribute("aria-label"))
 
-            rating_label = await card.locator("span.kvMYJc[role='img']").first.get_attribute("aria-label")
+            rating_label = await self._attribute_from_descendant_patterns(card, "RATING_LABEL", "aria-label")
             rating = self._parse_rating(rating_label)
             relative_time = await self._text_from_locator(card.locator("span.rsqaWe").first)
             review_text = await self._text_from_locator(card.locator(".MyEned .wiI7pd").first)
@@ -462,9 +462,6 @@ class GoogleMapsScraper:
         deadline = monotonic() + (timeout_ms / 1000)
 
         while monotonic() < deadline:
-            if await self._review_count() > 0:
-                return True
-
             if await self._is_any_visible("REVIEWS_PANEL_READY"):
                 # Sometimes cards appear only after first scroll in the reviews container.
                 await self._scroll_reviews_feed_once()
@@ -473,7 +470,30 @@ class GoogleMapsScraper:
                     return True
                 return True
 
+            # Fallback: accept cards only when Reviews tab is actually selected.
+            if await self._is_reviews_tab_selected() and await self._review_count() > 0:
+                return True
+
             await page.wait_for_timeout(220)
+
+        return False
+
+    async def _is_reviews_tab_selected(self) -> bool:
+        page = self._require_page()
+        selected_tabs = page.locator("[role='tablist'] button[role='tab'][aria-selected='true']")
+        try:
+            total = await selected_tabs.count()
+        except Exception:
+            return False
+
+        for idx in range(min(total, 6)):
+            tab = selected_tabs.nth(idx)
+            try:
+                label = await self._candidate_label(tab)
+                if self._is_review_entrypoint_text(label):
+                    return True
+            except Exception:
+                continue
 
         return False
 
@@ -622,6 +642,21 @@ class GoogleMapsScraper:
 
         return None
 
+    async def _attribute_from_descendant_patterns(self, root: Locator, key: str, attribute: str) -> str | None:
+        for selector in SELECTOR_PATTERNS[key]:
+            locator = root.locator(selector).first
+            try:
+                if await locator.count() <= 0:
+                    continue
+                value = await locator.get_attribute(attribute)
+                cleaned = self._clean_text(value)
+                if cleaned:
+                    return cleaned
+            except Exception:
+                continue
+
+        return None
+
     async def _click_first_by_text(self, terms: tuple[str, ...]) -> bool:
         page = self._require_page()
         regex = re.compile("|".join(re.escape(term) for term in terms), re.IGNORECASE)
@@ -663,6 +698,9 @@ class GoogleMapsScraper:
         return True
 
     async def _find_first_valid_review_button_in_group(self, key: str) -> Locator | None:
+        if key == "REVIEWS_TAB":
+            return await self._find_valid_reviews_tab_from_tablist()
+
         page = self._require_page()
 
         for selector in SELECTOR_PATTERNS[key]:
@@ -682,26 +720,54 @@ class GoogleMapsScraper:
 
         return None
 
-    async def _find_any_valid_review_button(self) -> Locator | None:
+    async def _find_valid_reviews_tab_from_tablist(self) -> Locator | None:
         page = self._require_page()
-        candidates = page.locator("button")
+        tablist_selectors = (
+            "div[role='main'] [role='tablist']",
+            "[role='tablist']",
+        )
 
-        try:
-            total = await candidates.count()
-        except Exception:
-            return None
-
-        for idx in range(min(total, 120)):
-            candidate = candidates.nth(idx)
+        for tablist_selector in tablist_selectors:
+            tablists = page.locator(tablist_selector)
             try:
-                if await self._is_valid_review_button(candidate):
-                    return candidate
+                total_tablists = await tablists.count()
             except Exception:
                 continue
 
+            for tablist_idx in range(min(total_tablists, 6)):
+                tablist = tablists.nth(tablist_idx)
+                try:
+                    if not await tablist.is_visible():
+                        continue
+                except Exception:
+                    continue
+
+                tabs = tablist.locator("button[role='tab']")
+                try:
+                    total_tabs = await tabs.count()
+                except Exception:
+                    continue
+
+                for tab_idx in range(min(total_tabs, 12)):
+                    tab = tabs.nth(tab_idx)
+                    try:
+                        if await self._is_valid_review_button(tab, must_be_in_tablist=True):
+                            return tab
+                    except Exception:
+                        continue
+
         return None
 
-    async def _is_valid_review_button(self, candidate: Locator) -> bool:
+    async def _find_any_valid_review_button(self) -> Locator | None:
+        # First priority: reviews tab inside a tablist.
+        tab = await self._find_valid_reviews_tab_from_tablist()
+        if tab is not None:
+            return tab
+
+        # Second priority: explicit review button selectors.
+        return await self._find_first_valid_review_button_in_group("REVIEWS_BUTTON")
+
+    async def _is_valid_review_button(self, candidate: Locator, *, must_be_in_tablist: bool = False) -> bool:
         try:
             if not await candidate.is_visible():
                 return False
@@ -716,11 +782,20 @@ class GoogleMapsScraper:
         if str(tag_name).upper() != "BUTTON":
             return False
 
+        if must_be_in_tablist and not await self._button_is_inside_tablist(candidate):
+            return False
+
         if not await self._button_has_nested_review_div_text(candidate):
             return False
 
         label = await self._candidate_label(candidate)
         return self._is_review_entrypoint_text(label)
+
+    async def _button_is_inside_tablist(self, button: Locator) -> bool:
+        try:
+            return bool(await button.evaluate("el => !!el.closest('[role=\"tablist\"]')"))
+        except Exception:
+            return False
 
     async def _button_has_nested_review_div_text(self, button: Locator) -> bool:
         regex = re.compile(r"rese|review", re.IGNORECASE)

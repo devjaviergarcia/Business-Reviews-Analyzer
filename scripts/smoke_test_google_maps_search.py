@@ -1,4 +1,5 @@
 import asyncio
+import argparse
 import sys
 from pathlib import Path
 
@@ -10,8 +11,22 @@ from src.config import settings
 from src.scraper.google_maps import GoogleMapsScraper
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Smoke test for Google Maps search and review extraction.")
+    parser.add_argument("query", nargs="*", help="Business search query.")
+    parser.add_argument(
+        "--max-reviews",
+        type=int,
+        default=10,
+        help="Maximum number of reviews to print/process in this smoke test (default: 10).",
+    )
+    return parser.parse_args()
+
+
 async def main() -> None:
-    query = " ".join(sys.argv[1:]).strip() or "Restaurante Casa Pepe Madrid"
+    args = _parse_args()
+    query = " ".join(args.query).strip() or "Restaurante Casa Pepe Madrid"
+    max_reviews = max(1, args.max_reviews)
 
     scraper = GoogleMapsScraper(
         headless=settings.scraper_headless,
@@ -36,14 +51,14 @@ async def main() -> None:
         business_name = (await name_locator.inner_text()) if await name_locator.count() else "(name not found)"
         listing = await scraper.extract_listing()
         await scraper.scroll_reviews(max_rounds=4)
-        reviews = await scraper.extract_reviews()
+        reviews = (await scraper.extract_reviews())[:max_reviews]
 
         print(f"OK - search completed for: {query}")
         print(f"Business page: {business_name}")
         print(f"URL: {page.url}")
         print(f"Limited view detected: {limited_view}")
         print(f"Listing: {listing}")
-        print(f"Reviews extracted: {len(reviews)}")
+        print(f"Reviews extracted: {len(reviews)} (limit={max_reviews})")
         if limited_view:
             print(
                 "NOTE: Google Maps is in limited view; reviews panel may be unavailable. "
@@ -51,6 +66,7 @@ async def main() -> None:
             )
         if reviews:
             print(f"First review sample: {reviews[0]}")
+            print(f"Other reviews samples: {reviews[1:3]}")
     finally:
         await scraper.close()
 
