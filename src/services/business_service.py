@@ -17,6 +17,7 @@ class BusinessService:
             max_click_delay_ms=settings.scraper_max_click_delay_ms,
             min_key_delay_ms=settings.scraper_min_key_delay_ms,
             max_key_delay_ms=settings.scraper_max_key_delay_ms,
+            reviews_strategy=settings.scraper_reviews_strategy,
         )
         self.preprocessor = ReviewPreprocessor()
         self.llm_analyzer = ReviewLLMAnalyzer()

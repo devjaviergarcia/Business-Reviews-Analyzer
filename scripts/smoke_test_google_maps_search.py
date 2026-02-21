@@ -15,10 +15,34 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Smoke test for Google Maps search and review extraction.")
     parser.add_argument("query", nargs="*", help="Business search query.")
     parser.add_argument(
+        "--strategy",
+        choices=("interactive", "scroll_copy"),
+        default=settings.scraper_reviews_strategy,
+        help=f"Review extraction strategy (default: {settings.scraper_reviews_strategy}).",
+    )
+    parser.add_argument(
         "--max-reviews",
         type=int,
         default=10,
         help="Maximum number of reviews to print/process in this smoke test (default: 10).",
+    )
+    parser.add_argument(
+        "--scroll-rounds",
+        type=int,
+        default=4,
+        help="Scroll rounds for interactive strategy (default: 4).",
+    )
+    parser.add_argument(
+        "--html-scroll-rounds",
+        type=int,
+        default=180,
+        help="Scroll rounds for scroll_copy strategy (default: 180).",
+    )
+    parser.add_argument(
+        "--html-stable-rounds",
+        type=int,
+        default=6,
+        help="Stable rounds required to stop in scroll_copy strategy (default: 6).",
     )
     return parser.parse_args()
 
@@ -27,6 +51,7 @@ async def main() -> None:
     args = _parse_args()
     query = " ".join(args.query).strip() or "Restaurante Casa Pepe Madrid"
     max_reviews = max(1, args.max_reviews)
+    strategy = args.strategy
 
     scraper = GoogleMapsScraper(
         headless=settings.scraper_headless,
@@ -50,10 +75,17 @@ async def main() -> None:
         name_locator = page.locator("h1.DUwDvf").first
         business_name = (await name_locator.inner_text()) if await name_locator.count() else "(name not found)"
         listing = await scraper.extract_listing()
-        await scraper.scroll_reviews(max_rounds=4)
-        reviews = (await scraper.extract_reviews())[:max_reviews]
+        reviews = (
+            await scraper.extract_reviews(
+                strategy=strategy,
+                max_rounds=max(0, args.scroll_rounds),
+                html_scroll_max_rounds=max(1, args.html_scroll_rounds),
+                html_stable_rounds=max(2, args.html_stable_rounds),
+            )
+        )[:max_reviews]
 
         print(f"OK - search completed for: {query}")
+        print(f"Strategy: {strategy}")
         print(f"Business page: {business_name}")
         print(f"URL: {page.url}")
         print(f"Limited view detected: {limited_view}")

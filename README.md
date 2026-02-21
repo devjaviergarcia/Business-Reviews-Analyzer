@@ -126,6 +126,13 @@ Then run the smoke test:
 uv run python scripts/smoke_test_google_maps_search.py "Restaurante Casa Pepe Madrid"
 ```
 
+Choose review extraction strategy:
+
+```bash
+uv run python scripts/smoke_test_google_maps_search.py "Restaurante Casa Pepe Madrid" --strategy interactive
+uv run python scripts/smoke_test_google_maps_search.py "Restaurante Casa Pepe Madrid" --strategy scroll_copy
+```
+
 Gemini connectivity smoke test:
 
 ```bash

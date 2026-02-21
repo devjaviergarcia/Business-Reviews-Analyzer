@@ -36,6 +36,7 @@ class GoogleMapsScraper:
         max_click_delay_ms: int = 5200,
         min_key_delay_ms: int = 90,
         max_key_delay_ms: int = 260,
+        reviews_strategy: str = "interactive",
     ) -> None:
         self._page = page
         self._external_page = page is not None
@@ -51,6 +52,7 @@ class GoogleMapsScraper:
         self._min_key_delay_ms = max(10, min_key_delay_ms)
         self._max_key_delay_ms = max(self._min_key_delay_ms, max_key_delay_ms)
         self._project_root = Path(__file__).resolve().parents[2]
+        self._reviews_strategy = self._resolve_reviews_strategy(reviews_strategy)
 
         self._playwright: Playwright | None = None
         self._context: BrowserContext | None = None
@@ -200,7 +202,169 @@ class GoogleMapsScraper:
             if stale_rounds >= 2 or not scrolled:
                 break
 
-    async def extract_reviews(self) -> list[dict]:
+    async def collect_reviews_html_snapshot(
+        self,
+        *,
+        max_rounds: int = 180,
+        stable_rounds: int = 6,
+        min_pause_ms: int = 750,
+        max_pause_ms: int = 1900,
+    ) -> str:
+        reviews_open = await self._ensure_reviews_open()
+        if not reviews_open:
+            return ""
+
+        max_rounds = max(1, max_rounds)
+        stable_rounds = max(2, stable_rounds)
+        min_pause_ms = max(150, min_pause_ms)
+        max_pause_ms = max(min_pause_ms, max_pause_ms)
+
+        last_count = await self._review_count()
+        unchanged_rounds = 0
+        last_top = -1
+        last_scroll_height = -1
+        page = self._require_page()
+
+        for _ in range(max_rounds):
+            metrics = await self._scroll_reviews_feed_step(step_px=self._rng.randint(380, 980))
+            await page.wait_for_timeout(self._rng.randint(min_pause_ms, max_pause_ms))
+
+            current_count = await self._review_count()
+            moved = bool(metrics.get("scrolled"))
+            top = int(metrics.get("scroll_top", -1))
+            scroll_height = int(metrics.get("scroll_height", -1))
+            count_grew = current_count > last_count
+            geometry_changed = top != last_top or scroll_height != last_scroll_height
+
+            if count_grew:
+                last_count = current_count
+
+            if moved or count_grew or geometry_changed:
+                unchanged_rounds = 0
+            else:
+                unchanged_rounds += 1
+
+            last_top = top
+            last_scroll_height = scroll_height
+
+            at_bottom = bool(metrics.get("at_bottom"))
+            if at_bottom and unchanged_rounds >= stable_rounds:
+                break
+
+            if not metrics.get("found") and unchanged_rounds >= stable_rounds:
+                break
+
+        await page.wait_for_timeout(self._rng.randint(500, 1100))
+        return await self._capture_reviews_feed_html()
+
+    async def capture_reviews_container_html(self) -> str:
+        reviews_open = await self._ensure_reviews_open()
+        if not reviews_open:
+            return ""
+        return await self._capture_reviews_feed_html()
+
+    def extract_reviews_from_html(self, reviews_html: str, limit: int | None = None) -> list[dict]:
+        if not reviews_html:
+            return []
+
+        cards = self._extract_review_card_html_fragments(reviews_html)
+        if limit is not None and limit > 0:
+            cards = cards[:limit]
+
+        items: list[dict[str, Any]] = []
+        for card_html in cards:
+            review_id = self._extract_attr_value(card_html, "data-review-id")
+
+            author_name = self._strip_html_markup(
+                self._extract_first_html_fragment(
+                    card_html,
+                    r"<div[^>]*class=['\"][^'\"]*d4r55[^'\"]*['\"][^>]*>(.*?)</div>",
+                )
+            )
+            if not author_name:
+                author_name = ""
+
+            rating_label = self._extract_first_attr_value_containing(
+                card_html,
+                "aria-label",
+                contains_terms=("estrella", "star"),
+            )
+            rating = self._parse_rating(rating_label)
+
+            relative_time = self._strip_html_markup(
+                self._extract_first_html_fragment(
+                    card_html,
+                    r"<span[^>]*class=['\"][^'\"]*rsqaWe[^'\"]*['\"][^>]*>(.*?)</span>",
+                )
+            )
+            if not relative_time:
+                relative_time = ""
+
+            review_text = self._strip_html_markup(
+                self._extract_first_html_fragment(
+                    card_html,
+                    r"<div[^>]*class=['\"][^'\"]*MyEned[^'\"]*['\"][^>]*>.*?<span[^>]*class=['\"][^'\"]*wiI7pd[^'\"]*['\"][^>]*>(.*?)</span>",
+                )
+            )
+            if not review_text:
+                review_text = self._strip_html_markup(
+                    self._extract_first_html_fragment(
+                        card_html,
+                        r"<span[^>]*class=['\"][^'\"]*wiI7pd[^'\"]*['\"][^>]*>(.*?)</span>",
+                    )
+                )
+            if not review_text:
+                review_text = ""
+
+            image_urls: list[str] = []
+            seen_image_urls: set[str] = set()
+            for style_value in self._extract_attr_values(card_html, "style"):
+                for url in self._extract_urls_from_style(style_value):
+                    if url in seen_image_urls:
+                        continue
+                    seen_image_urls.add(url)
+                    image_urls.append(url)
+
+            review_payload: dict[str, Any] = {
+                "source": "google_maps",
+                "review_id": review_id,
+                "author_name": author_name,
+                "rating": rating if rating is not None else 0.0,
+                "relative_time": relative_time,
+                "text": review_text,
+                "image_urls": image_urls,
+            }
+
+            owner_reply = self._extract_owner_reply_from_card_html(card_html)
+            if owner_reply is not None:
+                review_payload["owner_reply"] = owner_reply
+
+            items.append(review_payload)
+
+        return items
+
+    async def extract_reviews(
+        self,
+        *,
+        strategy: str | None = None,
+        max_rounds: int = 10,
+        html_scroll_max_rounds: int = 180,
+        html_stable_rounds: int = 6,
+    ) -> list[dict]:
+        selected_strategy = self._resolve_reviews_strategy(strategy)
+
+        if selected_strategy == "scroll_copy":
+            reviews_html = await self.collect_reviews_html_snapshot(
+                max_rounds=html_scroll_max_rounds,
+                stable_rounds=html_stable_rounds,
+            )
+            return self.extract_reviews_from_html(reviews_html)
+
+        if max_rounds > 0:
+            await self.scroll_reviews(max_rounds=max_rounds)
+        return await self._extract_reviews_interactive()
+
+    async def _extract_reviews_interactive(self) -> list[dict]:
         reviews_open = await self._ensure_reviews_open()
         if not reviews_open:
             return []
@@ -244,6 +408,23 @@ class GoogleMapsScraper:
             items.append(review_payload)
 
         return items
+
+    def _resolve_reviews_strategy(self, strategy: str | None) -> str:
+        raw_value = strategy or self._reviews_strategy
+        normalized = self._normalize_text(raw_value).replace("-", "_").replace(" ", "_")
+
+        interactive_aliases = {"interactive", "current", "legacy", "expand_click"}
+        scroll_copy_aliases = {"scroll_copy", "scroll_and_copy", "html_snapshot", "snapshot"}
+
+        if normalized in interactive_aliases:
+            return "interactive"
+        if normalized in scroll_copy_aliases:
+            return "scroll_copy"
+
+        raise ValueError(
+            f"Unknown reviews strategy '{raw_value}'. "
+            "Supported: interactive | scroll_copy"
+        )
 
     async def _go_to_maps_home(self) -> None:
         page = self._require_page()
@@ -536,12 +717,20 @@ class GoogleMapsScraper:
         return clicks
 
     async def _scroll_reviews_feed_once(self) -> bool:
+        metrics = await self._scroll_reviews_feed_step()
+        return bool(metrics.get("found")) and bool(metrics.get("scrolled"))
+
+    async def _scroll_reviews_feed_step(self, step_px: int | None = None) -> dict[str, Any]:
         page = self._require_page()
         card_selectors = list(SELECTOR_PATTERNS["REVIEW_CARDS"])
 
+        normalized_step = max(200, step_px) if step_px is not None else None
         return await page.evaluate(
             """
-            (selectors) => {
+            (payload) => {
+                const selectors = payload.selectors;
+                const requestedStep = payload.stepPx;
+
                 let card = null;
                 for (const selector of selectors) {
                     card = document.querySelector(selector);
@@ -550,7 +739,14 @@ class GoogleMapsScraper:
 
                 if (!card) {
                     window.scrollBy(0, Math.max(480, window.innerHeight * 0.6));
-                    return false;
+                    return {
+                        found: false,
+                        scrolled: false,
+                        at_bottom: true,
+                        scroll_top: 0,
+                        scroll_height: 0,
+                        client_height: 0
+                    };
                 }
 
                 let parent = card.parentElement;
@@ -560,21 +756,89 @@ class GoogleMapsScraper:
                     const canScroll = parent.scrollHeight > parent.clientHeight + 20;
                     if ((overflowY === "auto" || overflowY === "scroll") && canScroll) {
                         const before = parent.scrollTop;
-                        parent.scrollBy(0, Math.max(420, parent.clientHeight * 0.9));
+                        const step = requestedStep && requestedStep > 0
+                            ? requestedStep
+                            : Math.max(420, parent.clientHeight * 0.9);
+                        parent.scrollBy(0, step);
                         if (parent.scrollTop === before) {
-                            parent.scrollTop = parent.scrollHeight;
+                            parent.scrollTop = Math.min(parent.scrollTop + step, parent.scrollHeight);
                         }
-                        return true;
+                        const after = parent.scrollTop;
+                        const atBottom = after + parent.clientHeight >= parent.scrollHeight - 4;
+                        return {
+                            found: true,
+                            scrolled: after > before,
+                            at_bottom: atBottom,
+                            scroll_top: Math.round(after),
+                            scroll_height: Math.round(parent.scrollHeight),
+                            client_height: Math.round(parent.clientHeight)
+                        };
                     }
                     parent = parent.parentElement;
                 }
 
                 window.scrollBy(0, Math.max(480, window.innerHeight * 0.6));
-                return true;
+                return {
+                    found: false,
+                    scrolled: true,
+                    at_bottom: true,
+                    scroll_top: 0,
+                    scroll_height: 0,
+                    client_height: 0
+                };
+            }
+            """,
+            {"selectors": card_selectors, "stepPx": normalized_step},
+        )
+
+    async def _capture_reviews_feed_html(self) -> str:
+        page = self._require_page()
+        card_selectors = list(SELECTOR_PATTERNS["REVIEW_CARDS"])
+        snapshot = await page.evaluate(
+            """
+            (selectors) => {
+                let card = null;
+                for (const selector of selectors) {
+                    card = document.querySelector(selector);
+                    if (card) break;
+                }
+
+                const findScrollableParent = (node) => {
+                    let parent = node?.parentElement || null;
+                    while (parent) {
+                        const style = window.getComputedStyle(parent);
+                        const overflowY = style.overflowY;
+                        const canScroll = parent.scrollHeight > parent.clientHeight + 20;
+                        if ((overflowY === "auto" || overflowY === "scroll") && canScroll) {
+                            return parent;
+                        }
+                        parent = parent.parentElement;
+                    }
+                    return null;
+                };
+
+                const feed = findScrollableParent(card);
+                if (feed) {
+                    return feed.outerHTML;
+                }
+
+                const cards = [];
+                for (const selector of selectors) {
+                    const list = document.querySelectorAll(selector);
+                    for (const node of list) {
+                        cards.push(node.outerHTML);
+                    }
+                }
+                if (cards.length > 0) {
+                    return `<div data-review-feed-fallback="true">${cards.join("")}</div>`;
+                }
+
+                return "";
             }
             """,
             card_selectors,
         )
+        return str(snapshot or "")
 
     async def _text_from_patterns(self, key: str) -> str | None:
         page = self._require_page()
@@ -937,6 +1201,113 @@ class GoogleMapsScraper:
             if cleaned:
                 urls.append(cleaned)
         return urls
+
+    def _extract_review_card_html_fragments(self, reviews_html: str) -> list[str]:
+        open_tag_pattern = re.compile(
+            r"<div\b[^>]*\bdata-review-id\s*=\s*(['\"])(?P<review_id>[^\"']+)\1[^>]*>",
+            re.IGNORECASE,
+        )
+        div_tag_pattern = re.compile(r"</?div\b[^>]*>", re.IGNORECASE)
+
+        fragments: list[str] = []
+        seen_review_ids: set[str] = set()
+
+        for match in open_tag_pattern.finditer(reviews_html):
+            review_id = self._clean_text(match.group("review_id"))
+            if not review_id or review_id in seen_review_ids:
+                continue
+
+            depth = 1
+            end_index: int | None = None
+            for div_match in div_tag_pattern.finditer(reviews_html, match.end()):
+                token = div_match.group(0).lower()
+                if token.startswith("</div"):
+                    depth -= 1
+                else:
+                    depth += 1
+
+                if depth == 0:
+                    end_index = div_match.end()
+                    break
+
+            if end_index is None:
+                continue
+
+            fragments.append(reviews_html[match.start() : end_index])
+            seen_review_ids.add(review_id)
+
+        return fragments
+
+    def _extract_attr_value(self, source: str, attribute: str) -> str | None:
+        values = self._extract_attr_values(source, attribute)
+        return values[0] if values else None
+
+    def _extract_attr_values(self, source: str, attribute: str) -> list[str]:
+        pattern = re.compile(
+            rf"\b{re.escape(attribute)}\s*=\s*(['\"])(.*?)\1",
+            re.IGNORECASE | re.DOTALL,
+        )
+        values: list[str] = []
+        for match in pattern.finditer(source):
+            raw_value = html.unescape(match.group(2))
+            cleaned = self._clean_text(raw_value)
+            if cleaned:
+                values.append(cleaned)
+        return values
+
+    def _extract_first_attr_value_containing(
+        self,
+        source: str,
+        attribute: str,
+        *,
+        contains_terms: tuple[str, ...],
+    ) -> str | None:
+        for value in self._extract_attr_values(source, attribute):
+            normalized = self._normalize_text(value)
+            if any(term in normalized for term in contains_terms):
+                return value
+        return None
+
+    def _extract_first_html_fragment(self, source: str, pattern: str) -> str | None:
+        match = re.search(pattern, source, re.IGNORECASE | re.DOTALL)
+        if not match:
+            return None
+        return match.group(1)
+
+    def _strip_html_markup(self, value: str | None) -> str | None:
+        if not value:
+            return None
+        without_tags = re.sub(r"<[^>]+>", " ", value)
+        decoded = html.unescape(without_tags)
+        return self._clean_text(decoded)
+
+    def _extract_owner_reply_from_card_html(self, card_html: str) -> dict[str, str] | None:
+        marker_pattern = re.compile(
+            r"(Respuesta del propietario|Owner response|Response from the owner)",
+            re.IGNORECASE,
+        )
+        marker = marker_pattern.search(card_html)
+        if marker is None:
+            return None
+
+        after_marker = card_html[marker.end() :]
+
+        reply_time = self._strip_html_markup(
+            self._extract_first_html_fragment(
+                after_marker,
+                r"<span[^>]*class=['\"][^'\"]*DZSIDd[^'\"]*['\"][^>]*>(.*?)</span>",
+            )
+        )
+        reply_text = self._strip_html_markup(
+            self._extract_first_html_fragment(
+                after_marker,
+                r"<span[^>]*class=['\"][^'\"]*wiI7pd[^'\"]*['\"][^>]*>(.*?)</span>",
+            )
+        )
+        if not reply_text:
+            return None
+
+        return {"text": reply_text, "relative_time": reply_time or ""}
 
     def _parse_rating(self, value: str | None) -> float | None:
         if not value:

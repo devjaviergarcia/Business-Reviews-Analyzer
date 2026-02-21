@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     scraper_max_click_delay_ms: int = 5200
     scraper_min_key_delay_ms: int = 90
     scraper_max_key_delay_ms: int = 260
+    scraper_reviews_strategy: str = "interactive"
 
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
 
