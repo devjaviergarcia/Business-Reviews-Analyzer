@@ -1,5 +1,5 @@
-import asyncio
 import argparse
+import asyncio
 import sys
 from pathlib import Path
 
@@ -12,7 +12,9 @@ from src.scraper.google_maps import GoogleMapsScraper
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Smoke test for Google Maps search and review extraction.")
+    parser = argparse.ArgumentParser(
+        description="Smoke test for Google Maps search/reviews using Chromium incognito context."
+    )
     parser.add_argument("query", nargs="*", help="Business search query.")
     parser.add_argument(
         "--strategy",
@@ -44,6 +46,11 @@ def _parse_args() -> argparse.Namespace:
         default=6,
         help="Stable rounds required to stop in scroll_copy strategy (default: 6).",
     )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run incognito context in headless mode (default: headed).",
+    )
     return parser.parse_args()
 
 
@@ -54,8 +61,7 @@ async def main() -> None:
     strategy = args.strategy
 
     scraper = GoogleMapsScraper(
-        headless=settings.scraper_headless,
-        incognito=settings.scraper_incognito,
+        headless=bool(args.headless),
         slow_mo_ms=settings.scraper_slow_mo_ms,
         user_data_dir=settings.scraper_user_data_dir,
         browser_channel=settings.scraper_browser_channel,
@@ -68,6 +74,7 @@ async def main() -> None:
         stealth_mode=settings.scraper_stealth_mode,
         harden_headless=settings.scraper_harden_headless,
         extra_chromium_args=settings.scraper_extra_chromium_args,
+        incognito=True,
     )
 
     try:
@@ -88,8 +95,10 @@ async def main() -> None:
             )
         )[:max_reviews]
 
-        print(f"OK - search completed for: {query}")
+        print(f"OK - incognito search completed for: {query}")
         print(f"Strategy: {strategy}")
+        print(f"Headless: {bool(args.headless)}")
+        print("Incognito context: True")
         print(f"Business page: {business_name}")
         print(f"URL: {page.url}")
         print(f"Limited view detected: {limited_view}")
@@ -97,8 +106,8 @@ async def main() -> None:
         print(f"Reviews extracted: {len(reviews)} (limit={max_reviews})")
         if limited_view:
             print(
-                "NOTE: Google Maps is in limited view; reviews panel may be unavailable. "
-                "Open the persistent profile once and sign in to unblock full reviews."
+                "NOTE: Google Maps is in limited view; reviews panel may be unavailable "
+                "in incognito unless consent/challenges are resolved."
             )
         if reviews:
             print(f"First review sample: {reviews[0]}")

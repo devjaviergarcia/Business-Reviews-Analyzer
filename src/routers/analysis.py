@@ -1,12 +1,35 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
-router = APIRouter(prefix="/business", tags=["analysis"])
+from src.services.business_service import BusinessService
+
+router = APIRouter(prefix="/business")
 
 
-@router.get("/{business_id}/analysis")
-async def get_business_analysis(business_id: str) -> None:
-    _ = business_id
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Endpoint not implemented yet.",
-    )
+@router.get("/{business_id}/analysis", tags=["Business"])
+async def get_business_analysis(business_id: str) -> dict:
+    service = BusinessService()
+    try:
+        return await service.get_business_analysis(business_id=business_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/{business_id}/analyses", tags=["Business"])
+async def list_business_analyses(
+    business_id: str,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+) -> dict:
+    service = BusinessService()
+    try:
+        return await service.list_business_analyses(
+            business_id=business_id,
+            page=page,
+            page_size=page_size,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

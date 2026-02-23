@@ -23,6 +23,9 @@ async def main() -> None:
         max_click_delay_ms=settings.scraper_max_click_delay_ms,
         min_key_delay_ms=settings.scraper_min_key_delay_ms,
         max_key_delay_ms=settings.scraper_max_key_delay_ms,
+        stealth_mode=settings.scraper_stealth_mode,
+        harden_headless=settings.scraper_harden_headless,
+        extra_chromium_args=settings.scraper_extra_chromium_args,
     )
 
     try:

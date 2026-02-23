@@ -23,6 +23,24 @@ app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     description="API for scraping, preprocessing and analyzing business reviews.",
+    openapi_tags=[
+        {
+            "name": "Analyze",
+            "description": "Run business analysis now or via async queue jobs.",
+        },
+        {
+            "name": "Business",
+            "description": "Business catalog, reviews, and analysis read endpoints.",
+        },
+        {
+            "name": "Reanalyze",
+            "description": "Re-run analysis using already stored reviews.",
+        },
+        {
+            "name": "health",
+            "description": "Service and database health checks.",
+        },
+    ],
     lifespan=lifespan,
 )
 

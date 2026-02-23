@@ -4,12 +4,14 @@ import asyncio
 import html
 import random
 import re
+import sys
 import unicodedata
 from pathlib import Path
 from time import monotonic
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from playwright.async_api import (
+    Browser,
     BrowserContext,
     Locator,
     Page,
@@ -36,6 +38,10 @@ class GoogleMapsScraper:
         max_click_delay_ms: int = 5200,
         min_key_delay_ms: int = 90,
         max_key_delay_ms: int = 260,
+        stealth_mode: bool = True,
+        harden_headless: bool = True,
+        extra_chromium_args: list[str] | None = None,
+        incognito: bool = False,
         reviews_strategy: str = "interactive",
     ) -> None:
         self._page = page
@@ -51,10 +57,15 @@ class GoogleMapsScraper:
         self._max_click_delay_ms = max(self._min_click_delay_ms, max_click_delay_ms)
         self._min_key_delay_ms = max(10, min_key_delay_ms)
         self._max_key_delay_ms = max(self._min_key_delay_ms, max_key_delay_ms)
+        self._stealth_mode = stealth_mode
+        self._harden_headless = harden_headless
+        self._extra_chromium_args = list(extra_chromium_args or [])
+        self._incognito = incognito
         self._project_root = Path(__file__).resolve().parents[2]
         self._reviews_strategy = self._resolve_reviews_strategy(reviews_strategy)
 
         self._playwright: Playwright | None = None
+        self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._last_click_ts: float | None = None
         self._rng = random.Random()
@@ -79,32 +90,56 @@ class GoogleMapsScraper:
         if self._page is not None:
             return self._page
 
+        self._assert_event_loop_compatible_for_playwright()
         self._playwright = await async_playwright().start()
-        user_data_dir = self._resolve_user_data_dir()
-        launch_options: dict[str, Any] = {
-            "user_data_dir": str(user_data_dir),
-            "headless": self._headless,
-            "slow_mo": self._slow_mo_ms,
-            "viewport": {"width": 1366, "height": 900},
-            "locale": "es-ES",
-            "timezone_id": "Europe/Madrid",
-            "user_agent": self._default_user_agent,
-            "args": ["--disable-blink-features=AutomationControlled"],
-        }
-        if self._browser_channel:
-            launch_options["channel"] = self._browser_channel
+        if self._incognito:
+            launch_options: dict[str, Any] = {
+                "headless": self._headless,
+                "slow_mo": self._slow_mo_ms,
+                "args": self._build_chromium_args(),
+            }
+            if self._browser_channel:
+                launch_options["channel"] = self._browser_channel
 
-        try:
-            self._context = await self._playwright.chromium.launch_persistent_context(**launch_options)
-        except Exception:
-            if not self._browser_channel:
-                raise
-            # Fallback to bundled Chromium if requested browser channel is unavailable.
-            launch_options.pop("channel", None)
-            self._context = await self._playwright.chromium.launch_persistent_context(**launch_options)
-        await self._context.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
-        )
+            try:
+                self._browser = await self._playwright.chromium.launch(**launch_options)
+            except Exception:
+                if not self._browser_channel:
+                    raise
+                launch_options.pop("channel", None)
+                self._browser = await self._playwright.chromium.launch(**launch_options)
+
+            self._context = await self._browser.new_context(
+                viewport={"width": 1366, "height": 900},
+                locale="es-ES",
+                timezone_id="Europe/Madrid",
+                user_agent=self._default_user_agent,
+            )
+        else:
+            user_data_dir = self._resolve_user_data_dir()
+            launch_options = {
+                "user_data_dir": str(user_data_dir),
+                "headless": self._headless,
+                "slow_mo": self._slow_mo_ms,
+                "viewport": {"width": 1366, "height": 900},
+                "locale": "es-ES",
+                "timezone_id": "Europe/Madrid",
+                "user_agent": self._default_user_agent,
+                "args": self._build_chromium_args(),
+            }
+            if self._browser_channel:
+                launch_options["channel"] = self._browser_channel
+
+            try:
+                self._context = await self._playwright.chromium.launch_persistent_context(**launch_options)
+            except Exception:
+                if not self._browser_channel:
+                    raise
+                # Fallback to bundled Chromium if requested browser channel is unavailable.
+                launch_options.pop("channel", None)
+                self._context = await self._playwright.chromium.launch_persistent_context(**launch_options)
+        if self._stealth_mode:
+            await self._context.add_init_script(self._stealth_init_script())
         self._context.set_default_timeout(self._timeout_ms)
 
         self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
@@ -115,10 +150,14 @@ class GoogleMapsScraper:
         if not self._external_page and self._context is not None:
             await self._context.close()
 
+        if not self._external_page and self._browser is not None:
+            await self._browser.close()
+
         if not self._external_page and self._playwright is not None:
             await self._playwright.stop()
 
         self._context = None
+        self._browser = None
         self._playwright = None
         self._page = None
         self._external_page = False
@@ -130,6 +169,7 @@ class GoogleMapsScraper:
 
     async def search_business(self, name: str) -> None:
         page = await self.start()
+        await self._dismiss_google_consent_if_present()
 
         search_input = await self._first_visible_from_patterns("SEARCH_INPUT")
         await self._human_click(search_input)
@@ -205,34 +245,74 @@ class GoogleMapsScraper:
     async def collect_reviews_html_snapshot(
         self,
         *,
-        max_rounds: int = 180,
-        stable_rounds: int = 6,
-        min_pause_ms: int = 750,
-        max_pause_ms: int = 1900,
+        max_rounds: int = 0,
+        stable_rounds: int = 8,
+        min_pause_s: float = 1.0,
+        max_pause_s: float = 2.0,
+        bottom_wait_min_ms: int = 2200,
+        bottom_wait_max_ms: int = 3600,
+        progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> str:
         reviews_open = await self._ensure_reviews_open()
         if not reviews_open:
             return ""
 
-        max_rounds = max(1, max_rounds)
+        effective_max_rounds = max_rounds if max_rounds > 0 else 6000
         stable_rounds = max(2, stable_rounds)
-        min_pause_ms = max(150, min_pause_ms)
-        max_pause_ms = max(min_pause_ms, max_pause_ms)
+        min_pause_s = max(0.15, float(min_pause_s))
+        max_pause_s = max(min_pause_s, float(max_pause_s))
+        bottom_wait_min_ms = max(400, bottom_wait_min_ms)
+        bottom_wait_max_ms = max(bottom_wait_min_ms, bottom_wait_max_ms)
 
-        last_count = await self._review_count()
+        initial_state = await self._reviews_feed_state(step_px=None, capture_html=False)
+        last_count = int(initial_state.get("review_count", 0))
         unchanged_rounds = 0
-        last_top = -1
-        last_scroll_height = -1
+        last_top = int(initial_state.get("scroll_top", -1))
+        last_scroll_height = int(initial_state.get("scroll_height", -1))
         page = self._require_page()
 
-        for _ in range(max_rounds):
-            metrics = await self._scroll_reviews_feed_step(step_px=self._rng.randint(380, 980))
-            await page.wait_for_timeout(self._rng.randint(min_pause_ms, max_pause_ms))
+        await self._emit_progress(
+            progress_callback,
+            {
+                "event": "reviews_scroll_started",
+                "effective_max_rounds": effective_max_rounds,
+                "stable_rounds": stable_rounds,
+                "initial_review_count": last_count,
+                "interval_s": {
+                    "min": min_pause_s,
+                    "max": max_pause_s,
+                },
+            },
+        )
 
-            current_count = await self._review_count()
-            moved = bool(metrics.get("scrolled"))
-            top = int(metrics.get("scroll_top", -1))
-            scroll_height = int(metrics.get("scroll_height", -1))
+        for round_index in range(1, effective_max_rounds + 1):
+            metrics = await self._scroll_reviews_feed_step(step_px=self._rng.randint(380, 980))
+            await page.wait_for_timeout(self._rng.uniform(min_pause_s * 1000.0, max_pause_s * 1000.0))
+
+            current_state = await self._reviews_feed_state(step_px=None, capture_html=False)
+            current_count = int(current_state.get("review_count", 0))
+            top = int(current_state.get("scroll_top", -1))
+            scroll_height = int(current_state.get("scroll_height", -1))
+            at_bottom = bool(current_state.get("at_bottom"))
+
+            if at_bottom:
+                await page.wait_for_timeout(self._rng.randint(bottom_wait_min_ms, bottom_wait_max_ms))
+                settled_state = await self._reviews_feed_state(step_px=None, capture_html=False)
+                settled_count = int(settled_state.get("review_count", 0))
+                settled_top = int(settled_state.get("scroll_top", -1))
+                settled_scroll_height = int(settled_state.get("scroll_height", -1))
+                if (
+                    settled_count > current_count
+                    or settled_scroll_height > scroll_height
+                    or settled_top != top
+                ):
+                    current_state = settled_state
+                    current_count = settled_count
+                    top = settled_top
+                    scroll_height = settled_scroll_height
+                    at_bottom = bool(settled_state.get("at_bottom"))
+
+            moved = bool(metrics.get("scrolled")) or top != last_top
             count_grew = current_count > last_count
             geometry_changed = top != last_top or scroll_height != last_scroll_height
 
@@ -247,14 +327,40 @@ class GoogleMapsScraper:
             last_top = top
             last_scroll_height = scroll_height
 
-            at_bottom = bool(metrics.get("at_bottom"))
+            if (
+                round_index == 1
+                or count_grew
+                or round_index % 5 == 0
+                or (at_bottom and unchanged_rounds >= stable_rounds)
+            ):
+                await self._emit_progress(
+                    progress_callback,
+                    {
+                        "event": "reviews_scroll_round",
+                        "round": round_index,
+                        "reviews_loaded": current_count,
+                        "at_bottom": at_bottom,
+                        "moved": moved,
+                        "unchanged_rounds": unchanged_rounds,
+                        "effective_max_rounds": effective_max_rounds,
+                    },
+                )
+
             if at_bottom and unchanged_rounds >= stable_rounds:
                 break
 
-            if not metrics.get("found") and unchanged_rounds >= stable_rounds:
+            if not current_state.get("found") and unchanged_rounds >= stable_rounds:
                 break
 
         await page.wait_for_timeout(self._rng.randint(500, 1100))
+        await self._emit_progress(
+            progress_callback,
+            {
+                "event": "reviews_scroll_finished",
+                "reviews_loaded": last_count,
+                "unchanged_rounds": unchanged_rounds,
+            },
+        )
         return await self._capture_reviews_feed_html()
 
     async def capture_reviews_container_html(self) -> str:
@@ -350,6 +456,9 @@ class GoogleMapsScraper:
         max_rounds: int = 10,
         html_scroll_max_rounds: int = 180,
         html_stable_rounds: int = 6,
+        html_min_interval_s: float = 1.0,
+        html_max_interval_s: float = 2.0,
+        progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> list[dict]:
         selected_strategy = self._resolve_reviews_strategy(strategy)
 
@@ -357,6 +466,9 @@ class GoogleMapsScraper:
             reviews_html = await self.collect_reviews_html_snapshot(
                 max_rounds=html_scroll_max_rounds,
                 stable_rounds=html_stable_rounds,
+                min_pause_s=html_min_interval_s,
+                max_pause_s=html_max_interval_s,
+                progress_callback=progress_callback,
             )
             return self.extract_reviews_from_html(reviews_html)
 
@@ -370,7 +482,9 @@ class GoogleMapsScraper:
             return []
         await self._click_expand_buttons(max_clicks=8)
 
-        cards = await self._first_available_collection("REVIEW_CARDS")
+        cards = await self._panel_scoped_collection("REVIEW_CARDS")
+        if cards is None:
+            cards = await self._first_available_collection("REVIEW_CARDS")
         if cards is None:
             return []
 
@@ -426,9 +540,25 @@ class GoogleMapsScraper:
             "Supported: interactive | scroll_copy"
         )
 
+    async def _emit_progress(
+        self,
+        callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None,
+        payload: dict[str, Any],
+    ) -> None:
+        if callback is None:
+            return
+        try:
+            maybe_awaitable = callback(payload)
+            if asyncio.iscoroutine(maybe_awaitable):
+                await maybe_awaitable
+        except Exception:
+            # Progress updates must never break scraping flow.
+            return
+
     async def _go_to_maps_home(self) -> None:
         page = self._require_page()
         await page.goto(self._maps_url, wait_until="domcontentloaded")
+        await self._dismiss_google_consent_if_present()
 
         search_input = await self._first_optional_visible_from_patterns("SEARCH_INPUT", timeout_ms=8000)
         if search_input is not None:
@@ -449,11 +579,66 @@ class GoogleMapsScraper:
             raise RuntimeError("Playwright page is not configured. Call start() or bind_page(page).")
         return self._page
 
+    def _assert_event_loop_compatible_for_playwright(self) -> None:
+        # On Windows, uvicorn --reload switches to SelectorEventLoopPolicy.
+        # Playwright needs subprocess support, which SelectorEventLoop lacks.
+        if sys.platform != "win32":
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop_name = loop.__class__.__name__.lower()
+        if "selector" in loop_name:
+            raise RuntimeError(
+                "Playwright is not compatible with Windows SelectorEventLoop "
+                "(common with 'uvicorn --reload'). Start API without --reload, "
+                "or run in Docker/WSL."
+            )
+
     def _resolve_user_data_dir(self) -> Path:
         path = Path(self._user_data_dir).expanduser()
         if not path.is_absolute():
             path = self._project_root / path
         return path.resolve()
+
+    def _build_chromium_args(self) -> list[str]:
+        args = [
+            "--disable-blink-features=AutomationControlled",
+            "--window-size=1920,1080",
+            "--lang=es-ES",
+        ]
+
+        if self._headless and self._harden_headless:
+            # Hardened headless mode: closer to headed runtime in server environments.
+            args.extend(
+                [
+                    "--disable-gpu",
+                    "--disable-dev-shm-usage",
+                    "--no-sandbox",
+                ]
+            )
+
+        args.extend(self._extra_chromium_args)
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for arg in args:
+            cleaned = str(arg or "").strip()
+            if not cleaned or cleaned in seen:
+                continue
+            seen.add(cleaned)
+            deduped.append(cleaned)
+        return deduped
+
+    def _stealth_init_script(self) -> str:
+        return """
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'languages', { get: () => ['es-ES', 'es', 'en-US', 'en'] });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4] });
+            Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+            window.chrome = window.chrome || { runtime: {} };
+        """
 
     async def _sleep_ms(self, delay_ms: int) -> None:
         await asyncio.sleep(max(0, delay_ms) / 1000)
@@ -516,15 +701,93 @@ class GoogleMapsScraper:
 
     async def _dismiss_google_consent_if_present(self) -> None:
         terms = ("aceptar todo", "accept all", "i agree", "estoy de acuerdo")
-        clicked = await self._click_first_by_text(terms)
+        clicked = await self._click_cookie_accept_by_aria_label()
+        if not clicked:
+            clicked = await self._click_first_by_text(terms)
         if clicked:
             await self._require_page().wait_for_timeout(self._rng.randint(1200, 2200))
+
+    async def _click_cookie_accept_by_aria_label(self) -> bool:
+        page = self._require_page()
+        scopes: list[Any] = [page, *page.frames]
+        candidates_selector = "button[aria-label], [role='button'][aria-label]"
+
+        for scope in scopes:
+            candidates = scope.locator(candidates_selector)
+            try:
+                total = await candidates.count()
+            except Exception:
+                continue
+
+            for idx in range(min(total, 20)):
+                candidate = candidates.nth(idx)
+                try:
+                    if not await candidate.is_visible():
+                        continue
+                    aria_label = self._clean_text(await candidate.get_attribute("aria-label")) or ""
+                    if not self._is_cookie_accept_label(aria_label):
+                        continue
+                    await self._human_click(candidate)
+                    return True
+                except Exception:
+                    continue
+
+        return False
 
     async def _first_available_collection(self, key: str) -> Locator | None:
         page = self._require_page()
 
         for selector in SELECTOR_PATTERNS[key]:
             collection = page.locator(selector)
+            try:
+                if await collection.count() > 0:
+                    return collection
+            except Exception:
+                continue
+
+        return None
+
+    async def _reviews_panel_root_locator(self) -> Locator | None:
+        page = self._require_page()
+
+        for selector in SELECTOR_PATTERNS["REVIEWS_PANEL_READY"]:
+            markers = page.locator(selector)
+            try:
+                total = await markers.count()
+            except Exception:
+                continue
+
+            for idx in range(min(total, 10)):
+                marker = markers.nth(idx)
+                try:
+                    if not await marker.is_visible():
+                        continue
+                except Exception:
+                    continue
+
+                role_main_root = marker.locator("xpath=ancestor::*[@role='main'][1]")
+                try:
+                    if await role_main_root.count() > 0:
+                        return role_main_root.first
+                except Exception:
+                    pass
+
+                generic_root = marker.locator("xpath=ancestor::div[1]")
+                try:
+                    if await generic_root.count() > 0:
+                        return generic_root.first
+                except Exception:
+                    continue
+
+        return None
+
+    async def _panel_scoped_collection(self, key: str) -> Locator | None:
+        panel_root = await self._reviews_panel_root_locator()
+        if panel_root is None:
+            return None
+
+        for selector in SELECTOR_PATTERNS[key]:
+            collection = panel_root.locator(selector)
             try:
                 if await collection.count() > 0:
                     return collection
@@ -605,6 +868,7 @@ class GoogleMapsScraper:
         raise RuntimeError("Business listing did not become ready after search.")
 
     async def _ensure_reviews_open(self) -> bool:
+        await self._dismiss_google_consent_if_present()
         if await self._wait_for_reviews_ready(timeout_ms=2200):
             return True
 
@@ -617,6 +881,13 @@ class GoogleMapsScraper:
         page = self._require_page()
 
         for _ in range(3):
+            clicked_more_reviews = await self._click_more_reviews_summary_button()
+            if clicked_more_reviews:
+                await page.wait_for_timeout(self._rng.randint(900, 1700))
+
+            if await self._wait_for_reviews_ready(timeout_ms=5500):
+                return True
+
             clicked_tab = await self._click_first_valid_review_button_in_group("REVIEWS_TAB")
             if clicked_tab:
                 await page.wait_for_timeout(self._rng.randint(900, 1700))
@@ -643,16 +914,16 @@ class GoogleMapsScraper:
         deadline = monotonic() + (timeout_ms / 1000)
 
         while monotonic() < deadline:
-            if await self._is_any_visible("REVIEWS_PANEL_READY"):
-                # Sometimes cards appear only after first scroll in the reviews container.
+            # If "Más reseñas (N)" is still visible, we are not in the final full feed yet.
+            if await self._has_more_reviews_summary_button_visible():
+                await page.wait_for_timeout(220)
+                continue
+
+            feed_state = await self._reviews_feed_state(step_px=None, capture_html=False)
+            if bool(feed_state.get("panel_ready")):
+                # Full reviews panel is open (sort/search/filter controls present).
                 await self._scroll_reviews_feed_once()
                 await page.wait_for_timeout(700)
-                if await self._review_count() > 0:
-                    return True
-                return True
-
-            # Fallback: accept cards only when Reviews tab is actually selected.
-            if await self._is_reviews_tab_selected() and await self._review_count() > 0:
                 return True
 
             await page.wait_for_timeout(220)
@@ -679,6 +950,8 @@ class GoogleMapsScraper:
         return False
 
     async def _has_review_entrypoint(self) -> bool:
+        if await self._find_more_reviews_summary_button() is not None:
+            return True
         if await self._find_first_valid_review_button_in_group("REVIEWS_TAB") is not None:
             return True
         if await self._find_first_valid_review_button_in_group("REVIEWS_BUTTON") is not None:
@@ -686,6 +959,17 @@ class GoogleMapsScraper:
         return await self._find_any_valid_review_button() is not None
 
     async def _review_count(self) -> int:
+        feed_state = await self._reviews_feed_state(step_px=None, capture_html=False)
+        if bool(feed_state.get("panel_ready")):
+            return int(feed_state.get("review_count", 0))
+
+        panel_cards = await self._panel_scoped_collection("REVIEW_CARDS")
+        if panel_cards is not None:
+            try:
+                return await panel_cards.count()
+            except Exception:
+                return 0
+
         cards = await self._first_available_collection("REVIEW_CARDS")
         if cards is None:
             return 0
@@ -720,125 +1004,227 @@ class GoogleMapsScraper:
         metrics = await self._scroll_reviews_feed_step()
         return bool(metrics.get("found")) and bool(metrics.get("scrolled"))
 
-    async def _scroll_reviews_feed_step(self, step_px: int | None = None) -> dict[str, Any]:
+    async def _reviews_feed_state(
+        self,
+        *,
+        step_px: int | None,
+        capture_html: bool,
+    ) -> dict[str, Any]:
         page = self._require_page()
+        panel_selectors = list(SELECTOR_PATTERNS["REVIEWS_PANEL_READY"])
         card_selectors = list(SELECTOR_PATTERNS["REVIEW_CARDS"])
-
         normalized_step = max(200, step_px) if step_px is not None else None
-        return await page.evaluate(
+
+        result = await page.evaluate(
             """
             (payload) => {
-                const selectors = payload.selectors;
+                const panelSelectors = payload.panelSelectors || [];
+                const cardSelectors = payload.cardSelectors || [];
                 const requestedStep = payload.stepPx;
+                const captureHtml = Boolean(payload.captureHtml);
 
-                let card = null;
-                for (const selector of selectors) {
-                    card = document.querySelector(selector);
-                    if (card) break;
-                }
-
-                if (!card) {
-                    window.scrollBy(0, Math.max(480, window.innerHeight * 0.6));
-                    return {
-                        found: false,
-                        scrolled: false,
-                        at_bottom: true,
-                        scroll_top: 0,
-                        scroll_height: 0,
-                        client_height: 0
-                    };
-                }
-
-                let parent = card.parentElement;
-                while (parent) {
-                    const style = window.getComputedStyle(parent);
-                    const overflowY = style.overflowY;
-                    const canScroll = parent.scrollHeight > parent.clientHeight + 20;
-                    if ((overflowY === "auto" || overflowY === "scroll") && canScroll) {
-                        const before = parent.scrollTop;
-                        const step = requestedStep && requestedStep > 0
-                            ? requestedStep
-                            : Math.max(420, parent.clientHeight * 0.9);
-                        parent.scrollBy(0, step);
-                        if (parent.scrollTop === before) {
-                            parent.scrollTop = Math.min(parent.scrollTop + step, parent.scrollHeight);
-                        }
-                        const after = parent.scrollTop;
-                        const atBottom = after + parent.clientHeight >= parent.scrollHeight - 4;
-                        return {
-                            found: true,
-                            scrolled: after > before,
-                            at_bottom: atBottom,
-                            scroll_top: Math.round(after),
-                            scroll_height: Math.round(parent.scrollHeight),
-                            client_height: Math.round(parent.clientHeight)
-                        };
-                    }
-                    parent = parent.parentElement;
-                }
-
-                window.scrollBy(0, Math.max(480, window.innerHeight * 0.6));
-                return {
-                    found: false,
-                    scrolled: true,
-                    at_bottom: true,
-                    scroll_top: 0,
-                    scroll_height: 0,
-                    client_height: 0
+                const isVisible = (el) => {
+                    if (!el) return false;
+                    const style = window.getComputedStyle(el);
+                    if (style.display === "none" || style.visibility === "hidden") return false;
+                    const rect = el.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0;
                 };
-            }
-            """,
-            {"selectors": card_selectors, "stepPx": normalized_step},
-        )
 
-    async def _capture_reviews_feed_html(self) -> str:
-        page = self._require_page()
-        card_selectors = list(SELECTOR_PATTERNS["REVIEW_CARDS"])
-        snapshot = await page.evaluate(
-            """
-            (selectors) => {
-                let card = null;
-                for (const selector of selectors) {
-                    card = document.querySelector(selector);
-                    if (card) break;
-                }
+                const collectCards = (root) => {
+                    const byReviewId = new Map();
+                    const withoutId = [];
+                    for (const selector of cardSelectors) {
+                        const nodes = root.querySelectorAll(selector);
+                        for (const node of nodes) {
+                            const reviewId = (node.getAttribute("data-review-id") || "").trim();
+                            if (reviewId) {
+                                if (!byReviewId.has(reviewId)) {
+                                    byReviewId.set(reviewId, node);
+                                }
+                            } else {
+                                withoutId.push(node);
+                            }
+                        }
+                    }
+                    return [...byReviewId.values(), ...withoutId];
+                };
 
-                const findScrollableParent = (node) => {
+                const findScrollableParent = (node, stopRoot) => {
                     let parent = node?.parentElement || null;
                     while (parent) {
                         const style = window.getComputedStyle(parent);
                         const overflowY = style.overflowY;
                         const canScroll = parent.scrollHeight > parent.clientHeight + 20;
-                        if ((overflowY === "auto" || overflowY === "scroll") && canScroll) {
+                        if ((overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") && canScroll) {
                             return parent;
                         }
+                        if (parent === stopRoot || parent === document.body) break;
                         parent = parent.parentElement;
                     }
                     return null;
                 };
 
-                const feed = findScrollableParent(card);
-                if (feed) {
-                    return feed.outerHTML;
-                }
-
-                const cards = [];
-                for (const selector of selectors) {
-                    const list = document.querySelectorAll(selector);
-                    for (const node of list) {
-                        cards.push(node.outerHTML);
+                const markers = [];
+                for (const selector of panelSelectors) {
+                    const nodes = document.querySelectorAll(selector);
+                    for (const node of nodes) {
+                        if (isVisible(node)) markers.push(node);
                     }
                 }
-                if (cards.length > 0) {
-                    return `<div data-review-feed-fallback="true">${cards.join("")}</div>`;
+
+                if (markers.length === 0) {
+                    return {
+                        panel_ready: false,
+                        found: false,
+                        scrolled: false,
+                        at_bottom: true,
+                        review_count: 0,
+                        scroll_top: 0,
+                        scroll_height: 0,
+                        client_height: 0,
+                        html: "",
+                    };
                 }
 
-                return "";
+                const roots = [];
+                for (const marker of markers) {
+                    const root =
+                        marker.closest("[role='main']") ||
+                        marker.closest("div.m6QErb") ||
+                        document.body;
+                    if (root && !roots.includes(root)) {
+                        roots.push(root);
+                    }
+                }
+
+                let best = null;
+                for (const root of roots) {
+                    const cards = collectCards(root);
+                    if (cards.length === 0) continue;
+
+                    let feed = null;
+                    for (const card of cards) {
+                        feed = findScrollableParent(card, root);
+                        if (feed) break;
+                    }
+
+                    if (!feed) {
+                        const divs = root.querySelectorAll("div");
+                        for (const div of divs) {
+                            if (!div.querySelector("[data-review-id]")) continue;
+                            const style = window.getComputedStyle(div);
+                            const overflowY = style.overflowY;
+                            const canScroll = div.scrollHeight > div.clientHeight + 20;
+                            if (
+                                (overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay") &&
+                                canScroll
+                            ) {
+                                feed = div;
+                                break;
+                            }
+                        }
+                    }
+
+                    const score = cards.length * 100000 + (feed ? (feed.scrollHeight - feed.clientHeight) : 0);
+                    if (!best || score > best.score) {
+                        best = { root, cards, feed, score };
+                    }
+                }
+
+                if (!best) {
+                    return {
+                        panel_ready: true,
+                        found: false,
+                        scrolled: false,
+                        at_bottom: true,
+                        review_count: 0,
+                        scroll_top: 0,
+                        scroll_height: 0,
+                        client_height: 0,
+                        html: "",
+                    };
+                }
+
+                if (!best.feed) {
+                    const fallbackHtml = captureHtml
+                        ? `<div data-review-feed-fallback="true">${best.cards.map((node) => node.outerHTML).join("")}</div>`
+                        : "";
+                    return {
+                        panel_ready: true,
+                        found: false,
+                        scrolled: false,
+                        at_bottom: true,
+                        review_count: best.cards.length,
+                        scroll_top: 0,
+                        scroll_height: 0,
+                        client_height: 0,
+                        html: fallbackHtml,
+                    };
+                }
+
+                const feed = best.feed;
+                const before = feed.scrollTop;
+                if (requestedStep !== null && requestedStep !== undefined) {
+                    const step = requestedStep > 0 ? requestedStep : Math.max(420, feed.clientHeight * 0.9);
+                    feed.scrollBy(0, step);
+                    if (feed.scrollTop === before) {
+                        feed.scrollTop = Math.min(feed.scrollTop + step, feed.scrollHeight);
+                    }
+                }
+                const after = feed.scrollTop;
+                const atBottom = after + feed.clientHeight >= feed.scrollHeight - 4;
+
+                return {
+                    panel_ready: true,
+                    found: true,
+                    scrolled: after > before,
+                    at_bottom: atBottom,
+                    review_count: best.cards.length,
+                    scroll_top: Math.round(after),
+                    scroll_height: Math.round(feed.scrollHeight),
+                    client_height: Math.round(feed.clientHeight),
+                    html: captureHtml ? feed.outerHTML : "",
+                };
             }
             """,
-            card_selectors,
+            {
+                "panelSelectors": panel_selectors,
+                "cardSelectors": card_selectors,
+                "stepPx": normalized_step,
+                "captureHtml": bool(capture_html),
+            },
         )
-        return str(snapshot or "")
+        if not isinstance(result, dict):
+            return {
+                "panel_ready": False,
+                "found": False,
+                "scrolled": False,
+                "at_bottom": True,
+                "review_count": 0,
+                "scroll_top": 0,
+                "scroll_height": 0,
+                "client_height": 0,
+                "html": "",
+            }
+        return result
+
+    async def _scroll_reviews_feed_step(self, step_px: int | None = None) -> dict[str, Any]:
+        state = await self._reviews_feed_state(step_px=step_px, capture_html=False)
+        return {
+            "panel_ready": bool(state.get("panel_ready")),
+            "found": bool(state.get("found")),
+            "scrolled": bool(state.get("scrolled")),
+            "at_bottom": bool(state.get("at_bottom")),
+            "review_count": int(state.get("review_count", 0)),
+            "scroll_top": int(state.get("scroll_top", 0)),
+            "scroll_height": int(state.get("scroll_height", 0)),
+            "client_height": int(state.get("client_height", 0)),
+        }
+
+    async def _capture_reviews_feed_html(self) -> str:
+        state = await self._reviews_feed_state(step_px=None, capture_html=True)
+        return str(state.get("html", "") or "")
 
     async def _text_from_patterns(self, key: str) -> str | None:
         page = self._require_page()
@@ -1028,8 +1414,61 @@ class GoogleMapsScraper:
         if tab is not None:
             return tab
 
-        # Second priority: explicit review button selectors.
+        # Second priority: explicit "more reviews" summary button.
+        more_reviews = await self._find_more_reviews_summary_button()
+        if more_reviews is not None:
+            return more_reviews
+
+        # Third priority: generic review button selectors.
         return await self._find_first_valid_review_button_in_group("REVIEWS_BUTTON")
+
+    async def _find_more_reviews_summary_button(self) -> Locator | None:
+        page = self._require_page()
+
+        selectors = (
+            *SELECTOR_PATTERNS["MORE_REVIEWS_BUTTON"],
+            "button[aria-label]",
+            "button",
+        )
+        for selector in selectors:
+            candidates = page.locator(selector)
+            try:
+                total = await candidates.count()
+            except Exception:
+                continue
+
+            for idx in range(min(total, 50)):
+                candidate = candidates.nth(idx)
+                try:
+                    if not await candidate.is_visible():
+                        continue
+                except Exception:
+                    continue
+
+                label = await self._candidate_label(candidate)
+                if not self._is_more_reviews_label(label):
+                    continue
+
+                try:
+                    tag_name = await candidate.evaluate("el => el.tagName")
+                except Exception:
+                    continue
+                if str(tag_name).upper() != "BUTTON":
+                    continue
+
+                return candidate
+
+        return None
+
+    async def _click_more_reviews_summary_button(self) -> bool:
+        button = await self._find_more_reviews_summary_button()
+        if button is None:
+            return False
+        await self._human_click(button)
+        return True
+
+    async def _has_more_reviews_summary_button_visible(self) -> bool:
+        return await self._find_more_reviews_summary_button() is not None
 
     async def _is_valid_review_button(self, candidate: Locator, *, must_be_in_tablist: bool = False) -> bool:
         try:
@@ -1391,6 +1830,35 @@ class GoogleMapsScraper:
             "response from the owner",
         )
         return any(keyword in normalized for keyword in keywords)
+
+    def _is_cookie_accept_label(self, value: str) -> bool:
+        normalized = self._normalize_text(value)
+        if not normalized:
+            return False
+        keywords = (
+            "aceptar",
+            "accept all",
+            "i agree",
+            "estoy de acuerdo",
+            "agree",
+        )
+        return any(keyword in normalized for keyword in keywords)
+
+    def _is_more_reviews_label(self, value: str | None) -> bool:
+        normalized = self._normalize_text(value or "")
+        if not normalized:
+            return False
+
+        has_phrase = (
+            "mas resenas" in normalized
+            or "more reviews" in normalized
+            or "more review" in normalized
+        )
+        if not has_phrase:
+            return False
+
+        # Typical format: "Más reseñas (12.030)".
+        return bool(re.search(r"\d", normalized)) or normalized.startswith("mas resenas")
 
     def _is_review_entrypoint_text(self, value: str | None) -> bool:
         normalized = self._normalize_text(value or "")

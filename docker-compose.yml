@@ -1,3 +1,30 @@
+x-app-env: &app_env
+  MONGO_URI: ${MONGO_URI_DOCKER:-mongodb://mongodb:27017}
+  DB_NAME: ${DB_NAME:-business_reviews_analyzer}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  GEMINI_MODEL: ${GEMINI_MODEL:-gemini-1.5-flash}
+  # Docker/dev profile defaults (do not depend on local headed settings)
+  SCRAPER_HEADLESS: ${SCRAPER_HEADLESS_DOCKER:-true}
+  SCRAPER_INCOGNITO: ${SCRAPER_INCOGNITO_DOCKER:-false}
+  SCRAPER_USER_DATA_DIR: ${SCRAPER_USER_DATA_DIR_DOCKER:-playwright-data-docker}
+  SCRAPER_REVIEWS_STRATEGY: ${SCRAPER_REVIEWS_STRATEGY:-interactive}
+  SCRAPER_STEALTH_MODE: ${SCRAPER_STEALTH_MODE:-true}
+  SCRAPER_HARDEN_HEADLESS: ${SCRAPER_HARDEN_HEADLESS:-true}
+  SCRAPER_EXTRA_CHROMIUM_ARGS: ${SCRAPER_EXTRA_CHROMIUM_ARGS:-}
+  SCRAPER_USE_XVFB_DOCKER: ${SCRAPER_USE_XVFB_DOCKER:-false}
+  API_RELOAD_DOCKER: ${API_RELOAD_DOCKER:-false}
+  WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-5}
+
+x-app-base: &app_base
+  image: review-llm-app:latest
+  restart: unless-stopped
+  environment: *app_env
+  depends_on:
+    mongodb:
+      condition: service_healthy
+  volumes:
+    - .:/app
+
 services:
   mongodb:
     image: mongo:7
@@ -15,23 +42,22 @@ services:
       start_period: 10s
 
   app:
+    <<: *app_base
     build:
       context: .
       dockerfile: Dockerfile
     container_name: bra-api
-    restart: unless-stopped
-    environment:
-      MONGO_URI: ${MONGO_URI:-mongodb://mongodb:27017}
-      DB_NAME: ${DB_NAME:-business_reviews_analyzer}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     ports:
       - "8000:8000"
-    depends_on:
-      mongodb:
-        condition: service_healthy
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
-    volumes:
-      - .:/app
+
+  scraper-worker:
+    <<: *app_base
+    container_name: bra-scraper-worker
+    profiles: ["worker"]
+    environment:
+      <<: *app_env
+      SCRAPER_USER_DATA_DIR: ${SCRAPER_USER_DATA_DIR_WORKER_DOCKER:-playwright-data-worker-docker}
+    command: python -m src.workers.scraper_worker
 
 volumes:
   mongo_data:
