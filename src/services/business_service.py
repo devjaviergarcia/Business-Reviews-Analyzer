@@ -18,6 +18,10 @@ from src.models.business import Listing, OwnerReply, Review
 from src.pipeline.llm_analyzer import ReviewLLMAnalyzer
 from src.pipeline.preprocessor import ReviewPreprocessor
 from src.scraper.google_maps import GoogleMapsScraper
+from src.services.analyze_business_use_case import AnalyzeBusinessUseCase
+from src.services.analysis_job_service import AnalysisJobService
+from src.services.business_query_service import BusinessQueryService
+from src.services.reanalyze_use_case import ReanalyzeUseCase
 
 
 class BusinessService:
@@ -36,9 +40,64 @@ class BusinessService:
         "scroll_copy",
     }
 
-    def __init__(self) -> None:
-        default_strategy = self._resolve_reviews_strategy(None)
-        self.scraper = GoogleMapsScraper(
+    def __init__(
+        self,
+        *,
+        scraper: GoogleMapsScraper | None = None,
+        preprocessor: ReviewPreprocessor | None = None,
+        llm_analyzer: ReviewLLMAnalyzer | None = None,
+        job_service: AnalysisJobService | None = None,
+        query_service: BusinessQueryService | None = None,
+        analyze_use_case: AnalyzeBusinessUseCase | None = None,
+        reanalyze_use_case: ReanalyzeUseCase | None = None,
+    ) -> None:
+        self.scraper = scraper or type(self).build_default_scraper()
+        self.preprocessor = preprocessor or ReviewPreprocessor()
+        self.llm_analyzer = llm_analyzer or ReviewLLMAnalyzer()
+        self.job_service = job_service or AnalysisJobService()
+        self.query_service = query_service or BusinessQueryService()
+        self.analyze_use_case = analyze_use_case or self._build_analyze_use_case()
+        self.reanalyze_use_case = reanalyze_use_case or self._build_reanalyze_use_case()
+
+    def _build_analyze_use_case(self) -> AnalyzeBusinessUseCase:
+        return AnalyzeBusinessUseCase(
+            preprocessor=self.preprocessor,
+            llm_analyzer=self.llm_analyzer,
+            validate_business_name=self._validate_business_name,
+            resolve_reviews_strategy=self._resolve_reviews_strategy,
+            normalize_text=self._normalize_text,
+            emit_progress=self._emit_progress,
+            build_cached_response=self._build_cached_response,
+            scrape_business_page=self._scrape_business_page,
+            normalize_scraped_review=self._normalize_scraped_review,
+            upsert_reviews=self._upsert_reviews,
+            sanitize_response_payload=self._sanitize_response_payload,
+            businesses_collection_name=self._BUSINESSES_COLLECTION,
+            reviews_collection_name=self._REVIEWS_COLLECTION,
+            analyses_collection_name=self._ANALYSES_COLLECTION,
+        )
+
+    def _build_reanalyze_use_case(self) -> ReanalyzeUseCase:
+        return ReanalyzeUseCase(
+            preprocessor=self.preprocessor,
+            llm_analyzer=self.llm_analyzer,
+            parse_object_id=self._parse_object_id,
+            resolve_reanalysis_batchers=self._resolve_reanalysis_batchers,
+            normalize_stored_review=self._normalize_stored_review,
+            serialize_review_doc=self._serialize_review_doc,
+            build_reanalysis_batches=self._build_reanalysis_batches,
+            analysis_quality_score=self._analysis_quality_score,
+            merge_reanalysis_runs=self._merge_reanalysis_runs,
+            sanitize_response_payload=self._sanitize_response_payload,
+            businesses_collection_name=self._BUSINESSES_COLLECTION,
+            reviews_collection_name=self._REVIEWS_COLLECTION,
+            analyses_collection_name=self._ANALYSES_COLLECTION,
+        )
+
+    @classmethod
+    def build_default_scraper(cls) -> GoogleMapsScraper:
+        default_strategy = "scroll_copy"
+        return GoogleMapsScraper(
             headless=settings.scraper_headless,
             incognito=settings.scraper_incognito,
             slow_mo_ms=settings.scraper_slow_mo_ms,
@@ -55,8 +114,6 @@ class BusinessService:
             extra_chromium_args=settings.scraper_extra_chromium_args,
             reviews_strategy=default_strategy,
         )
-        self.preprocessor = ReviewPreprocessor()
-        self.llm_analyzer = ReviewLLMAnalyzer()
 
     async def analyze_business(
         self,
@@ -65,181 +122,15 @@ class BusinessService:
         strategy: str | None = None,
         progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> dict:
-        business_name = self._validate_business_name(name)
-        selected_strategy = self._resolve_reviews_strategy(strategy)
-        name_normalized = self._normalize_text(business_name)
-        database = get_database()
-        now = datetime.now(timezone.utc)
-
-        businesses = database[self._BUSINESSES_COLLECTION]
-        reviews = database[self._REVIEWS_COLLECTION]
-        analyses = database[self._ANALYSES_COLLECTION]
-
-        await self._emit_progress(
-            progress_callback,
-            "analysis_started",
-            "Analysis job started.",
-            {"name": business_name, "strategy": selected_strategy, "force": bool(force)},
-        )
-
-        if not force:
-            cached_payload = await self._build_cached_response(
-                businesses=businesses,
-                reviews=reviews,
-                analyses=analyses,
-                name_normalized=name_normalized,
-                strategy=selected_strategy,
-            )
-            if cached_payload is not None:
-                await self._emit_progress(
-                    progress_callback,
-                    "cache_hit",
-                    "Returning cached analysis result.",
-                    {"strategy": selected_strategy},
-                )
-                return cached_payload
-
-        listing, raw_reviews = await self._scrape_business_page(
-            business_name,
-            strategy=selected_strategy,
+        return await self.analyze_use_case.execute(
+            name=name,
+            force=force,
+            strategy=strategy,
             progress_callback=progress_callback,
         )
-        listing_payload = Listing(**listing).model_dump(mode="python")
-        scraped_review_count = len(raw_reviews)
-
-        await self._emit_progress(
-            progress_callback,
-            "scrape_completed",
-            "Scraping finished.",
-            {"scraped_review_count": scraped_review_count},
-        )
-
-        normalized_raw_reviews = [self._normalize_scraped_review(item) for item in raw_reviews]
-        processed_reviews = self.preprocessor.process(normalized_raw_reviews)
-        processed_review_count = len(processed_reviews)
-        stats = self.preprocessor.compute_stats(processed_reviews)
-
-        await self._emit_progress(
-            progress_callback,
-            "preprocess_completed",
-            "Preprocessing completed.",
-            {
-                "processed_review_count": processed_review_count,
-                "avg_rating": stats.get("avg_rating"),
-            },
-        )
-
-        await self._emit_progress(
-            progress_callback,
-            "llm_analysis_started",
-            "Running LLM analysis.",
-            {"processed_review_count": processed_review_count},
-        )
-        analysis = await self.llm_analyzer.analyze(
-            business_name=business_name,
-            reviews=processed_reviews,
-            stats=stats,
-        )
-
-        await self._emit_progress(
-            progress_callback,
-            "llm_analysis_completed",
-            "LLM analysis completed.",
-            {"overall_sentiment": analysis.overall_sentiment},
-        )
-
-        business_doc = await businesses.find_one_and_update(
-            {"name_normalized": name_normalized},
-            {
-                "$set": {
-                    "name": business_name,
-                    "name_normalized": name_normalized,
-                    "source": "google_maps",
-                    "listing": listing_payload,
-                    "stats": stats,
-                    "review_count": processed_review_count,
-                    "scraped_review_count": scraped_review_count,
-                    "processed_review_count": processed_review_count,
-                    "last_scraped_at": now,
-                    "updated_at": now,
-                },
-                "$setOnInsert": {"created_at": now},
-            },
-            upsert=True,
-            return_document=ReturnDocument.AFTER,
-        )
-        if business_doc is None:
-            raise RuntimeError("Failed to upsert business document.")
-
-        business_id = str(business_doc["_id"])
-        await self._upsert_reviews(
-            reviews_collection=reviews,
-            business_id=business_id,
-            processed_reviews=processed_reviews,
-            scraped_at=now,
-        )
-        review_count = await reviews.count_documents({"business_id": business_id})
-
-        analysis_payload = analysis.model_dump(mode="python")
-        analysis_payload["business_id"] = business_id
-        analysis_payload["created_at"] = now
-        inserted_analysis = await analyses.insert_one(analysis_payload)
-
-        await businesses.update_one(
-            {"_id": business_doc["_id"]},
-            {
-                "$set": {
-                    "latest_analysis_id": str(inserted_analysis.inserted_id),
-                    "updated_at": now,
-                }
-            },
-        )
-
-        await self._emit_progress(
-            progress_callback,
-            "db_persist_completed",
-            "Data persisted in MongoDB.",
-            {"business_id": business_id, "review_count": review_count},
-        )
-
-        payload = {
-            "business_id": business_id,
-            "name": business_name,
-            "cached": False,
-            "strategy": selected_strategy,
-            "listing": listing_payload,
-            "stats": stats,
-            "review_count": review_count,
-            "scraped_review_count": scraped_review_count,
-            "processed_review_count": processed_review_count,
-            "listing_total_reviews": listing_payload.get("total_reviews"),
-            "analysis": analysis_payload,
-        }
-        await self._emit_progress(
-            progress_callback,
-            "analysis_completed",
-            "Analysis completed successfully.",
-            {"business_id": business_id, "review_count": review_count},
-        )
-        return self._sanitize_response_payload(payload)
 
     async def get_business(self, business_id: str, include_listing: bool = True) -> dict:
-        parsed_id = self._parse_object_id(business_id, field_name="business_id")
-        database = get_database()
-        businesses = database[self._BUSINESSES_COLLECTION]
-        reviews = database[self._REVIEWS_COLLECTION]
-
-        business_doc = await businesses.find_one({"_id": parsed_id})
-        if business_doc is None:
-            raise LookupError(f"Business '{business_id}' not found.")
-
-        review_count = await reviews.count_documents({"business_id": business_id})
-        payload = self._serialize_business_doc(
-            business_doc=business_doc,
-            review_count=review_count,
-            include_listing=include_listing,
-        )
-        return self._sanitize_response_payload(payload)
+        return await self.query_service.get_business(business_id=business_id, include_listing=include_listing)
 
     async def list_businesses(
         self,
@@ -248,56 +139,11 @@ class BusinessService:
         page_size: int = 20,
         include_listing: bool = False,
     ) -> dict:
-        page_value, page_size_value = self._coerce_pagination(
+        return await self.query_service.list_businesses(
             page=page,
             page_size=page_size,
-            max_page_size=100,
+            include_listing=include_listing,
         )
-
-        database = get_database()
-        businesses = database[self._BUSINESSES_COLLECTION]
-        analyses = database[self._ANALYSES_COLLECTION]
-
-        total = await businesses.count_documents({})
-        skip = (page_value - 1) * page_size_value
-        business_docs = (
-            await businesses.find({})
-            .sort([("updated_at", -1), ("_id", -1)])
-            .skip(skip)
-            .limit(page_size_value)
-            .to_list(length=page_size_value)
-        )
-
-        latest_analysis_ids: list[ObjectId] = []
-        for business_doc in business_docs:
-            latest_analysis_id = business_doc.get("latest_analysis_id")
-            if not latest_analysis_id:
-                continue
-            try:
-                latest_analysis_ids.append(ObjectId(str(latest_analysis_id)))
-            except (InvalidId, TypeError):
-                continue
-
-        analysis_map_by_id: dict[str, dict[str, Any]] = {}
-        if latest_analysis_ids:
-            analysis_docs = await analyses.find({"_id": {"$in": latest_analysis_ids}}).to_list(length=len(latest_analysis_ids))
-            analysis_map_by_id = {str(doc["_id"]): doc for doc in analysis_docs}
-
-        items = [
-            self._serialize_business_summary_doc(
-                business_doc=business_doc,
-                latest_analysis=analysis_map_by_id.get(str(business_doc.get("latest_analysis_id", ""))),
-                include_listing=include_listing,
-            )
-            for business_doc in business_docs
-        ]
-        payload = self._pagination_payload(
-            items=items,
-            page=page_value,
-            page_size=page_size_value,
-            total=total,
-        )
-        return self._sanitize_response_payload(payload)
 
     async def get_business_reviews(
         self,
@@ -306,57 +152,14 @@ class BusinessService:
         page: int = 1,
         page_size: int = 20,
     ) -> dict:
-        parsed_business_id = self._parse_object_id(business_id, field_name="business_id")
-        page_value, page_size_value = self._coerce_pagination(
+        return await self.query_service.get_business_reviews(
+            business_id=business_id,
             page=page,
             page_size=page_size,
-            max_page_size=100,
         )
-
-        database = get_database()
-        businesses = database[self._BUSINESSES_COLLECTION]
-        reviews = database[self._REVIEWS_COLLECTION]
-
-        business_exists = await businesses.count_documents({"_id": parsed_business_id}, limit=1)
-        if business_exists == 0:
-            raise LookupError(f"Business '{business_id}' not found.")
-
-        query: dict[str, Any] = {"business_id": business_id}
-        total = await reviews.count_documents(query)
-        skip = (page_value - 1) * page_size_value
-        docs = (
-            await reviews.find(query)
-            .sort([("_id", -1)])
-            .skip(skip)
-            .limit(page_size_value)
-            .to_list(length=page_size_value)
-        )
-
-        payload = self._pagination_payload(
-            items=[self._serialize_review_doc(doc) for doc in docs],
-            page=page_value,
-            page_size=page_size_value,
-            total=total,
-        )
-        payload["business_id"] = business_id
-        return self._sanitize_response_payload(payload)
 
     async def get_business_analysis(self, business_id: str) -> dict:
-        parsed_business_id = self._parse_object_id(business_id, field_name="business_id")
-        database = get_database()
-        businesses = database[self._BUSINESSES_COLLECTION]
-        analyses = database[self._ANALYSES_COLLECTION]
-
-        business_exists = await businesses.count_documents({"_id": parsed_business_id}, limit=1)
-        if business_exists == 0:
-            raise LookupError(f"Business '{business_id}' not found.")
-
-        analysis_doc = await analyses.find_one({"business_id": business_id}, sort=[("created_at", -1)])
-        if analysis_doc is None:
-            raise LookupError(f"Analysis for business '{business_id}' not found.")
-
-        payload = self._serialize_analysis_doc(analysis_doc)
-        return self._sanitize_response_payload(payload)
+        return await self.query_service.get_business_analysis(business_id=business_id)
 
     async def list_business_analyses(
         self,
@@ -365,38 +168,11 @@ class BusinessService:
         page: int = 1,
         page_size: int = 20,
     ) -> dict:
-        parsed_business_id = self._parse_object_id(business_id, field_name="business_id")
-        page_value, page_size_value = self._coerce_pagination(
+        return await self.query_service.list_business_analyses(
+            business_id=business_id,
             page=page,
             page_size=page_size,
-            max_page_size=100,
         )
-        database = get_database()
-        businesses = database[self._BUSINESSES_COLLECTION]
-        analyses = database[self._ANALYSES_COLLECTION]
-
-        business_exists = await businesses.count_documents({"_id": parsed_business_id}, limit=1)
-        if business_exists == 0:
-            raise LookupError(f"Business '{business_id}' not found.")
-
-        query = {"business_id": business_id}
-        total = await analyses.count_documents(query)
-        skip = (page_value - 1) * page_size_value
-        analysis_docs = (
-            await analyses.find(query)
-            .sort([("created_at", -1), ("_id", -1)])
-            .skip(skip)
-            .limit(page_size_value)
-            .to_list(length=page_size_value)
-        )
-        payload = self._pagination_payload(
-            items=[self._serialize_analysis_doc(doc) for doc in analysis_docs],
-            page=page_value,
-            page_size=page_size_value,
-            total=total,
-        )
-        payload["business_id"] = business_id
-        return self._sanitize_response_payload(payload)
 
     async def reanalyze_business_from_stored_reviews(
         self,
@@ -406,114 +182,12 @@ class BusinessService:
         batch_size: int | None = None,
         max_reviews_pool: int | None = None,
     ) -> dict:
-        parsed_business_id = self._parse_object_id(business_id, field_name="business_id")
-        database = get_database()
-        businesses = database[self._BUSINESSES_COLLECTION]
-        reviews = database[self._REVIEWS_COLLECTION]
-        analyses = database[self._ANALYSES_COLLECTION]
-
-        business_doc = await businesses.find_one({"_id": parsed_business_id})
-        if business_doc is None:
-            raise LookupError(f"Business '{business_id}' not found.")
-
-        business_name = str(business_doc.get("name", "")).strip() or str(business_doc.get("name_normalized", ""))
-        listing_payload = business_doc.get("listing")
-
-        pool_size = max_reviews_pool if max_reviews_pool is not None else settings.analysis_reanalyze_pool_size
-        pool_size = max(20, min(int(pool_size), 1000))
-        batch_size_value = batch_size if batch_size is not None else settings.analysis_reanalyze_batch_size
-        batch_size_value = max(10, min(int(batch_size_value), 120))
-
-        selected_batchers = self._resolve_reanalysis_batchers(batchers)
-
-        review_docs = (
-            await reviews.find({"business_id": business_id})
-            .sort([("scraped_at", -1), ("_id", -1)])
-            .limit(pool_size)
-            .to_list(length=pool_size)
+        return await self.reanalyze_use_case.execute(
+            business_id=business_id,
+            batchers=batchers,
+            batch_size=batch_size,
+            max_reviews_pool=max_reviews_pool,
         )
-        if not review_docs:
-            raise LookupError(f"No stored reviews found for business '{business_id}'.")
-
-        normalized_stored_reviews = [
-            self._normalize_stored_review(self._serialize_review_doc(doc)) for doc in review_docs
-        ]
-        processed_reviews = self.preprocessor.process(normalized_stored_reviews)
-        stats = self.preprocessor.compute_stats(processed_reviews)
-
-        batches = self._build_reanalysis_batches(
-            processed_reviews,
-            batcher_names=selected_batchers,
-            batch_size=batch_size_value,
-        )
-        if not batches:
-            raise RuntimeError("Could not prepare review batches for reanalysis.")
-
-        run_results: list[dict[str, Any]] = []
-        for batcher_name, batch_reviews in batches:
-            analysis = await self.llm_analyzer.analyze(
-                business_name=business_name,
-                reviews=batch_reviews,
-                stats=stats,
-            )
-            analysis_payload = analysis.model_dump(mode="python")
-            run_results.append(
-                {
-                    "batcher": batcher_name,
-                    "sample_size": len(batch_reviews),
-                    "analysis": analysis_payload,
-                    "quality_score": round(self._analysis_quality_score(analysis_payload), 4),
-                }
-            )
-
-        merged_analysis_payload = self._merge_reanalysis_runs(run_results)
-        now = datetime.now(timezone.utc)
-        merged_analysis_payload["business_id"] = business_id
-        merged_analysis_payload["created_at"] = now
-        merged_analysis_payload["meta"] = {
-            "type": "stored_reviews_reanalysis",
-            "batchers": selected_batchers,
-            "batch_size": batch_size_value,
-            "pool_size": pool_size,
-            "runs": [
-                {
-                    "batcher": item["batcher"],
-                    "sample_size": item["sample_size"],
-                    "quality_score": item["quality_score"],
-                }
-                for item in run_results
-            ],
-        }
-
-        inserted_analysis = await analyses.insert_one(merged_analysis_payload)
-        review_count = await reviews.count_documents({"business_id": business_id})
-
-        await businesses.update_one(
-            {"_id": parsed_business_id},
-            {
-                "$set": {
-                    "stats": stats,
-                    "review_count": review_count,
-                    "latest_analysis_id": str(inserted_analysis.inserted_id),
-                    "updated_at": now,
-                }
-            },
-        )
-
-        payload = {
-            "business_id": business_id,
-            "name": business_name,
-            "cached": False,
-            "reanalyzed": True,
-            "listing": listing_payload,
-            "stats": stats,
-            "review_count": review_count,
-            "listing_total_reviews": (listing_payload or {}).get("total_reviews") if isinstance(listing_payload, dict) else None,
-            "processed_review_count": len(processed_reviews),
-            "analysis": merged_analysis_payload,
-            "batchers_used": selected_batchers,
-        }
-        return self._sanitize_response_payload(payload)
 
     async def enqueue_business_analysis_job(
         self,
@@ -524,60 +198,15 @@ class BusinessService:
         business_name = self._validate_business_name(name)
         selected_strategy = self._resolve_reviews_strategy(strategy)
         name_normalized = self._normalize_text(business_name)
-        now = datetime.now(timezone.utc)
-        initial_event = {
-            "stage": "queued",
-            "message": "Job queued.",
-            "data": {"strategy": selected_strategy, "force": bool(force)},
-            "created_at": now,
-        }
-
-        database = get_database()
-        jobs = database[self._JOBS_COLLECTION]
-
-        doc = {
-            "name": business_name,
-            "name_normalized": name_normalized,
-            "force": bool(force),
-            "strategy": selected_strategy,
-            "status": "queued",
-            "progress": {
-                "stage": "queued",
-                "message": "Job queued.",
-                "updated_at": now,
-            },
-            "events": [initial_event],
-            "attempts": 0,
-            "error": None,
-            "result": None,
-            "created_at": now,
-            "updated_at": now,
-            "started_at": None,
-            "finished_at": None,
-        }
-
-        inserted = await jobs.insert_one(doc)
-        payload = {
-            "job_id": str(inserted.inserted_id),
-            "name": business_name,
-            "status": "queued",
-            "force": bool(force),
-            "strategy": selected_strategy,
-            "created_at": now,
-        }
-        return self._sanitize_response_payload(payload)
+        return await self.job_service.enqueue_job(
+            name=business_name,
+            name_normalized=name_normalized,
+            force=bool(force),
+            strategy=selected_strategy,
+        )
 
     async def get_business_analysis_job(self, job_id: str) -> dict:
-        parsed_id = self._parse_object_id(job_id, field_name="job_id")
-        database = get_database()
-        jobs = database[self._JOBS_COLLECTION]
-
-        job_doc = await jobs.find_one({"_id": parsed_id})
-        if job_doc is None:
-            raise LookupError(f"Job '{job_id}' not found.")
-
-        payload = self._serialize_analysis_job_doc(job_doc)
-        return self._sanitize_response_payload(payload)
+        return await self.job_service.get_job(job_id=job_id)
 
     async def list_business_analysis_jobs(
         self,
@@ -586,41 +215,11 @@ class BusinessService:
         page_size: int = 20,
         status_filter: str | None = None,
     ) -> dict:
-        page_value, page_size_value = self._coerce_pagination(
+        return await self.job_service.list_jobs(
             page=page,
             page_size=page_size,
-            max_page_size=100,
+            status_filter=status_filter,
         )
-
-        database = get_database()
-        jobs = database[self._JOBS_COLLECTION]
-
-        query: dict[str, Any] = {}
-        normalized_status = ""
-        if status_filter is not None:
-            normalized_status = self._normalize_text(status_filter)
-            if normalized_status:
-                query["status"] = normalized_status
-
-        total = await jobs.count_documents(query)
-        skip = (page_value - 1) * page_size_value
-        docs = (
-            await jobs.find(query)
-            .sort([("created_at", -1), ("_id", -1)])
-            .skip(skip)
-            .limit(page_size_value)
-            .to_list(length=page_size_value)
-        )
-
-        payload = self._pagination_payload(
-            items=[self._serialize_analysis_job_doc(doc) for doc in docs],
-            page=page_value,
-            page_size=page_size_value,
-            total=total,
-        )
-        if normalized_status:
-            payload["status"] = normalized_status
-        return self._sanitize_response_payload(payload)
 
     async def _build_cached_response(
         self,
