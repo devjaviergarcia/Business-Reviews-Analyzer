@@ -22,6 +22,7 @@ from src.services.analyze_business_use_case import AnalyzeBusinessUseCase
 from src.services.analysis_job_service import AnalysisJobService
 from src.services.business_query_service import BusinessQueryService
 from src.services.reanalyze_use_case import ReanalyzeUseCase
+from src.workers.contracts import AnalyzeBusinessTaskPayload
 
 
 class BusinessService:
@@ -29,6 +30,9 @@ class BusinessService:
     _REVIEWS_COLLECTION = "reviews"
     _ANALYSES_COLLECTION = "analyses"
     _JOBS_COLLECTION = "analysis_jobs"
+    _SOURCE_PROFILES_COLLECTION = "source_profiles"
+    _DATASETS_COLLECTION = "datasets"
+    _SCRAPE_RUNS_COLLECTION = "scrape_runs"
     _SUPPORTED_REANALYZE_BATCHERS = {
         "latest_text",
         "balanced_rating",
@@ -38,6 +42,10 @@ class BusinessService:
     _SUPPORTED_REVIEW_STRATEGIES = {
         "interactive",
         "scroll_copy",
+    }
+    _SUPPORTED_FORCE_MODES = {
+        "fallback_existing",
+        "strict_rescrape",
     }
 
     def __init__(
@@ -120,13 +128,360 @@ class BusinessService:
         name: str,
         force: bool = False,
         strategy: str | None = None,
+        force_mode: str | None = None,
+        interactive_max_rounds: int | None = None,
+        html_scroll_max_rounds: int | None = None,
+        html_stable_rounds: int | None = None,
         progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> dict:
+        selected_force_mode = self._resolve_force_mode(force_mode)
+        if selected_force_mode != "fallback_existing":
+            raise ValueError(
+                "force_mode is supported only in queued pipeline mode. "
+                "Use POST /business/analyze/queue for strict rescrape behavior."
+            )
         return await self.analyze_use_case.execute(
             name=name,
             force=force,
             strategy=strategy,
+            interactive_max_rounds=interactive_max_rounds,
+            html_scroll_max_rounds=html_scroll_max_rounds,
+            html_stable_rounds=html_stable_rounds,
             progress_callback=progress_callback,
+        )
+
+    async def scrape_business_for_analysis_pipeline(
+        self,
+        name: str,
+        *,
+        force: bool = False,
+        strategy: str | None = None,
+        force_mode: str | None = None,
+        interactive_max_rounds: int | None = None,
+        html_scroll_max_rounds: int | None = None,
+        html_stable_rounds: int | None = None,
+        progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
+    ) -> dict[str, Any]:
+        business_name = self._validate_business_name(name)
+        selected_strategy = self._resolve_reviews_strategy(strategy)
+        selected_force_mode = self._resolve_force_mode(force_mode)
+        name_normalized = self._normalize_text(business_name)
+        database = get_database()
+        now = datetime.now(timezone.utc)
+
+        businesses = database[self._BUSINESSES_COLLECTION]
+        reviews = database[self._REVIEWS_COLLECTION]
+        source_profiles = database[self._SOURCE_PROFILES_COLLECTION]
+        datasets = database[self._DATASETS_COLLECTION]
+        scrape_runs = database[self._SCRAPE_RUNS_COLLECTION]
+
+        await self._emit_progress(
+            progress_callback,
+            "scrape_pipeline_started",
+            "Scrape stage started.",
+            {
+                "name": business_name,
+                "strategy": selected_strategy,
+                "force": bool(force),
+                "force_mode": selected_force_mode,
+                "interactive_max_rounds": interactive_max_rounds,
+                "html_scroll_max_rounds": html_scroll_max_rounds,
+                "html_stable_rounds": html_stable_rounds,
+            },
+        )
+
+        existing_business_doc = await businesses.find_one({"name_normalized": name_normalized})
+        stored_review_count_before = 0
+        if existing_business_doc:
+            stored_review_count_before = await reviews.count_documents(
+                {"business_id": str(existing_business_doc["_id"])}
+            )
+        if existing_business_doc and not force:
+            existing_business_id = str(existing_business_doc["_id"])
+            existing_review_count = stored_review_count_before
+            if existing_review_count > 0:
+                listing_payload = existing_business_doc.get("listing") if isinstance(existing_business_doc.get("listing"), dict) else {}
+                await self._emit_progress(
+                    progress_callback,
+                    "scrape_pipeline_cache_hit",
+                    "Skipping scrape because stored reviews already exist.",
+                    {"business_id": existing_business_id, "review_count": existing_review_count},
+                )
+                return self._sanitize_response_payload(
+                    {
+                        "business_id": existing_business_id,
+                        "name": str(existing_business_doc.get("name", "") or business_name),
+                        "cached_scrape": True,
+                        "strategy": selected_strategy,
+                        "force_mode": selected_force_mode,
+                        "listing": listing_payload,
+                        "stats": existing_business_doc.get("stats", {}),
+                        "review_count": existing_review_count,
+                        "stored_review_count_before": stored_review_count_before,
+                        "stored_review_count_after": existing_review_count,
+                        "scrape_produced_new_reviews": False,
+                        "scraped_review_count": existing_business_doc.get("scraped_review_count"),
+                        "processed_review_count": existing_business_doc.get("processed_review_count"),
+                        "listing_total_reviews": listing_payload.get("total_reviews") if isinstance(listing_payload, dict) else None,
+                    }
+                )
+
+        listing, raw_reviews = await self._scrape_business_page(
+            business_name,
+            strategy=selected_strategy,
+            interactive_max_rounds=interactive_max_rounds,
+            html_scroll_max_rounds=html_scroll_max_rounds,
+            html_stable_rounds=html_stable_rounds,
+            progress_callback=progress_callback,
+        )
+        listing_payload = Listing(**listing).model_dump(mode="python")
+        scraped_review_count = len(raw_reviews)
+        normalized_raw_reviews = [self._normalize_scraped_review(item) for item in raw_reviews]
+        processed_reviews = self.preprocessor.process(normalized_raw_reviews)
+        processed_review_count = len(processed_reviews)
+        stats = self.preprocessor.compute_stats(processed_reviews)
+
+        business_doc = await businesses.find_one_and_update(
+            {"name_normalized": name_normalized},
+            {
+                "$set": {
+                    "name": business_name,
+                    "name_normalized": name_normalized,
+                    "source": "google_maps",
+                    "listing": listing_payload,
+                    "stats": stats,
+                    "review_count": processed_review_count,
+                    "scraped_review_count": scraped_review_count,
+                    "processed_review_count": processed_review_count,
+                    "last_scraped_at": now,
+                    "updated_at": now,
+                },
+                "$setOnInsert": {"created_at": now},
+            },
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+        if business_doc is None:
+            raise RuntimeError("Failed to upsert business document during scrape stage.")
+
+        business_id = str(business_doc["_id"])
+        source_profile = await self._get_or_create_source_profile(
+            source_profiles_collection=source_profiles,
+            business_id=business_id,
+            source="google_maps",
+            name_normalized=name_normalized,
+            listing_payload=listing_payload,
+            now=now,
+        )
+        source_profile_id = str(source_profile["_id"])
+
+        legacy_dataset_result = await self._package_legacy_reviews_into_dataset(
+            reviews_collection=reviews,
+            datasets_collection=datasets,
+            source_profiles_collection=source_profiles,
+            business_id=business_id,
+            source_profile_id=source_profile_id,
+            now=now,
+        )
+        legacy_dataset_id = legacy_dataset_result.get("dataset_id")
+
+        scrape_run = await self._create_scrape_run(
+            scrape_runs_collection=scrape_runs,
+            business_id=business_id,
+            source_profile_id=source_profile_id,
+            source="google_maps",
+            strategy=selected_strategy,
+            force=bool(force),
+            force_mode=selected_force_mode,
+            now=now,
+        )
+        scrape_run_id = str(scrape_run["_id"])
+        await source_profiles.update_one(
+            {"_id": source_profile["_id"]},
+            {
+                "$inc": {"metrics.total_runs": 1},
+                "$set": {"updated_at": now},
+            },
+        )
+        scrape_dataset = await self._create_dataset_snapshot(
+            datasets_collection=datasets,
+            business_id=business_id,
+            source_profile_id=source_profile_id,
+            source="google_maps",
+            scrape_run_id=scrape_run_id,
+            now=now,
+        )
+        scrape_dataset_id = str(scrape_dataset["_id"])
+
+        await self._upsert_reviews(
+            reviews_collection=reviews,
+            business_id=business_id,
+            processed_reviews=processed_reviews,
+            scraped_at=now,
+            source_profile_id=source_profile_id,
+            dataset_id=scrape_dataset_id,
+            scrape_run_id=scrape_run_id,
+        )
+        scrape_dataset_review_count = await reviews.count_documents(
+            {"business_id": business_id, "dataset_id": scrape_dataset_id}
+        )
+        dataset_status = "ready" if scrape_dataset_review_count > 0 else "empty"
+        await datasets.update_one(
+            {"_id": scrape_dataset["_id"]},
+            {
+                "$set": {
+                    "status": dataset_status,
+                    "metrics.review_count": scrape_dataset_review_count,
+                    "updated_at": now,
+                }
+            },
+        )
+        if scrape_dataset_review_count > 0:
+            await source_profiles.update_one(
+                {"_id": source_profile["_id"]},
+                {
+                    "$set": {
+                        "active_dataset_id": scrape_dataset_id,
+                        "active_scrape_run_id": scrape_run_id,
+                        "metrics.active_review_count": scrape_dataset_review_count,
+                        "updated_at": now,
+                    }
+                },
+            )
+
+        review_count = await reviews.count_documents({"business_id": business_id})
+        fallback_active_dataset_id = str(
+            source_profile.get("active_dataset_id") or legacy_dataset_id or ""
+        ).strip() or None
+        analysis_dataset_id = (
+            scrape_dataset_id
+            if scrape_dataset_review_count > 0
+            else fallback_active_dataset_id
+        )
+        await businesses.update_one(
+            {"_id": business_doc["_id"]},
+            {
+                "$set": {
+                    "review_count": review_count,
+                    "active_dataset_id": analysis_dataset_id,
+                    "updated_at": now,
+                }
+            },
+        )
+
+        scrape_produced_new_reviews = bool(scrape_dataset_review_count > 0)
+
+        if (
+            bool(force)
+            and selected_force_mode == "strict_rescrape"
+            and not scrape_produced_new_reviews
+        ):
+            await self._finalize_scrape_run(
+                scrape_runs_collection=scrape_runs,
+                scrape_run_id=scrape_run_id,
+                now=now,
+                status="failed",
+                metrics={
+                    "scraped_review_count": scraped_review_count,
+                    "processed_review_count": processed_review_count,
+                    "stored_review_count_before": stored_review_count_before,
+                    "stored_review_count_after": review_count,
+                    "dataset_review_count": scrape_dataset_review_count,
+                },
+                dataset_id=scrape_dataset_id,
+            )
+            await self._emit_progress(
+                progress_callback,
+                "scrape_pipeline_strict_rescrape_failed",
+                "Strict rescrape mode failed because no new reviews were scraped.",
+                {
+                    "business_id": business_id,
+                    "strategy": selected_strategy,
+                    "force_mode": selected_force_mode,
+                    "scraped_review_count": scraped_review_count,
+                    "dataset_review_count": scrape_dataset_review_count,
+                    "dataset_id": scrape_dataset_id,
+                    "analysis_dataset_id": analysis_dataset_id,
+                    "legacy_dataset_id": legacy_dataset_id,
+                },
+            )
+            raise RuntimeError(
+                "Strict rescrape mode is enabled and scrape produced 0 reviews. "
+                "No fallback to stored reviews was applied."
+            )
+
+        await self._finalize_scrape_run(
+            scrape_runs_collection=scrape_runs,
+            scrape_run_id=scrape_run_id,
+            now=now,
+            status="done",
+            metrics={
+                "scraped_review_count": scraped_review_count,
+                "processed_review_count": processed_review_count,
+                "stored_review_count_before": stored_review_count_before,
+                "stored_review_count_after": review_count,
+                "dataset_review_count": scrape_dataset_review_count,
+            },
+            dataset_id=scrape_dataset_id,
+        )
+
+        if not scrape_produced_new_reviews and review_count > 0:
+            await self._emit_progress(
+                progress_callback,
+                "scrape_pipeline_no_new_reviews",
+                "Scrape produced no new reviews; continuing with stored reviews.",
+                {
+                    "business_id": business_id,
+                    "stored_review_count_before": stored_review_count_before,
+                    "stored_review_count_after": review_count,
+                    "analysis_dataset_id": analysis_dataset_id,
+                    "legacy_dataset_id": legacy_dataset_id,
+                },
+            )
+
+        await self._emit_progress(
+            progress_callback,
+            "scrape_pipeline_persisted",
+            "Scrape stage persisted listing and reviews.",
+            {
+                "business_id": business_id,
+                "review_count": review_count,
+                "scraped_review_count": scraped_review_count,
+                "processed_review_count": processed_review_count,
+                "stored_review_count_before": stored_review_count_before,
+                "stored_review_count_after": review_count,
+                "dataset_review_count": scrape_dataset_review_count,
+                "dataset_id": scrape_dataset_id,
+                "analysis_dataset_id": analysis_dataset_id,
+                "legacy_dataset_id": legacy_dataset_id,
+                "source_profile_id": source_profile_id,
+                "scrape_run_id": scrape_run_id,
+                "scrape_produced_new_reviews": scrape_produced_new_reviews,
+            },
+        )
+        return self._sanitize_response_payload(
+            {
+                "business_id": business_id,
+                "name": business_name,
+                "cached_scrape": False,
+                "strategy": selected_strategy,
+                "force_mode": selected_force_mode,
+                "listing": listing_payload,
+                "stats": stats,
+                "review_count": review_count,
+                "scraped_review_count": scraped_review_count,
+                "processed_review_count": processed_review_count,
+                "stored_review_count_before": stored_review_count_before,
+                "stored_review_count_after": review_count,
+                "dataset_review_count": scrape_dataset_review_count,
+                "dataset_id": scrape_dataset_id,
+                "analysis_dataset_id": analysis_dataset_id,
+                "legacy_dataset_id": legacy_dataset_id,
+                "source_profile_id": source_profile_id,
+                "scrape_run_id": scrape_run_id,
+                "scrape_produced_new_reviews": scrape_produced_new_reviews,
+                "listing_total_reviews": listing_payload.get("total_reviews"),
+            }
         )
 
     async def get_business(self, business_id: str, include_listing: bool = True) -> dict:
@@ -178,12 +533,14 @@ class BusinessService:
         self,
         business_id: str,
         *,
+        dataset_id: str | None = None,
         batchers: list[str] | None = None,
         batch_size: int | None = None,
         max_reviews_pool: int | None = None,
     ) -> dict:
         return await self.reanalyze_use_case.execute(
             business_id=business_id,
+            dataset_id=dataset_id,
             batchers=batchers,
             batch_size=batch_size,
             max_reviews_pool=max_reviews_pool,
@@ -194,15 +551,27 @@ class BusinessService:
         name: str,
         force: bool = False,
         strategy: str | None = None,
+        force_mode: str | None = None,
+        interactive_max_rounds: int | None = None,
+        html_scroll_max_rounds: int | None = None,
+        html_stable_rounds: int | None = None,
     ) -> dict:
         business_name = self._validate_business_name(name)
         selected_strategy = self._resolve_reviews_strategy(strategy)
+        selected_force_mode = self._resolve_force_mode(force_mode)
         name_normalized = self._normalize_text(business_name)
-        return await self.job_service.enqueue_job(
+        task_payload = AnalyzeBusinessTaskPayload(
             name=business_name,
-            name_normalized=name_normalized,
             force=bool(force),
             strategy=selected_strategy,
+            force_mode=selected_force_mode,
+            interactive_max_rounds=interactive_max_rounds,
+            html_scroll_max_rounds=html_scroll_max_rounds,
+            html_stable_rounds=html_stable_rounds,
+        )
+        return await self.job_service.enqueue_analyze_business_job(
+            task_payload=task_payload,
+            name_normalized=name_normalized,
         )
 
     async def get_business_analysis_job(self, job_id: str) -> dict:
@@ -265,8 +634,30 @@ class BusinessService:
         business_name: str,
         *,
         strategy: str,
+        interactive_max_rounds: int | None = None,
+        html_scroll_max_rounds: int | None = None,
+        html_stable_rounds: int | None = None,
         progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> tuple[dict, list[dict]]:
+        effective_interactive_max_rounds = self._resolve_optional_int_override(
+            value=interactive_max_rounds,
+            fallback=max(1, settings.scraper_interactive_max_rounds),
+            min_value=1,
+            field_name="interactive_max_rounds",
+        )
+        effective_html_scroll_max_rounds = self._resolve_optional_int_override(
+            value=html_scroll_max_rounds,
+            fallback=max(0, settings.scraper_html_scroll_max_rounds),
+            min_value=0,
+            field_name="html_scroll_max_rounds",
+        )
+        effective_html_stable_rounds = self._resolve_optional_int_override(
+            value=html_stable_rounds,
+            fallback=max(2, settings.scraper_html_stable_rounds),
+            min_value=2,
+            field_name="html_stable_rounds",
+        )
+
         async def _scraper_progress(event: dict[str, Any]) -> None:
             await self._emit_progress(
                 progress_callback,
@@ -308,11 +699,22 @@ class BusinessService:
                 },
             )
 
+            await self._emit_progress(
+                progress_callback,
+                "scraper_reviews_started",
+                "Starting reviews extraction.",
+                {
+                    "strategy": strategy,
+                    "interactive_max_rounds": effective_interactive_max_rounds,
+                    "html_scroll_max_rounds": effective_html_scroll_max_rounds,
+                    "html_stable_rounds": effective_html_stable_rounds,
+                },
+            )
             reviews = await self.scraper.extract_reviews(
                 strategy=strategy,
-                max_rounds=max(1, settings.scraper_interactive_max_rounds),
-                html_scroll_max_rounds=max(0, settings.scraper_html_scroll_max_rounds),
-                html_stable_rounds=max(2, settings.scraper_html_stable_rounds),
+                max_rounds=effective_interactive_max_rounds,
+                html_scroll_max_rounds=effective_html_scroll_max_rounds,
+                html_stable_rounds=effective_html_stable_rounds,
                 html_min_interval_s=max(0.1, settings.scraper_html_scroll_min_interval_s),
                 html_max_interval_s=max(
                     max(0.1, settings.scraper_html_scroll_min_interval_s),
@@ -347,6 +749,41 @@ class BusinessService:
             raise ValueError(f"Unknown strategy '{raw_value}'. Supported: {supported}.")
         return normalized
 
+    def _resolve_force_mode(self, force_mode: str | None) -> str:
+        if force_mode is None:
+            return "fallback_existing"
+
+        raw_value = str(force_mode or "").strip()
+        normalized = (
+            self._normalize_text(raw_value)
+            .replace("-", "_")
+            .replace(" ", "_")
+        )
+        if normalized in {"", "default"}:
+            normalized = "fallback_existing"
+        if normalized not in self._SUPPORTED_FORCE_MODES:
+            supported = ", ".join(sorted(self._SUPPORTED_FORCE_MODES))
+            raise ValueError(f"Unknown force_mode '{raw_value}'. Supported: {supported}.")
+        return normalized
+
+    def _resolve_optional_int_override(
+        self,
+        *,
+        value: int | None,
+        fallback: int,
+        min_value: int,
+        field_name: str,
+    ) -> int:
+        if value is None:
+            return int(fallback)
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field_name} must be an integer.") from exc
+        if parsed < min_value:
+            raise ValueError(f"{field_name} must be >= {min_value}.")
+        return parsed
+
     async def _emit_progress(
         self,
         callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None,
@@ -377,6 +814,9 @@ class BusinessService:
         business_id: str,
         processed_reviews: list[dict],
         scraped_at: datetime,
+        source_profile_id: str | None = None,
+        dataset_id: str | None = None,
+        scrape_run_id: str | None = None,
     ) -> None:
         for item in processed_reviews:
             owner_reply_text = str(item.get("owner_reply", "") or "").strip()
@@ -406,15 +846,271 @@ class BusinessService:
             review_payload["review_id"] = item.get("review_id")
             review_payload["updated_at"] = scraped_at
             review_payload["fingerprint"] = self._review_fingerprint(review_payload)
+            if source_profile_id:
+                review_payload["source_profile_id"] = source_profile_id
+            if dataset_id:
+                review_payload["dataset_id"] = dataset_id
+            if scrape_run_id:
+                review_payload["scrape_run_id"] = scrape_run_id
+
+            if dataset_id:
+                upsert_query = {
+                    "business_id": business_id,
+                    "dataset_id": dataset_id,
+                    "fingerprint": review_payload["fingerprint"],
+                }
+            else:
+                upsert_query = {
+                    "business_id": business_id,
+                    "fingerprint": review_payload["fingerprint"],
+                }
 
             await reviews_collection.update_one(
-                {"business_id": business_id, "fingerprint": review_payload["fingerprint"]},
+                upsert_query,
                 {
                     "$set": review_payload,
                     "$setOnInsert": {"created_at": scraped_at},
                 },
                 upsert=True,
             )
+
+    async def _get_or_create_source_profile(
+        self,
+        *,
+        source_profiles_collection,
+        business_id: str,
+        source: str,
+        name_normalized: str,
+        listing_payload: dict[str, Any],
+        now: datetime,
+    ) -> dict[str, Any]:
+        normalized_source = str(source or "google_maps").strip() or "google_maps"
+        existing = await source_profiles_collection.find_one(
+            {
+                "business_id": business_id,
+                "source": normalized_source,
+            }
+        )
+        if existing is not None:
+            updated = await source_profiles_collection.find_one_and_update(
+                {"_id": existing["_id"]},
+                {
+                    "$set": {
+                        "name_normalized": name_normalized,
+                        "latest_listing": listing_payload,
+                        "updated_at": now,
+                    }
+                },
+                return_document=ReturnDocument.AFTER,
+            )
+            if updated is None:
+                raise RuntimeError("Failed to update source profile.")
+            return updated
+
+        source_profile_doc = {
+            "business_id": business_id,
+            "source": normalized_source,
+            "name_normalized": name_normalized,
+            "latest_listing": listing_payload,
+            "active_dataset_id": None,
+            "active_scrape_run_id": None,
+            "metrics": {
+                "total_runs": 0,
+                "active_review_count": 0,
+            },
+            "created_at": now,
+            "updated_at": now,
+        }
+        insert_result = await source_profiles_collection.insert_one(source_profile_doc)
+        source_profile_doc["_id"] = insert_result.inserted_id
+        return source_profile_doc
+
+    async def _package_legacy_reviews_into_dataset(
+        self,
+        *,
+        reviews_collection,
+        datasets_collection,
+        source_profiles_collection,
+        business_id: str,
+        source_profile_id: str,
+        now: datetime,
+    ) -> dict[str, Any]:
+        legacy_dataset_doc = await datasets_collection.find_one(
+            {
+                "business_id": business_id,
+                "source_profile_id": source_profile_id,
+                "kind": "legacy_packaged",
+            },
+            sort=[("created_at", 1), ("_id", 1)],
+        )
+        if legacy_dataset_doc is not None:
+            return {
+                "dataset_id": str(legacy_dataset_doc["_id"]),
+                "migrated_count": int((legacy_dataset_doc.get("metrics") or {}).get("review_count") or 0),
+                "created": False,
+            }
+
+        legacy_query = {
+            "business_id": business_id,
+            "$or": [
+                {"dataset_id": {"$exists": False}},
+                {"dataset_id": None},
+                {"dataset_id": ""},
+            ],
+        }
+        legacy_count = await reviews_collection.count_documents(legacy_query)
+        if legacy_count <= 0:
+            return {"dataset_id": None, "migrated_count": 0, "created": False}
+
+        dataset_doc = {
+            "business_id": business_id,
+            "source_profile_id": source_profile_id,
+            "source": "google_maps",
+            "kind": "legacy_packaged",
+            "status": "migrating",
+            "scrape_run_id": None,
+            "metrics": {
+                "review_count": legacy_count,
+            },
+            "created_at": now,
+            "updated_at": now,
+        }
+        insert_result = await datasets_collection.insert_one(dataset_doc)
+        dataset_id = str(insert_result.inserted_id)
+
+        await reviews_collection.update_many(
+            legacy_query,
+            {
+                "$set": {
+                    "dataset_id": dataset_id,
+                    "source_profile_id": source_profile_id,
+                    "updated_at": now,
+                }
+            },
+        )
+        migrated_count = await reviews_collection.count_documents(
+            {
+                "business_id": business_id,
+                "dataset_id": dataset_id,
+            }
+        )
+        await datasets_collection.update_one(
+            {"_id": insert_result.inserted_id},
+            {
+                "$set": {
+                    "status": "ready" if migrated_count > 0 else "empty",
+                    "metrics.review_count": migrated_count,
+                    "updated_at": now,
+                }
+            },
+        )
+        source_profile_object_id = self._parse_object_id(source_profile_id, field_name="source_profile_id")
+        await source_profiles_collection.update_one(
+            {
+                "_id": source_profile_object_id,
+                "$or": [
+                    {"active_dataset_id": {"$exists": False}},
+                    {"active_dataset_id": None},
+                    {"active_dataset_id": ""},
+                ],
+            },
+            {
+                "$set": {
+                    "active_dataset_id": dataset_id,
+                    "metrics.active_review_count": migrated_count,
+                    "updated_at": now,
+                }
+            },
+        )
+        return {"dataset_id": dataset_id, "migrated_count": migrated_count, "created": True}
+
+    async def _create_scrape_run(
+        self,
+        *,
+        scrape_runs_collection,
+        business_id: str,
+        source_profile_id: str,
+        source: str,
+        strategy: str,
+        force: bool,
+        force_mode: str,
+        now: datetime,
+    ) -> dict[str, Any]:
+        scrape_run_doc = {
+            "business_id": business_id,
+            "source_profile_id": source_profile_id,
+            "source": str(source or "google_maps").strip() or "google_maps",
+            "strategy": str(strategy or "scroll_copy").strip() or "scroll_copy",
+            "force": bool(force),
+            "force_mode": str(force_mode or "fallback_existing").strip() or "fallback_existing",
+            "status": "running",
+            "metrics": {
+                "scraped_review_count": 0,
+                "processed_review_count": 0,
+                "stored_review_count_before": 0,
+                "stored_review_count_after": 0,
+                "dataset_review_count": 0,
+            },
+            "started_at": now,
+            "finished_at": None,
+            "created_at": now,
+            "updated_at": now,
+        }
+        insert_result = await scrape_runs_collection.insert_one(scrape_run_doc)
+        scrape_run_doc["_id"] = insert_result.inserted_id
+        return scrape_run_doc
+
+    async def _create_dataset_snapshot(
+        self,
+        *,
+        datasets_collection,
+        business_id: str,
+        source_profile_id: str,
+        source: str,
+        scrape_run_id: str,
+        now: datetime,
+    ) -> dict[str, Any]:
+        dataset_doc = {
+            "business_id": business_id,
+            "source_profile_id": source_profile_id,
+            "source": str(source or "google_maps").strip() or "google_maps",
+            "kind": "scrape_snapshot",
+            "status": "collecting",
+            "scrape_run_id": scrape_run_id,
+            "metrics": {
+                "review_count": 0,
+            },
+            "created_at": now,
+            "updated_at": now,
+        }
+        insert_result = await datasets_collection.insert_one(dataset_doc)
+        dataset_doc["_id"] = insert_result.inserted_id
+        return dataset_doc
+
+    async def _finalize_scrape_run(
+        self,
+        *,
+        scrape_runs_collection,
+        scrape_run_id: str,
+        now: datetime,
+        status: str,
+        metrics: dict[str, Any],
+        dataset_id: str | None = None,
+    ) -> None:
+        scrape_run_object_id = self._parse_object_id(scrape_run_id, field_name="scrape_run_id")
+        set_payload: dict[str, Any] = {
+            "status": str(status or "done").strip() or "done",
+            "updated_at": now,
+            "finished_at": now,
+        }
+        if dataset_id:
+            set_payload["dataset_id"] = str(dataset_id).strip()
+        for key, value in metrics.items():
+            set_payload[f"metrics.{key}"] = value
+        await scrape_runs_collection.update_one(
+            {"_id": scrape_run_object_id},
+            {"$set": set_payload},
+        )
 
     def _validate_business_name(self, name: str) -> str:
         cleaned = re.sub(r"\s+", " ", str(name or "")).strip()

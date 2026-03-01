@@ -68,6 +68,13 @@ class GoogleMapsScraper:
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
         self._last_click_ts: float | None = None
+        self._last_reviews_open_state: dict[str, Any] = {
+            "status": "unknown",
+            "section_variant": "none",
+            "found": False,
+            "panel_ready": False,
+            "review_count": 0,
+        }
         self._rng = random.Random()
         self._default_user_agent = (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -162,10 +169,20 @@ class GoogleMapsScraper:
         self._page = None
         self._external_page = False
         self._last_click_ts = None
+        self._last_reviews_open_state = {
+            "status": "unknown",
+            "section_variant": "none",
+            "found": False,
+            "panel_ready": False,
+            "review_count": 0,
+        }
 
     @property
     def page(self) -> Page:
         return self._require_page()
+
+    def get_last_reviews_open_state(self) -> dict[str, Any]:
+        return dict(self._last_reviews_open_state)
 
     async def search_business(self, name: str) -> None:
         page = await self.start()
@@ -253,7 +270,7 @@ class GoogleMapsScraper:
         bottom_wait_max_ms: int = 3600,
         progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> str:
-        reviews_open = await self._ensure_reviews_open()
+        reviews_open = await self._ensure_reviews_open(progress_callback=progress_callback)
         if not reviews_open:
             return ""
 
@@ -395,6 +412,13 @@ class GoogleMapsScraper:
                 "aria-label",
                 contains_terms=("estrella", "star"),
             )
+            if not rating_label:
+                rating_label = self._strip_html_markup(
+                    self._extract_first_html_fragment(
+                        card_html,
+                        r"<span[^>]*class=['\"][^'\"]*fzvQIb[^'\"]*['\"][^>]*>(.*?)</span>",
+                    )
+                )
             rating = self._parse_rating(rating_label)
 
             relative_time = self._strip_html_markup(
@@ -462,19 +486,46 @@ class GoogleMapsScraper:
     ) -> list[dict]:
         selected_strategy = self._resolve_reviews_strategy(strategy)
 
-        if selected_strategy == "scroll_copy":
-            reviews_html = await self.collect_reviews_html_snapshot(
-                max_rounds=html_scroll_max_rounds,
-                stable_rounds=html_stable_rounds,
-                min_pause_s=html_min_interval_s,
-                max_pause_s=html_max_interval_s,
-                progress_callback=progress_callback,
-            )
-            return self.extract_reviews_from_html(reviews_html)
+        async def _run_strategy(name: str) -> list[dict]:
+            if name == "scroll_copy":
+                reviews_html = await self.collect_reviews_html_snapshot(
+                    max_rounds=html_scroll_max_rounds,
+                    stable_rounds=html_stable_rounds,
+                    min_pause_s=html_min_interval_s,
+                    max_pause_s=html_max_interval_s,
+                    progress_callback=progress_callback,
+                )
+                return self.extract_reviews_from_html(reviews_html)
 
-        if max_rounds > 0:
-            await self.scroll_reviews(max_rounds=max_rounds)
-        return await self._extract_reviews_interactive()
+            if max_rounds > 0:
+                await self.scroll_reviews(max_rounds=max_rounds)
+            return await self._extract_reviews_interactive()
+
+        primary_items = await _run_strategy(selected_strategy)
+        if primary_items:
+            return primary_items
+
+        fallback_strategy = "interactive" if selected_strategy == "scroll_copy" else "scroll_copy"
+        await self._emit_progress(
+            progress_callback,
+            {
+                "event": "reviews_strategy_fallback_triggered",
+                "primary_strategy": selected_strategy,
+                "fallback_strategy": fallback_strategy,
+                "reason": "primary_strategy_returned_zero_reviews",
+            },
+        )
+        fallback_items = await _run_strategy(fallback_strategy)
+        await self._emit_progress(
+            progress_callback,
+            {
+                "event": "reviews_strategy_fallback_finished",
+                "primary_strategy": selected_strategy,
+                "fallback_strategy": fallback_strategy,
+                "fallback_review_count": len(fallback_items),
+            },
+        )
+        return fallback_items
 
     async def _extract_reviews_interactive(self) -> list[dict]:
         reviews_open = await self._ensure_reviews_open()
@@ -500,6 +551,8 @@ class GoogleMapsScraper:
                 author_name = self._clean_text(await card.get_attribute("aria-label"))
 
             rating_label = await self._attribute_from_descendant_patterns(card, "RATING_LABEL", "aria-label")
+            if not rating_label:
+                rating_label = await self._text_from_descendant_patterns(card, "RATING_TEXT")
             rating = self._parse_rating(rating_label)
             relative_time = await self._text_from_locator(card.locator("span.rsqaWe").first)
             review_text = await self._text_from_locator(card.locator(".MyEned .wiI7pd").first)
@@ -867,51 +920,199 @@ class GoogleMapsScraper:
 
         raise RuntimeError("Business listing did not become ready after search.")
 
-    async def _ensure_reviews_open(self) -> bool:
+    async def _ensure_reviews_open(
+        self,
+        progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
+    ) -> bool:
+        await self._emit_progress(
+            progress_callback,
+            {
+                "event": "reviews_panel_open_started",
+            },
+        )
         await self._dismiss_google_consent_if_present()
         if await self._wait_for_reviews_ready(timeout_ms=2200):
+            open_state = self.get_last_reviews_open_state()
+            await self._emit_progress(
+                progress_callback,
+                {
+                    "event": "reviews_panel_open_ready_already",
+                    "open_status": open_state.get("status"),
+                    "section_variant": open_state.get("section_variant"),
+                    "found_scrollable_feed": bool(open_state.get("found")),
+                    "review_count": int(open_state.get("review_count", 0)),
+                },
+            )
             return True
 
         if await self._is_limited_maps_view():
+            await self._emit_progress(
+                progress_callback,
+                {
+                    "event": "reviews_panel_open_blocked_limited_view",
+                },
+            )
             return False
 
         if not await self._has_review_entrypoint():
+            await self._emit_progress(
+                progress_callback,
+                {
+                    "event": "reviews_panel_open_no_entrypoint",
+                },
+            )
             return False
 
         page = self._require_page()
 
-        for _ in range(3):
+        for attempt in range(1, 4):
+            await self._emit_progress(
+                progress_callback,
+                {
+                    "event": "reviews_panel_open_attempt",
+                    "attempt": attempt,
+                },
+            )
             clicked_more_reviews = await self._click_more_reviews_summary_button()
             if clicked_more_reviews:
+                await self._emit_progress(
+                    progress_callback,
+                    {
+                        "event": "reviews_panel_open_click",
+                        "attempt": attempt,
+                        "action": "more_reviews_button",
+                        "clicked": True,
+                    },
+                )
                 await page.wait_for_timeout(self._rng.randint(900, 1700))
 
             if await self._wait_for_reviews_ready(timeout_ms=5500):
+                open_state = self.get_last_reviews_open_state()
+                await self._emit_progress(
+                    progress_callback,
+                    {
+                        "event": "reviews_panel_open_succeeded",
+                        "attempt": attempt,
+                        "action": "more_reviews_or_ready_check",
+                        "open_status": open_state.get("status"),
+                        "section_variant": open_state.get("section_variant"),
+                        "found_scrollable_feed": bool(open_state.get("found")),
+                        "review_count": int(open_state.get("review_count", 0)),
+                    },
+                )
                 return True
 
             clicked_tab = await self._click_first_valid_review_button_in_group("REVIEWS_TAB")
             if clicked_tab:
+                await self._emit_progress(
+                    progress_callback,
+                    {
+                        "event": "reviews_panel_open_click",
+                        "attempt": attempt,
+                        "action": "reviews_tab_button",
+                        "clicked": True,
+                    },
+                )
                 await page.wait_for_timeout(self._rng.randint(900, 1700))
 
             if await self._wait_for_reviews_ready(timeout_ms=4500):
+                open_state = self.get_last_reviews_open_state()
+                await self._emit_progress(
+                    progress_callback,
+                    {
+                        "event": "reviews_panel_open_succeeded",
+                        "attempt": attempt,
+                        "action": "reviews_tab_button",
+                        "open_status": open_state.get("status"),
+                        "section_variant": open_state.get("section_variant"),
+                        "found_scrollable_feed": bool(open_state.get("found")),
+                        "review_count": int(open_state.get("review_count", 0)),
+                    },
+                )
                 return True
 
             clicked_button = await self._click_first_valid_review_button_in_group("REVIEWS_BUTTON")
             if clicked_button:
+                await self._emit_progress(
+                    progress_callback,
+                    {
+                        "event": "reviews_panel_open_click",
+                        "attempt": attempt,
+                        "action": "reviews_button_group",
+                        "clicked": True,
+                    },
+                )
                 await page.wait_for_timeout(self._rng.randint(900, 1700))
 
             if await self._wait_for_reviews_ready(timeout_ms=5500):
+                open_state = self.get_last_reviews_open_state()
+                await self._emit_progress(
+                    progress_callback,
+                    {
+                        "event": "reviews_panel_open_succeeded",
+                        "attempt": attempt,
+                        "action": "reviews_button_group",
+                        "open_status": open_state.get("status"),
+                        "section_variant": open_state.get("section_variant"),
+                        "found_scrollable_feed": bool(open_state.get("found")),
+                        "review_count": int(open_state.get("review_count", 0)),
+                    },
+                )
                 return True
 
             # Final fallback: strict button-only scan with nested div text.
             if await self._click_review_entrypoint():
+                await self._emit_progress(
+                    progress_callback,
+                    {
+                        "event": "reviews_panel_open_click",
+                        "attempt": attempt,
+                        "action": "fallback_review_entrypoint",
+                        "clicked": True,
+                    },
+                )
                 if await self._wait_for_reviews_ready(timeout_ms=5000):
+                    open_state = self.get_last_reviews_open_state()
+                    await self._emit_progress(
+                        progress_callback,
+                        {
+                            "event": "reviews_panel_open_succeeded",
+                            "attempt": attempt,
+                            "action": "fallback_review_entrypoint",
+                            "open_status": open_state.get("status"),
+                            "section_variant": open_state.get("section_variant"),
+                            "found_scrollable_feed": bool(open_state.get("found")),
+                            "review_count": int(open_state.get("review_count", 0)),
+                        },
+                    )
                     return True
 
-        return await self._wait_for_reviews_ready(timeout_ms=2500)
+        final_ready = await self._wait_for_reviews_ready(timeout_ms=2500)
+        final_state = self.get_last_reviews_open_state()
+        await self._emit_progress(
+            progress_callback,
+            {
+                "event": "reviews_panel_open_finished",
+                "opened": bool(final_ready),
+                "open_status": final_state.get("status"),
+                "section_variant": final_state.get("section_variant"),
+                "found_scrollable_feed": bool(final_state.get("found")),
+                "review_count": int(final_state.get("review_count", 0)),
+            },
+        )
+        return final_ready
 
     async def _wait_for_reviews_ready(self, timeout_ms: int = 8000) -> bool:
         page = self._require_page()
         deadline = monotonic() + (timeout_ms / 1000)
+        classic_phase_deadline = monotonic() + min(3.2, (timeout_ms / 1000) * 0.6)
+        self._last_reviews_open_state = {
+            "status": "not_open",
+            "section_variant": "none",
+            "found": False,
+            "panel_ready": False,
+            "review_count": 0,
+        }
 
         while monotonic() < deadline:
             # If "Más reseñas (N)" is still visible, we are not in the final full feed yet.
@@ -920,14 +1121,64 @@ class GoogleMapsScraper:
                 continue
 
             feed_state = await self._reviews_feed_state(step_px=None, capture_html=False)
-            if bool(feed_state.get("panel_ready")):
-                # Full reviews panel is open (sort/search/filter controls present).
+            panel_ready = bool(feed_state.get("panel_ready"))
+            section_variant = str(feed_state.get("section_variant", "") or "")
+            now = monotonic()
+            in_classic_phase = now <= classic_phase_deadline
+            variant_accepted = (
+                section_variant == "classic_controls"
+                if in_classic_phase
+                else section_variant in {"classic_controls", "search_filter_controls"}
+            )
+
+            if panel_ready and variant_accepted:
+                if section_variant == "search_filter_controls" and not bool(feed_state.get("found")):
+                    # Some profiles open a search/filter reviews section without a scrollable feed.
+                    # Try a few extra clicks to promote it to classic controls.
+                    for _ in range(4):
+                        clicked = await self._click_more_reviews_summary_button()
+                        if not clicked:
+                            clicked = await self._click_first_valid_review_button_in_group("REVIEWS_TAB")
+                        if not clicked:
+                            clicked = await self._click_first_valid_review_button_in_group("REVIEWS_BUTTON")
+                        if clicked:
+                            await page.wait_for_timeout(self._rng.randint(850, 1600))
+                        candidate = await self._reviews_feed_state(step_px=None, capture_html=False)
+                        candidate_variant = str(candidate.get("section_variant", "") or "")
+                        if bool(candidate.get("found")) or candidate_variant == "classic_controls":
+                            feed_state = candidate
+                            break
+
+                # Full reviews panel is open.
+                # Fallback order:
+                # 1) classic_controls
+                # 2) search_filter_controls
                 await self._scroll_reviews_feed_once()
                 await page.wait_for_timeout(700)
+                final_state = await self._reviews_feed_state(step_px=None, capture_html=False)
+                final_variant = str(final_state.get("section_variant", "") or section_variant)
+                final_found = bool(final_state.get("found"))
+                open_status = "open_scrollable"
+                if final_variant == "search_filter_controls" and not final_found:
+                    open_status = "open_non_scrollable"
+                self._last_reviews_open_state = {
+                    "status": open_status,
+                    "section_variant": final_variant or "none",
+                    "found": final_found,
+                    "panel_ready": bool(final_state.get("panel_ready")),
+                    "review_count": int(final_state.get("review_count", 0)),
+                }
                 return True
 
             await page.wait_for_timeout(220)
 
+        self._last_reviews_open_state = {
+            "status": "not_open",
+            "section_variant": "none",
+            "found": False,
+            "panel_ready": False,
+            "review_count": 0,
+        }
         return False
 
     async def _is_reviews_tab_selected(self) -> bool:
@@ -1023,6 +1274,25 @@ class GoogleMapsScraper:
                 const requestedStep = payload.stepPx;
                 const captureHtml = Boolean(payload.captureHtml);
 
+                const normalizeText = (value) => {
+                    if (typeof value !== "string") return "";
+                    return value.trim().toLowerCase();
+                };
+
+                const normalizeLoose = (value) => {
+                    const normalized = normalizeText(value);
+                    try {
+                        return normalized.normalize("NFD").replace(/[\\u0300-\\u036f]/g, "");
+                    } catch (_) {
+                        return normalized;
+                    }
+                };
+
+                const hasReviewKeyword = (value) => {
+                    const normalized = normalizeLoose(value);
+                    return normalized.includes("rese") || normalized.includes("review");
+                };
+
                 const isVisible = (el) => {
                     if (!el) return false;
                     const style = window.getComputedStyle(el);
@@ -1031,11 +1301,92 @@ class GoogleMapsScraper:
                     return rect.width > 0 && rect.height > 0;
                 };
 
+                const safeQueryAll = (root, selector) => {
+                    try {
+                        return root.querySelectorAll(selector);
+                    } catch (_) {
+                        return [];
+                    }
+                };
+
+                const countVisibleMatches = (root, selectors) => {
+                    let count = 0;
+                    for (const selector of selectors) {
+                        const nodes = safeQueryAll(root, selector);
+                        for (const node of nodes) {
+                            if (isVisible(node)) count += 1;
+                        }
+                    }
+                    return count;
+                };
+
+                const hasSearchCue = (root) => {
+                    const inputs = root.querySelectorAll("input, textarea");
+                    for (const input of inputs) {
+                        if (!isVisible(input)) continue;
+                        const ariaLabel = input.getAttribute("aria-label") || "";
+                        const placeholder = input.getAttribute("placeholder") || "";
+                        const labelledBy = (input.getAttribute("aria-labelledby") || "").trim();
+                        let labelsText = "";
+                        if (labelledBy) {
+                            for (const id of labelledBy.split(/\\s+/)) {
+                                if (!id) continue;
+                                const labelNode = document.getElementById(id);
+                                if (!labelNode) continue;
+                                labelsText += ` ${labelNode.textContent || ""}`;
+                            }
+                        }
+                        if (
+                            hasReviewKeyword(ariaLabel) ||
+                            hasReviewKeyword(placeholder) ||
+                            hasReviewKeyword(labelsText)
+                        ) {
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+
+                const hasFilterCue = (root) => {
+                    let reviewLabeledButtons = 0;
+                    const buttons = root.querySelectorAll("button[aria-label]");
+                    for (const button of buttons) {
+                        if (!isVisible(button)) continue;
+                        const label = button.getAttribute("aria-label") || "";
+                        const normalized = normalizeLoose(label);
+                        if (
+                            normalized.includes("todas las rese") ||
+                            normalized.includes("all reviews") ||
+                            normalized.includes("mas utiles") ||
+                            normalized.includes("most relevant") ||
+                            normalized.includes("mas recientes") ||
+                            normalized.includes("newest")
+                        ) {
+                            return true;
+                        }
+                        if (hasReviewKeyword(normalized)) {
+                            reviewLabeledButtons += 1;
+                        }
+                    }
+                    if (reviewLabeledButtons >= 2) {
+                        return true;
+                    }
+
+                    const groups = root.querySelectorAll("[role='radiogroup'], [role='tablist']");
+                    for (const group of groups) {
+                        const label = group.getAttribute("aria-label") || "";
+                        if (hasReviewKeyword(label)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+
                 const collectCards = (root) => {
                     const byReviewId = new Map();
                     const withoutId = [];
                     for (const selector of cardSelectors) {
-                        const nodes = root.querySelectorAll(selector);
+                        const nodes = safeQueryAll(root, selector);
                         for (const node of nodes) {
                             const reviewId = (node.getAttribute("data-review-id") || "").trim();
                             if (reviewId) {
@@ -1067,35 +1418,45 @@ class GoogleMapsScraper:
 
                 const markers = [];
                 for (const selector of panelSelectors) {
-                    const nodes = document.querySelectorAll(selector);
+                    const nodes = safeQueryAll(document, selector);
                     for (const node of nodes) {
                         if (isVisible(node)) markers.push(node);
                     }
                 }
 
-                if (markers.length === 0) {
-                    return {
-                        panel_ready: false,
-                        found: false,
-                        scrolled: false,
-                        at_bottom: true,
-                        review_count: 0,
-                        scroll_top: 0,
-                        scroll_height: 0,
-                        client_height: 0,
-                        html: "",
-                    };
-                }
-
                 const roots = [];
+                const addRoot = (candidate) => {
+                    if (!candidate) return;
+                    if (!roots.includes(candidate)) {
+                        roots.push(candidate);
+                    }
+                };
+
                 for (const marker of markers) {
                     const root =
                         marker.closest("[role='main']") ||
                         marker.closest("div.m6QErb") ||
                         document.body;
-                    if (root && !roots.includes(root)) {
-                        roots.push(root);
+                    addRoot(root);
+                }
+
+                for (const selector of cardSelectors) {
+                    const cards = safeQueryAll(document, selector);
+                    for (const card of cards) {
+                        if (!isVisible(card)) continue;
+                        // Keep multiple candidate ancestors, from narrow to broad.
+                        // Some layouts render cards inside a non-scrollable wrapper while the
+                        // actual feed scroll container lives in a higher ancestor.
+                        addRoot(card.closest("div.m6QErb.XiKgde"));
+                        addRoot(card.closest("div.m6QErb"));
+                        addRoot(card.closest("[role='main']"));
+                        addRoot(document.body);
                     }
+                }
+
+                if (roots.length === 0) {
+                    addRoot(document.querySelector("div[role='main']"));
+                    addRoot(document.body);
                 }
 
                 let best = null;
@@ -1126,15 +1487,44 @@ class GoogleMapsScraper:
                         }
                     }
 
-                    const score = cards.length * 100000 + (feed ? (feed.scrollHeight - feed.clientHeight) : 0);
+                    const markerCount = countVisibleMatches(root, panelSelectors);
+                    const searchCue = hasSearchCue(root);
+                    const filterCue = hasFilterCue(root);
+                    const searchFilterReady =
+                        (searchCue && filterCue && cards.length >= 1) ||
+                        ((searchCue || filterCue) && cards.length >= 5);
+                    const panelReady = markerCount > 0 || searchFilterReady;
+                    const variant = markerCount > 0
+                        ? "classic_controls"
+                        : searchFilterReady
+                            ? "search_filter_controls"
+                            : "cards_only";
+
+                    const score =
+                        cards.length * 100000 +
+                        (feed ? (feed.scrollHeight - feed.clientHeight) : 0) +
+                        (panelReady ? 50000000 : 0) +
+                        markerCount * 50000 +
+                        (searchCue ? 10000 : 0) +
+                        (filterCue ? 10000 : 0);
                     if (!best || score > best.score) {
-                        best = { root, cards, feed, score };
+                        best = {
+                            root,
+                            cards,
+                            feed,
+                            score,
+                            panelReady,
+                            markerCount,
+                            searchCue,
+                            filterCue,
+                            variant,
+                        };
                     }
                 }
 
                 if (!best) {
                     return {
-                        panel_ready: true,
+                        panel_ready: false,
                         found: false,
                         scrolled: false,
                         at_bottom: true,
@@ -1143,6 +1533,10 @@ class GoogleMapsScraper:
                         scroll_height: 0,
                         client_height: 0,
                         html: "",
+                        section_variant: "none",
+                        marker_count: 0,
+                        search_cue: false,
+                        filter_cue: false,
                     };
                 }
 
@@ -1151,7 +1545,7 @@ class GoogleMapsScraper:
                         ? `<div data-review-feed-fallback="true">${best.cards.map((node) => node.outerHTML).join("")}</div>`
                         : "";
                     return {
-                        panel_ready: true,
+                        panel_ready: Boolean(best.panelReady),
                         found: false,
                         scrolled: false,
                         at_bottom: true,
@@ -1160,6 +1554,10 @@ class GoogleMapsScraper:
                         scroll_height: 0,
                         client_height: 0,
                         html: fallbackHtml,
+                        section_variant: best.variant || "cards_only",
+                        marker_count: Number(best.markerCount || 0),
+                        search_cue: Boolean(best.searchCue),
+                        filter_cue: Boolean(best.filterCue),
                     };
                 }
 
@@ -1176,7 +1574,7 @@ class GoogleMapsScraper:
                 const atBottom = after + feed.clientHeight >= feed.scrollHeight - 4;
 
                 return {
-                    panel_ready: true,
+                    panel_ready: Boolean(best.panelReady),
                     found: true,
                     scrolled: after > before,
                     at_bottom: atBottom,
@@ -1185,6 +1583,10 @@ class GoogleMapsScraper:
                     scroll_height: Math.round(feed.scrollHeight),
                     client_height: Math.round(feed.clientHeight),
                     html: captureHtml ? feed.outerHTML : "",
+                    section_variant: best.variant || "cards_only",
+                    marker_count: Number(best.markerCount || 0),
+                    search_cue: Boolean(best.searchCue),
+                    filter_cue: Boolean(best.filterCue),
                 };
             }
             """,
@@ -1206,6 +1608,10 @@ class GoogleMapsScraper:
                 "scroll_height": 0,
                 "client_height": 0,
                 "html": "",
+                "section_variant": "none",
+                "marker_count": 0,
+                "search_cue": False,
+                "filter_cue": False,
             }
         return result
 
@@ -1811,13 +2217,13 @@ class GoogleMapsScraper:
             "guardar",
             "compartir",
             "como llegar",
-            "escribir una resena",
+            "escribir una reseña",
             "resenas",
             "informacion",
             "vista general",
             "carta",
             "ordenar",
-            "buscar resenas",
+            "buscar reseñas",
             "reviews",
         }
         return normalized not in blocked_terms

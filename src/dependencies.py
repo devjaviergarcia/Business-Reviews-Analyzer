@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from src.config import settings
 from src.pipeline.llm_analyzer import ReviewLLMAnalyzer
 from src.pipeline.preprocessor import ReviewPreprocessor
 from src.services.analysis_job_service import AnalysisJobService
 from src.services.business_service import BusinessService
 from src.services.business_query_service import BusinessQueryService
+from src.workers.broker import WorkerJobBroker
 from src.workers.mongo_broker import MongoJobBroker
+from src.workers.rabbitmq_broker import RabbitMQJobBroker
 
 
 def create_google_maps_scraper():
@@ -24,7 +27,9 @@ def create_analysis_job_service() -> AnalysisJobService:
     return AnalysisJobService()
 
 
-def create_worker_job_broker() -> MongoJobBroker:
+def create_worker_job_broker() -> WorkerJobBroker:
+    if settings.worker_broker_backend == "rabbitmq":
+        return RabbitMQJobBroker()
     return MongoJobBroker(job_service=create_analysis_job_service())
 
 

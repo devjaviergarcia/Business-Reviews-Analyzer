@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.services.analysis_job_service import AnalysisJobService
+from src.workers.contracts import AnalysisJobStatus, JobQueueName, JobType, WorkerTaskPayload
 from src.workers.broker import WorkerJobBroker
 
 
@@ -22,12 +23,14 @@ class MongoJobBroker(WorkerJobBroker):
         stage: str,
         message: str,
         data: dict[str, Any] | None = None,
+        status: AnalysisJobStatus | str | None = None,
     ) -> None:
         await self._job_service.append_event(
             job_id=job_id,
             stage=stage,
             message=message,
             data=data,
+            status=status,
         )
 
     async def mark_done(self, *, job_id: Any, result: dict[str, Any]) -> None:
@@ -35,3 +38,24 @@ class MongoJobBroker(WorkerJobBroker):
 
     async def mark_failed(self, *, job_id: Any, error: str) -> None:
         await self._job_service.mark_failed(job_id=job_id, error=error)
+
+    async def handoff_job(
+        self,
+        *,
+        job_id: Any,
+        queue_name: JobQueueName,
+        job_type: JobType,
+        task_payload: WorkerTaskPayload,
+        stage: str,
+        message: str,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        await self._job_service.handoff_job(
+            job_id=job_id,
+            queue_name=queue_name,
+            job_type=job_type,
+            task_payload=task_payload,
+            stage=stage,
+            message=message,
+            data=data,
+        )

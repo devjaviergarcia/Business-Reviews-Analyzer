@@ -88,6 +88,12 @@ Important scraper vars:
 - `ANALYSIS_REANALYZE_BATCH_SIZE`: reviews per batch for reanalysis.
 - `ANALYSIS_REANALYZE_POOL_SIZE`: max stored reviews loaded for reanalysis.
 
+Important worker vars:
+
+- `WORKER_POLL_SECONDS`: polling interval used by queue workers.
+- `WORKER_IDLE_LOG_SECONDS`: idle heartbeat interval in worker logs when no jobs are found.
+- `WORKER_BROKER_BACKEND`: queue broker backend for workers (`mongo` by default, `rabbitmq` reserved for future migration).
+
 Important LLM vars:
 
 - `GEMINI_API_KEY`: API key for Gemini.
@@ -126,6 +132,10 @@ Docker/dev with optional scraper worker:
 ```bash
 docker compose --profile worker up --build
 ```
+
+Worker profile now includes:
+- `scraper-worker` (scrape stage)
+- `analysis-worker` (analysis stage)
 
 Infra-only (Mongo in Docker, API local):
 

@@ -46,8 +46,12 @@ class Settings(BaseSettings):
         ]
     )
     analysis_reanalyze_batch_size: int = 30
-    analysis_reanalyze_pool_size: int = 250
+    analysis_reanalyze_pool_size: int = 350
     worker_poll_seconds: int = 5
+    worker_idle_log_seconds: int = 60
+    worker_job_heartbeat_seconds: int = 15
+    worker_progress_stall_warning_seconds: int = 90
+    worker_broker_backend: str = "mongo"
 
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
 
@@ -71,6 +75,25 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @field_validator("worker_broker_backend", mode="before")
+    @classmethod
+    def parse_worker_broker_backend(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip().lower()
+        return value
+
+    @field_validator("worker_broker_backend")
+    @classmethod
+    def validate_worker_broker_backend(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        allowed = {"mongo", "rabbitmq"}
+        if normalized not in allowed:
+            allowed_values = ", ".join(sorted(allowed))
+            raise ValueError(
+                f"Invalid worker_broker_backend={value!r}. Allowed values: {allowed_values}."
+            )
+        return normalized
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -14,6 +14,9 @@ x-app-env: &app_env
   SCRAPER_USE_XVFB_DOCKER: ${SCRAPER_USE_XVFB_DOCKER:-false}
   API_RELOAD_DOCKER: ${API_RELOAD_DOCKER:-false}
   WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-5}
+  WORKER_IDLE_LOG_SECONDS: ${WORKER_IDLE_LOG_SECONDS:-60}
+  WORKER_JOB_HEARTBEAT_SECONDS: ${WORKER_JOB_HEARTBEAT_SECONDS:-15}
+  WORKER_PROGRESS_STALL_WARNING_SECONDS: ${WORKER_PROGRESS_STALL_WARNING_SECONDS:-90}
 
 x-app-base: &app_base
   image: review-llm-app:latest
@@ -58,6 +61,12 @@ services:
       <<: *app_env
       SCRAPER_USER_DATA_DIR: ${SCRAPER_USER_DATA_DIR_WORKER_DOCKER:-playwright-data-worker-docker}
     command: python -m src.workers.scraper_worker
+
+  analysis-worker:
+    <<: *app_base
+    container_name: bra-analysis-worker
+    profiles: ["worker"]
+    command: python -m src.workers.analysis_worker
 
 volumes:
   mongo_data:

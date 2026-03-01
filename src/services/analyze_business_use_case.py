@@ -52,6 +52,9 @@ class AnalyzeBusinessUseCase:
         name: str,
         force: bool = False,
         strategy: str | None = None,
+        interactive_max_rounds: int | None = None,
+        html_scroll_max_rounds: int | None = None,
+        html_stable_rounds: int | None = None,
         progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> dict[str, Any]:
         business_name = self._validate_business_name(name)
@@ -68,7 +71,14 @@ class AnalyzeBusinessUseCase:
             progress_callback,
             "analysis_started",
             "Analysis job started.",
-            {"name": business_name, "strategy": selected_strategy, "force": bool(force)},
+            {
+                "name": business_name,
+                "strategy": selected_strategy,
+                "force": bool(force),
+                "interactive_max_rounds": interactive_max_rounds,
+                "html_scroll_max_rounds": html_scroll_max_rounds,
+                "html_stable_rounds": html_stable_rounds,
+            },
         )
 
         if not force:
@@ -91,6 +101,9 @@ class AnalyzeBusinessUseCase:
         listing, raw_reviews = await self._scrape_business_page(
             business_name,
             strategy=selected_strategy,
+            interactive_max_rounds=interactive_max_rounds,
+            html_scroll_max_rounds=html_scroll_max_rounds,
+            html_stable_rounds=html_stable_rounds,
             progress_callback=progress_callback,
         )
         listing_payload = Listing(**listing).model_dump(mode="python")

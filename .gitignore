@@ -13,4 +13,6 @@ __pycache__/
 playwright-data*/
 *.docx.md
 docs/
+scripts/
+artifacts/
 

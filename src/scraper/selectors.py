@@ -127,6 +127,11 @@ SELECTOR_PATTERNS: Final[dict[str, tuple[str, ...]]] = {
         "[role='img'][aria-label*='estrella' i]",
         "[role='img'][aria-label*='star' i]",
     ),
+    "RATING_TEXT": (
+        "span.fontBodyLarge.fzvQIb",
+        "div.DU9Pgb span.fontBodyLarge",
+        "div.DU9Pgb .fzvQIb",
+    ),
     "RELATIVE_TIME": (
         "span.rsqaWe",
     ),

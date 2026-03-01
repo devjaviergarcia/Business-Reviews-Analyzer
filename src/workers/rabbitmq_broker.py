@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.workers.broker import WorkerJobBroker
+from src.workers.contracts import AnalysisJobStatus, JobQueueName, JobType, WorkerTaskPayload
 
 
 class RabbitMQJobBroker(WorkerJobBroker):
@@ -23,6 +24,7 @@ class RabbitMQJobBroker(WorkerJobBroker):
         stage: str,
         message: str,
         data: dict[str, Any] | None = None,
+        status: AnalysisJobStatus | str | None = None,
     ) -> None:
         raise NotImplementedError("RabbitMQJobBroker event append is not implemented yet.")
 
@@ -31,3 +33,16 @@ class RabbitMQJobBroker(WorkerJobBroker):
 
     async def mark_failed(self, *, job_id: Any, error: str) -> None:
         raise NotImplementedError("RabbitMQJobBroker mark_failed is not implemented yet.")
+
+    async def handoff_job(
+        self,
+        *,
+        job_id: Any,
+        queue_name: JobQueueName,
+        job_type: JobType,
+        task_payload: WorkerTaskPayload,
+        stage: str,
+        message: str,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        raise NotImplementedError("RabbitMQJobBroker handoff_job is not implemented yet.")

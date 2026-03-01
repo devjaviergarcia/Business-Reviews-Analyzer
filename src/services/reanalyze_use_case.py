@@ -43,6 +43,7 @@ class ReanalyzeUseCase:
         self,
         *,
         business_id: str,
+        dataset_id: str | None = None,
         batchers: list[str] | None = None,
         batch_size: int | None = None,
         max_reviews_pool: int | None = None,
@@ -67,13 +68,22 @@ class ReanalyzeUseCase:
 
         selected_batchers = self._resolve_reanalysis_batchers(batchers)
 
+        reviews_query: dict[str, Any] = {"business_id": business_id}
+        selected_dataset_id = str(dataset_id or "").strip() or None
+        if selected_dataset_id is not None:
+            reviews_query["dataset_id"] = selected_dataset_id
+
         review_docs = (
-            await reviews.find({"business_id": business_id})
+            await reviews.find(reviews_query)
             .sort([("scraped_at", -1), ("_id", -1)])
             .limit(pool_size)
             .to_list(length=pool_size)
         )
         if not review_docs:
+            if selected_dataset_id is not None:
+                raise LookupError(
+                    f"No stored reviews found for business '{business_id}' and dataset '{selected_dataset_id}'."
+                )
             raise LookupError(f"No stored reviews found for business '{business_id}'.")
 
         normalized_stored_reviews = [
@@ -110,9 +120,12 @@ class ReanalyzeUseCase:
         merged_analysis_payload = self._merge_reanalysis_runs(run_results)
         now = datetime.now(timezone.utc)
         merged_analysis_payload["business_id"] = business_id
+        if selected_dataset_id is not None:
+            merged_analysis_payload["dataset_id"] = selected_dataset_id
         merged_analysis_payload["created_at"] = now
         merged_analysis_payload["meta"] = {
             "type": "stored_reviews_reanalysis",
+            "dataset_id": selected_dataset_id,
             "batchers": selected_batchers,
             "batch_size": batch_size_value,
             "pool_size": pool_size,
@@ -127,7 +140,10 @@ class ReanalyzeUseCase:
         }
 
         inserted_analysis = await analyses.insert_one(merged_analysis_payload)
-        review_count = await reviews.count_documents({"business_id": business_id})
+        review_count_query = {"business_id": business_id}
+        if selected_dataset_id is not None:
+            review_count_query["dataset_id"] = selected_dataset_id
+        review_count = await reviews.count_documents(review_count_query)
 
         await businesses.update_one(
             {"_id": parsed_business_id},
@@ -149,6 +165,7 @@ class ReanalyzeUseCase:
             "listing": listing_payload,
             "stats": stats,
             "review_count": review_count,
+            "dataset_id": selected_dataset_id,
             "listing_total_reviews": (listing_payload or {}).get("total_reviews") if isinstance(listing_payload, dict) else None,
             "processed_review_count": len(processed_reviews),
             "analysis": merged_analysis_payload,

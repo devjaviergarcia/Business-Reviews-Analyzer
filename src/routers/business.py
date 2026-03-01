@@ -5,7 +5,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.dependencies import create_business_query_service, create_business_service
 from src.services.business_service import BusinessService
@@ -16,10 +16,20 @@ BusinessServiceDep = Annotated[BusinessService, Depends(create_business_service)
 BusinessQueryServiceDep = Annotated[BusinessQueryService, Depends(create_business_query_service)]
 
 
+class ScraperParamsRequest(BaseModel):
+    scraper_interactive_max_rounds: int | None = Field(default=None, ge=1, le=10000)
+    scraper_html_scroll_max_rounds: int | None = Field(default=None, ge=0, le=20000)
+    scraper_html_stable_rounds: int | None = Field(default=None, ge=2, le=2000)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class AnalyzeBusinessRequest(BaseModel):
     name: str
     force: bool = False
     strategy: str | None = None
+    force_mode: str | None = None
+    scraper_params: ScraperParamsRequest | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -30,6 +40,32 @@ class AnalyzeBusinessRequest(BaseModel):
             return raw
 
         payload = dict(raw)
+        # Backward compatibility: migrate flat params to nested scraper_params.
+        legacy_scraper_keys = (
+            "interactive_max_rounds",
+            "html_scroll_max_rounds",
+            "html_stable_rounds",
+        )
+        has_legacy_scraper_keys = any(key in payload for key in legacy_scraper_keys)
+        if has_legacy_scraper_keys:
+            scraper_params = dict(payload.get("scraper_params") or {})
+            if "interactive_max_rounds" in payload:
+                scraper_params.setdefault(
+                    "scraper_interactive_max_rounds",
+                    payload.pop("interactive_max_rounds"),
+                )
+            if "html_scroll_max_rounds" in payload:
+                scraper_params.setdefault(
+                    "scraper_html_scroll_max_rounds",
+                    payload.pop("html_scroll_max_rounds"),
+                )
+            if "html_stable_rounds" in payload:
+                scraper_params.setdefault(
+                    "scraper_html_stable_rounds",
+                    payload.pop("html_stable_rounds"),
+                )
+            payload["scraper_params"] = scraper_params
+
         if "cached" not in payload:
             return payload
 
@@ -47,6 +83,7 @@ class AnalyzeBusinessRequest(BaseModel):
 
 
 class ReanalyzeStoredReviewsRequest(BaseModel):
+    dataset_id: str | None = None
     batchers: list[str] | None = None
     batch_size: int | None = None
     max_reviews_pool: int | None = None
@@ -66,11 +103,22 @@ def _sse_event(event_name: str, payload: dict[str, Any]) -> str:
 
 @router.post("/analyze", tags=["Analyze"])
 async def analyze_business(payload: AnalyzeBusinessRequest, service: BusinessServiceDep) -> dict:
+    scraper_params = payload.scraper_params
     try:
         return await service.analyze_business(
             name=payload.name,
             force=payload.force,
             strategy=payload.strategy,
+            force_mode=payload.force_mode,
+            interactive_max_rounds=(
+                scraper_params.scraper_interactive_max_rounds if scraper_params else None
+            ),
+            html_scroll_max_rounds=(
+                scraper_params.scraper_html_scroll_max_rounds if scraper_params else None
+            ),
+            html_stable_rounds=(
+                scraper_params.scraper_html_stable_rounds if scraper_params else None
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -80,11 +128,22 @@ async def analyze_business(payload: AnalyzeBusinessRequest, service: BusinessSer
 
 @router.post("/analyze/queue", status_code=status.HTTP_202_ACCEPTED, tags=["Analyze"])
 async def enqueue_analyze_business(payload: AnalyzeBusinessRequest, service: BusinessServiceDep) -> dict:
+    scraper_params = payload.scraper_params
     try:
         return await service.enqueue_business_analysis_job(
             name=payload.name,
             force=payload.force,
             strategy=payload.strategy,
+            force_mode=payload.force_mode,
+            interactive_max_rounds=(
+                scraper_params.scraper_interactive_max_rounds if scraper_params else None
+            ),
+            html_scroll_max_rounds=(
+                scraper_params.scraper_html_scroll_max_rounds if scraper_params else None
+            ),
+            html_stable_rounds=(
+                scraper_params.scraper_html_stable_rounds if scraper_params else None
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -196,6 +255,7 @@ async def reanalyze_business_from_stored_reviews(
     try:
         return await service.reanalyze_business_from_stored_reviews(
             business_id=business_id,
+            dataset_id=body.dataset_id,
             batchers=body.batchers,
             batch_size=body.batch_size,
             max_reviews_pool=body.max_reviews_pool,
@@ -212,12 +272,14 @@ async def list_businesses(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     include_listing: bool = Query(default=False),
+    name: str | None = Query(default=None),
 ) -> dict:
     try:
         return await service.list_businesses(
             page=page,
             page_size=page_size,
             include_listing=include_listing,
+            name_query=name,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -243,12 +305,43 @@ async def get_business_reviews(
     service: BusinessQueryServiceDep,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
+    rating_gte: float | None = Query(default=None, ge=0.0, le=5.0),
+    rating_lte: float | None = Query(default=None, ge=0.0, le=5.0),
+    order: str = Query(default="desc"),
 ) -> dict:
     try:
         return await service.get_business_reviews(
             business_id=business_id,
             page=page,
             page_size=page_size,
+            rating_gte=rating_gte,
+            rating_lte=rating_lte,
+            order=order,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/{business_id}/snapshots", tags=["Business"])
+async def get_business_snapshots(
+    business_id: str,
+    service: BusinessQueryServiceDep,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    source: str | None = Query(default=None),
+    kind: str | None = Query(default=None),
+    include_empty: bool = Query(default=True),
+) -> dict:
+    try:
+        return await service.list_business_snapshots(
+            business_id=business_id,
+            page=page,
+            page_size=page_size,
+            source=source,
+            kind=kind,
+            include_empty=include_empty,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
