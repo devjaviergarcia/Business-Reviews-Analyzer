@@ -9,6 +9,9 @@ class WorkerJobBroker(Protocol):
     async def claim_next_job(self, *, queue_name: str) -> dict[str, Any] | None:
         """Atomically claim the next queued job for a logical queue."""
 
+    async def is_cancel_requested(self, *, job_id: Any) -> bool:
+        """Return whether the running job should be interrupted/cancelled."""
+
     async def append_event(
         self,
         *,

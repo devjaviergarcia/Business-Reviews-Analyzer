@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     worker_job_heartbeat_seconds: int = 15
     worker_progress_stall_warning_seconds: int = 90
     worker_broker_backend: str = "mongo"
+    worker_scrape_queue: str = "scrape"
+    worker_scrape_source: str = "all"
 
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
 
@@ -92,6 +94,44 @@ class Settings(BaseSettings):
             allowed_values = ", ".join(sorted(allowed))
             raise ValueError(
                 f"Invalid worker_broker_backend={value!r}. Allowed values: {allowed_values}."
+            )
+        return normalized
+
+    @field_validator("worker_scrape_queue", mode="before")
+    @classmethod
+    def parse_worker_scrape_queue(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip().lower()
+        return value
+
+    @field_validator("worker_scrape_queue")
+    @classmethod
+    def validate_worker_scrape_queue(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        allowed = {"scrape", "scrape_google_maps", "scrape_tripadvisor"}
+        if normalized not in allowed:
+            allowed_values = ", ".join(sorted(allowed))
+            raise ValueError(
+                f"Invalid worker_scrape_queue={value!r}. Allowed values: {allowed_values}."
+            )
+        return normalized
+
+    @field_validator("worker_scrape_source", mode="before")
+    @classmethod
+    def parse_worker_scrape_source(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip().lower()
+        return value
+
+    @field_validator("worker_scrape_source")
+    @classmethod
+    def validate_worker_scrape_source(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        allowed = {"all", "google_maps", "tripadvisor"}
+        if normalized not in allowed:
+            allowed_values = ", ".join(sorted(allowed))
+            raise ValueError(
+                f"Invalid worker_scrape_source={value!r}. Allowed values: {allowed_values}."
             )
         return normalized
 

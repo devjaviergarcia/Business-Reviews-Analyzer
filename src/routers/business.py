@@ -20,6 +20,8 @@ class ScraperParamsRequest(BaseModel):
     scraper_interactive_max_rounds: int | None = Field(default=None, ge=1, le=10000)
     scraper_html_scroll_max_rounds: int | None = Field(default=None, ge=0, le=20000)
     scraper_html_stable_rounds: int | None = Field(default=None, ge=2, le=2000)
+    scraper_tripadvisor_max_pages: int | None = Field(default=None, ge=1, le=10000)
+    scraper_tripadvisor_pages_percent: float | None = Field(default=None, gt=0, le=100)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -45,6 +47,8 @@ class AnalyzeBusinessRequest(BaseModel):
             "interactive_max_rounds",
             "html_scroll_max_rounds",
             "html_stable_rounds",
+            "tripadvisor_max_pages",
+            "tripadvisor_pages_percent",
         )
         has_legacy_scraper_keys = any(key in payload for key in legacy_scraper_keys)
         if has_legacy_scraper_keys:
@@ -63,6 +67,16 @@ class AnalyzeBusinessRequest(BaseModel):
                 scraper_params.setdefault(
                     "scraper_html_stable_rounds",
                     payload.pop("html_stable_rounds"),
+                )
+            if "tripadvisor_max_pages" in payload:
+                scraper_params.setdefault(
+                    "scraper_tripadvisor_max_pages",
+                    payload.pop("tripadvisor_max_pages"),
+                )
+            if "tripadvisor_pages_percent" in payload:
+                scraper_params.setdefault(
+                    "scraper_tripadvisor_pages_percent",
+                    payload.pop("tripadvisor_pages_percent"),
                 )
             payload["scraper_params"] = scraper_params
 
@@ -119,6 +133,12 @@ async def analyze_business(payload: AnalyzeBusinessRequest, service: BusinessSer
             html_stable_rounds=(
                 scraper_params.scraper_html_stable_rounds if scraper_params else None
             ),
+            tripadvisor_max_pages=(
+                scraper_params.scraper_tripadvisor_max_pages if scraper_params else None
+            ),
+            tripadvisor_pages_percent=(
+                scraper_params.scraper_tripadvisor_pages_percent if scraper_params else None
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -143,6 +163,12 @@ async def enqueue_analyze_business(payload: AnalyzeBusinessRequest, service: Bus
             ),
             html_stable_rounds=(
                 scraper_params.scraper_html_stable_rounds if scraper_params else None
+            ),
+            tripadvisor_max_pages=(
+                scraper_params.scraper_tripadvisor_max_pages if scraper_params else None
+            ),
+            tripadvisor_pages_percent=(
+                scraper_params.scraper_tripadvisor_pages_percent if scraper_params else None
             ),
         )
     except ValueError as exc:
@@ -170,6 +196,50 @@ async def list_analyze_business_jobs(
 async def get_analyze_business_job(job_id: str, service: BusinessServiceDep) -> dict:
     try:
         return await service.get_business_analysis_job(job_id=job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.delete("/analyze/queue/{job_id}", tags=["Analyze"])
+async def delete_analyze_business_job(
+    job_id: str,
+    service: BusinessServiceDep,
+    wait_active_stop_seconds: float = Query(default=10.0, ge=0.5, le=120.0),
+    poll_seconds: float = Query(default=0.5, ge=0.1, le=5.0),
+    force_delete_on_timeout: bool = Query(default=True),
+) -> dict:
+    try:
+        return await service.delete_business_analysis_job(
+            job_id=job_id,
+            wait_active_stop_seconds=wait_active_stop_seconds,
+            poll_seconds=poll_seconds,
+            force_delete_on_timeout=force_delete_on_timeout,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post("/analyze/queue/{job_id}/stop-scrape", tags=["Analyze"])
+async def stop_analyze_business_scrape_job(
+    job_id: str,
+    service: BusinessServiceDep,
+    continue_analysis_if_google: bool = Query(default=True),
+    wait_active_stop_seconds: float = Query(default=10.0, ge=0.5, le=120.0),
+    poll_seconds: float = Query(default=0.5, ge=0.1, le=5.0),
+) -> dict:
+    try:
+        return await service.stop_business_scrape_job(
+            job_id=job_id,
+            continue_analysis_if_google=continue_analysis_if_google,
+            wait_active_stop_seconds=wait_active_stop_seconds,
+            poll_seconds=poll_seconds,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except LookupError as exc:
@@ -307,7 +377,7 @@ async def get_business_reviews(
     page_size: int = Query(default=20, ge=1, le=100),
     rating_gte: float | None = Query(default=None, ge=0.0, le=5.0),
     rating_lte: float | None = Query(default=None, ge=0.0, le=5.0),
-    order: str = Query(default="desc"),
+    order: str = Query(default="desc-rating"),
 ) -> dict:
     try:
         return await service.get_business_reviews(

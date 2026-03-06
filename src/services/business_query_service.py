@@ -105,11 +105,11 @@ class BusinessQueryService:
         page_size: int = 20,
         rating_gte: float | None = None,
         rating_lte: float | None = None,
-        order: str = "desc",
+        order: str = "desc-rating",
     ) -> dict:
         page_value, page_size_value = coerce_pagination(page=page, page_size=page_size, max_page_size=100)
         min_rating, max_rating = self._normalize_rating_bounds(rating_gte=rating_gte, rating_lte=rating_lte)
-        sort_direction = self._normalize_rating_order(order)
+        normalized_order, sort_by = self._normalize_reviews_order(order)
 
         database = get_database()
         businesses = database[self._BUSINESSES_COLLECTION]
@@ -123,7 +123,6 @@ class BusinessQueryService:
             query["rating"] = rating_filter
         total = await reviews.count_documents(query)
         skip = (page_value - 1) * page_size_value
-        sort_by = [("rating", sort_direction), ("_id", -1)]
         docs = (
             await reviews.find(query)
             .sort(sort_by)
@@ -141,7 +140,7 @@ class BusinessQueryService:
         payload["business_id"] = business_id
         payload["rating_gte"] = min_rating
         payload["rating_lte"] = max_rating
-        payload["order"] = "desc" if sort_direction == -1 else "asc"
+        payload["order"] = normalized_order
         return self._sanitize_response_payload(payload)
 
     async def get_business_analysis(self, business_id: str) -> dict:
@@ -350,13 +349,27 @@ class BusinessQueryService:
             rating_filter["$lte"] = max_rating
         return rating_filter
 
-    def _normalize_rating_order(self, order: str | None) -> int:
-        normalized = str(order or "").strip().lower()
+    def _normalize_reviews_order(self, order: str | None) -> tuple[str, list[tuple[str, int]]]:
+        normalized = str(order or "").strip().lower().replace("_", "-")
+
+        # Backward compatibility aliases.
         if normalized in {"", "desc", "descending", "mayor", "highest", "high"}:
-            return -1
-        if normalized in {"asc", "ascending", "menor", "lowest", "low"}:
-            return 1
-        raise ValueError("Invalid order. Allowed values: desc, asc.")
+            normalized = "desc-rating"
+        elif normalized in {"asc", "ascending", "menor", "lowest", "low"}:
+            normalized = "asc-rating"
+
+        if normalized == "desc-rating":
+            return normalized, [("rating", -1), ("_id", -1)]
+        if normalized == "asc-rating":
+            return normalized, [("rating", 1), ("_id", -1)]
+        if normalized == "desc-date":
+            return normalized, [("created_at", -1), ("_id", -1)]
+        if normalized == "asc-date":
+            return normalized, [("created_at", 1), ("_id", 1)]
+
+        raise ValueError(
+            "Invalid order. Allowed values: desc-rating, asc-rating, desc-date, asc-date."
+        )
 
     def _serialize_business_doc(self, *, business_doc: dict[str, Any], review_count: int, include_listing: bool) -> dict:
         payload = {

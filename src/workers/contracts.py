@@ -16,7 +16,8 @@ class AnalysisJobStatus(str, Enum):
     PARTIAL = "partial"
 
 
-JobQueueName = Literal["scrape", "analysis", "report"]
+ScrapeQueueName = Literal["scrape", "scrape_google_maps", "scrape_tripadvisor"]
+JobQueueName = Literal["scrape", "scrape_google_maps", "scrape_tripadvisor", "analysis", "report"]
 JobType = Literal[
     "business_analyze",
     "business_reanalyze",
@@ -52,6 +53,8 @@ class AnalyzeBusinessTaskPayload(BaseModel):
     interactive_max_rounds: int | None = None
     html_scroll_max_rounds: int | None = None
     html_stable_rounds: int | None = None
+    tripadvisor_max_pages: int | None = None
+    tripadvisor_pages_percent: float | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -109,9 +112,29 @@ class AnalyzeBusinessTaskPayload(BaseModel):
             raise ValueError("html_stable_rounds must be >= 2.")
         return parsed
 
+    @field_validator("tripadvisor_max_pages", mode="before")
+    @classmethod
+    def normalize_tripadvisor_max_pages(cls, value: object) -> object:
+        if value is None or value == "":
+            return None
+        parsed = int(value)
+        if parsed < 1:
+            raise ValueError("tripadvisor_max_pages must be >= 1.")
+        return parsed
+
+    @field_validator("tripadvisor_pages_percent", mode="before")
+    @classmethod
+    def normalize_tripadvisor_pages_percent(cls, value: object) -> object:
+        if value is None or value == "":
+            return None
+        parsed = float(value)
+        if parsed <= 0 or parsed > 100:
+            raise ValueError("tripadvisor_pages_percent must be > 0 and <= 100.")
+        return parsed
+
 
 class AnalyzeBusinessJobEnvelope(BaseModel):
-    queue_name: Literal["scrape"] = "scrape"
+    queue_name: ScrapeQueueName = "scrape"
     job_type: Literal["business_analyze"] = "business_analyze"
     payload: AnalyzeBusinessTaskPayload
 
@@ -227,6 +250,8 @@ def parse_analyze_business_payload(job_doc: Mapping[str, Any]) -> AnalyzeBusines
             "interactive_max_rounds": job_doc.get("interactive_max_rounds"),
             "html_scroll_max_rounds": job_doc.get("html_scroll_max_rounds"),
             "html_stable_rounds": job_doc.get("html_stable_rounds"),
+            "tripadvisor_max_pages": job_doc.get("tripadvisor_max_pages"),
+            "tripadvisor_pages_percent": job_doc.get("tripadvisor_pages_percent"),
         }
     )
 
@@ -292,11 +317,11 @@ def build_worker_job_envelope(
     normalized_queue = str(queue_name or "").strip().lower()
     normalized_job_type = str(job_type or "").strip().lower()
 
-    if normalized_queue == "scrape" and normalized_job_type == "business_analyze":
+    if normalized_queue in {"scrape", "scrape_google_maps", "scrape_tripadvisor"} and normalized_job_type == "business_analyze":
         if not isinstance(task_payload, AnalyzeBusinessTaskPayload):
             raise TypeError("Expected AnalyzeBusinessTaskPayload for scrape/business_analyze.")
         return AnalyzeBusinessJobEnvelope(
-            queue_name="scrape",
+            queue_name=normalized_queue,
             job_type="business_analyze",
             payload=task_payload,
         )
@@ -334,9 +359,14 @@ class AnalysisJobQueueDocument(BaseModel):
     interactive_max_rounds: int | None = None
     html_scroll_max_rounds: int | None = None
     html_stable_rounds: int | None = None
+    tripadvisor_max_pages: int | None = None
+    tripadvisor_pages_percent: float | None = None
     status: AnalysisJobStatus
     progress: JobProgressState
     events: list[JobProgressEvent] = Field(default_factory=list)
+    cancel_requested: bool = False
+    cancel_requested_at: datetime | None = None
+    cancel_reason: str | None = None
     attempts: int = 0
     error: str | None = None
     result: dict[str, Any] | None = None

@@ -53,13 +53,26 @@ services:
     ports:
       - "8000:8000"
 
-  scraper-worker:
+  scraper-google-worker:
     <<: *app_base
-    container_name: bra-scraper-worker
+    container_name: bra-scraper-google-worker
     profiles: ["worker"]
     environment:
       <<: *app_env
-      SCRAPER_USER_DATA_DIR: ${SCRAPER_USER_DATA_DIR_WORKER_DOCKER:-playwright-data-worker-docker}
+      WORKER_SCRAPE_QUEUE: scrape_google_maps
+      WORKER_SCRAPE_SOURCE: google_maps
+      SCRAPER_USER_DATA_DIR: ${SCRAPER_USER_DATA_DIR_GOOGLE_WORKER_DOCKER:-playwright-data-google-worker-docker}
+    command: python -m src.workers.scraper_worker
+
+  scraper-tripadvisor-worker:
+    <<: *app_base
+    container_name: bra-scraper-tripadvisor-worker
+    profiles: ["worker"]
+    environment:
+      <<: *app_env
+      WORKER_SCRAPE_QUEUE: scrape_tripadvisor
+      WORKER_SCRAPE_SOURCE: tripadvisor
+      SCRAPER_USER_DATA_DIR: ${SCRAPER_USER_DATA_DIR_TRIPADVISOR_WORKER_DOCKER:-playwright-data-tripadvisor-worker-docker}
     command: python -m src.workers.scraper_worker
 
   analysis-worker:

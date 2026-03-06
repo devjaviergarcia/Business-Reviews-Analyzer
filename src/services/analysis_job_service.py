@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import time
 from typing import Any
 
 from bson import ObjectId
@@ -24,6 +26,11 @@ from src.workers.events import build_job_event_and_progress, build_job_progress,
 
 class AnalysisJobService:
     _JOBS_COLLECTION = "analysis_jobs"
+    _ACTIVE_STATUSES = {
+        AnalysisJobStatus.RUNNING.value,
+        AnalysisJobStatus.RETRYING.value,
+        AnalysisJobStatus.PARTIAL.value,
+    }
 
     async def enqueue_analyze_business_job(
         self,
@@ -100,6 +107,12 @@ class AnalysisJobService:
         payload_html_stable_rounds = (
             payload_data.get("html_stable_rounds") if isinstance(payload_data, dict) else None
         )
+        payload_tripadvisor_max_pages = (
+            payload_data.get("tripadvisor_max_pages") if isinstance(payload_data, dict) else None
+        )
+        payload_tripadvisor_pages_percent = (
+            payload_data.get("tripadvisor_pages_percent") if isinstance(payload_data, dict) else None
+        )
 
         doc = AnalysisJobQueueDocument(
             queue_name=envelope.queue_name,
@@ -123,6 +136,17 @@ class AnalysisJobService:
             html_stable_rounds=(
                 int(payload_html_stable_rounds)
                 if isinstance(payload_html_stable_rounds, int) and not isinstance(payload_html_stable_rounds, bool)
+                else None
+            ),
+            tripadvisor_max_pages=(
+                int(payload_tripadvisor_max_pages)
+                if isinstance(payload_tripadvisor_max_pages, int) and not isinstance(payload_tripadvisor_max_pages, bool)
+                else None
+            ),
+            tripadvisor_pages_percent=(
+                float(payload_tripadvisor_pages_percent)
+                if isinstance(payload_tripadvisor_pages_percent, (int, float))
+                and not isinstance(payload_tripadvisor_pages_percent, bool)
                 else None
             ),
             status=AnalysisJobStatus.QUEUED,
@@ -155,6 +179,10 @@ class AnalysisJobService:
             payload["html_scroll_max_rounds"] = payload_html_scroll_max_rounds
         if isinstance(payload_html_stable_rounds, int) and not isinstance(payload_html_stable_rounds, bool):
             payload["html_stable_rounds"] = payload_html_stable_rounds
+        if isinstance(payload_tripadvisor_max_pages, int) and not isinstance(payload_tripadvisor_max_pages, bool):
+            payload["tripadvisor_max_pages"] = payload_tripadvisor_max_pages
+        if isinstance(payload_tripadvisor_pages_percent, (int, float)) and not isinstance(payload_tripadvisor_pages_percent, bool):
+            payload["tripadvisor_pages_percent"] = float(payload_tripadvisor_pages_percent)
         return self._sanitize_response_payload(payload)
 
     async def get_job(self, *, job_id: str) -> dict[str, Any]:
@@ -209,6 +237,147 @@ class AnalysisJobService:
             payload["status"] = normalized_status
         return self._sanitize_response_payload(payload)
 
+    async def delete_job(
+        self,
+        *,
+        job_id: str,
+        wait_active_stop_seconds: float = 10.0,
+        poll_seconds: float = 0.5,
+        force_delete_on_timeout: bool = True,
+    ) -> dict[str, Any]:
+        parsed_id = self._parse_object_id(job_id, field_name="job_id")
+        database = get_database()
+        jobs = database[self._JOBS_COLLECTION]
+
+        existing_doc = await jobs.find_one({"_id": parsed_id})
+        if existing_doc is None:
+            raise LookupError(f"Job '{job_id}' not found.")
+
+        status_before = self._normalize_status_value(existing_doc.get("status"))
+        was_active = self._is_active_status(status_before)
+        cancel_requested = False
+        timed_out_waiting_for_stop = False
+        forced_delete = False
+
+        if was_active:
+            await self.request_job_cancellation(
+                job_id=job_id,
+                reason="Deletion requested via API.",
+            )
+            cancel_requested = True
+            try:
+                await self._wait_until_job_not_active(
+                    parsed_id=parsed_id,
+                    timeout_seconds=wait_active_stop_seconds,
+                    poll_seconds=poll_seconds,
+                )
+            except TimeoutError:
+                timed_out_waiting_for_stop = True
+                if not bool(force_delete_on_timeout):
+                    raise
+                forced_delete = True
+
+        deleted_doc = await jobs.find_one_and_delete({"_id": parsed_id})
+        if deleted_doc is None:
+            # Deleted by another client while we were waiting.
+            return self._sanitize_response_payload(
+                {
+                    "job_id": job_id,
+                    "deleted": True,
+                    "status_before": status_before,
+                    "status_at_delete": None,
+                    "was_active": was_active,
+                    "cancel_requested": cancel_requested,
+                    "timed_out_waiting_for_stop": timed_out_waiting_for_stop,
+                    "forced_delete": forced_delete,
+                    "already_deleted": True,
+                }
+            )
+
+        status_at_delete = self._normalize_status_value(deleted_doc.get("status"))
+        return self._sanitize_response_payload(
+            {
+                "job_id": str(deleted_doc.get("_id")),
+                "deleted": True,
+                "status_before": status_before,
+                "status_at_delete": status_at_delete,
+                "was_active": was_active,
+                "cancel_requested": cancel_requested,
+                "timed_out_waiting_for_stop": timed_out_waiting_for_stop,
+                "forced_delete": forced_delete,
+            }
+        )
+
+    async def request_job_cancellation(
+        self,
+        *,
+        job_id: str,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        parsed_id = self._parse_object_id(job_id, field_name="job_id")
+        database = get_database()
+        jobs = database[self._JOBS_COLLECTION]
+
+        existing_doc = await jobs.find_one({"_id": parsed_id})
+        if existing_doc is None:
+            raise LookupError(f"Job '{job_id}' not found.")
+
+        normalized_status = self._normalize_status_value(existing_doc.get("status"))
+        if not self._is_active_status(normalized_status):
+            serialized = self._serialize_analysis_job_doc(existing_doc)
+            serialized["cancel_requested"] = bool(serialized.get("cancel_requested"))
+            return self._sanitize_response_payload(serialized)
+
+        now, cancel_event, cancel_progress = build_job_event_and_progress(
+            stage="cancel_requested",
+            message=str(reason or "Cancellation requested."),
+            status=AnalysisJobStatus.RUNNING,
+            data={},
+        )
+        updated_doc = await jobs.find_one_and_update(
+            {"_id": parsed_id},
+            {
+                "$set": {
+                    "cancel_requested": True,
+                    "cancel_requested_at": now,
+                    "cancel_reason": str(reason or "").strip() or None,
+                    "updated_at": now,
+                    "progress": cancel_progress,
+                },
+                "$push": {"events": cancel_event},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if updated_doc is None:
+            raise LookupError(f"Job '{job_id}' not found.")
+
+        serialized = self._serialize_analysis_job_doc(updated_doc)
+        serialized["cancel_requested"] = True
+        return self._sanitize_response_payload(serialized)
+
+    async def is_job_cancel_requested(self, *, job_id: Any) -> bool:
+        parsed_id: ObjectId
+        if isinstance(job_id, ObjectId):
+            parsed_id = job_id
+        else:
+            parsed_id = self._parse_object_id(str(job_id), field_name="job_id")
+
+        database = get_database()
+        jobs = database[self._JOBS_COLLECTION]
+        doc = await jobs.find_one(
+            {"_id": parsed_id},
+            projection={"status": 1, "cancel_requested": 1},
+        )
+        if doc is None:
+            # Deleted/missing job should be treated as cancelled for in-flight workers.
+            return True
+
+        status_value = self._normalize_status_value(doc.get("status"))
+        if not self._is_active_status(status_value):
+            return True
+
+        return bool(doc.get("cancel_requested"))
+
     async def pick_next_queued_job(self, *, queue_name: JobQueueName = "scrape") -> dict[str, Any] | None:
         database = get_database()
         jobs = database[self._JOBS_COLLECTION]
@@ -236,6 +405,9 @@ class AnalysisJobService:
             {
                 "$set": {
                     "status": AnalysisJobStatus.RUNNING.value,
+                    "cancel_requested": False,
+                    "cancel_requested_at": None,
+                    "cancel_reason": None,
                     "started_at": now,
                     "updated_at": now,
                     "progress": start_progress,
@@ -420,6 +592,8 @@ class AnalysisJobService:
                         "interactive_max_rounds": payload.get("interactive_max_rounds"),
                         "html_scroll_max_rounds": payload.get("html_scroll_max_rounds"),
                         "html_stable_rounds": payload.get("html_stable_rounds"),
+                        "tripadvisor_max_pages": payload.get("tripadvisor_max_pages"),
+                        "tripadvisor_pages_percent": payload.get("tripadvisor_pages_percent"),
                     }
                 )
                 return task.model_dump(mode="python")
@@ -464,6 +638,8 @@ class AnalysisJobService:
         payload_interactive_max_rounds = payload_data.get("interactive_max_rounds")
         payload_html_scroll_max_rounds = payload_data.get("html_scroll_max_rounds")
         payload_html_stable_rounds = payload_data.get("html_stable_rounds")
+        payload_tripadvisor_max_pages = payload_data.get("tripadvisor_max_pages")
+        payload_tripadvisor_pages_percent = payload_data.get("tripadvisor_pages_percent")
 
         if isinstance(payload_name, str):
             fields["name"] = payload_name
@@ -479,6 +655,10 @@ class AnalysisJobService:
             fields["html_scroll_max_rounds"] = payload_html_scroll_max_rounds
         if isinstance(payload_html_stable_rounds, int) and not isinstance(payload_html_stable_rounds, bool):
             fields["html_stable_rounds"] = payload_html_stable_rounds
+        if isinstance(payload_tripadvisor_max_pages, int) and not isinstance(payload_tripadvisor_max_pages, bool):
+            fields["tripadvisor_max_pages"] = payload_tripadvisor_max_pages
+        if isinstance(payload_tripadvisor_pages_percent, (int, float)) and not isinstance(payload_tripadvisor_pages_percent, bool):
+            fields["tripadvisor_pages_percent"] = float(payload_tripadvisor_pages_percent)
         return fields
 
     def _normalize_progress_payload(self, value: Any) -> dict[str, Any]:
@@ -510,6 +690,45 @@ class AnalysisJobService:
                 payload["status"] = AnalysisJobStatus.RUNNING.value
             normalized.append(payload)
         return normalized
+
+    async def _wait_until_job_not_active(
+        self,
+        *,
+        parsed_id: ObjectId,
+        timeout_seconds: float,
+        poll_seconds: float,
+    ) -> None:
+        database = get_database()
+        jobs = database[self._JOBS_COLLECTION]
+        safe_timeout = max(0.5, float(timeout_seconds))
+        safe_poll = max(0.1, float(poll_seconds))
+        started_at = time.monotonic()
+
+        while True:
+            doc = await jobs.find_one(
+                {"_id": parsed_id},
+                projection={"status": 1},
+            )
+            if doc is None:
+                return
+            status_value = self._normalize_status_value(doc.get("status"))
+            if not self._is_active_status(status_value):
+                return
+            if (time.monotonic() - started_at) >= safe_timeout:
+                raise TimeoutError(
+                    f"Job '{parsed_id}' is still active after {safe_timeout:.1f}s."
+                )
+            await asyncio.sleep(safe_poll)
+
+    def _normalize_status_value(self, value: Any) -> str:
+        raw = str(value or "").strip().lower()
+        try:
+            return AnalysisJobStatus(raw).value
+        except ValueError:
+            return AnalysisJobStatus.RUNNING.value
+
+    def _is_active_status(self, status_value: str) -> bool:
+        return str(status_value or "").strip().lower() in self._ACTIVE_STATUSES
 
     def _sanitize_response_payload(self, value: Any) -> Any:
         if isinstance(value, ObjectId):

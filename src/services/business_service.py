@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time
 import re
 import unicodedata
 from collections import Counter
@@ -18,11 +19,12 @@ from src.models.business import Listing, OwnerReply, Review
 from src.pipeline.llm_analyzer import ReviewLLMAnalyzer
 from src.pipeline.preprocessor import ReviewPreprocessor
 from src.scraper.google_maps import GoogleMapsScraper
+from src.scraper.tripadvisor import TripadvisorScraper
 from src.services.analyze_business_use_case import AnalyzeBusinessUseCase
 from src.services.analysis_job_service import AnalysisJobService
 from src.services.business_query_service import BusinessQueryService
 from src.services.reanalyze_use_case import ReanalyzeUseCase
-from src.workers.contracts import AnalyzeBusinessTaskPayload
+from src.workers.contracts import AnalysisGenerateTaskPayload, AnalyzeBusinessTaskPayload
 
 
 class BusinessService:
@@ -47,11 +49,15 @@ class BusinessService:
         "fallback_existing",
         "strict_rescrape",
     }
+    _SCRAPE_SOURCES = ("google_maps", "tripadvisor")
+    _PRIMARY_SOURCE = "google_maps"
+    _ACTIVE_JOB_STATUSES = {"running", "retrying", "partial"}
 
     def __init__(
         self,
         *,
         scraper: GoogleMapsScraper | None = None,
+        tripadvisor_scraper: TripadvisorScraper | None = None,
         preprocessor: ReviewPreprocessor | None = None,
         llm_analyzer: ReviewLLMAnalyzer | None = None,
         job_service: AnalysisJobService | None = None,
@@ -60,6 +66,7 @@ class BusinessService:
         reanalyze_use_case: ReanalyzeUseCase | None = None,
     ) -> None:
         self.scraper = scraper or type(self).build_default_scraper()
+        self.tripadvisor_scraper = tripadvisor_scraper or type(self).build_default_tripadvisor_scraper()
         self.preprocessor = preprocessor or ReviewPreprocessor()
         self.llm_analyzer = llm_analyzer or ReviewLLMAnalyzer()
         self.job_service = job_service or AnalysisJobService()
@@ -123,6 +130,25 @@ class BusinessService:
             reviews_strategy=default_strategy,
         )
 
+    @classmethod
+    def build_default_tripadvisor_scraper(cls) -> TripadvisorScraper:
+        return TripadvisorScraper(
+            headless=settings.scraper_headless,
+            incognito=settings.scraper_incognito,
+            slow_mo_ms=settings.scraper_slow_mo_ms,
+            user_data_dir="playwright-data-tripadvisor",
+            browser_channel=settings.scraper_browser_channel,
+            tripadvisor_url="https://www.tripadvisor.es",
+            timeout_ms=settings.scraper_timeout_ms,
+            min_click_delay_ms=settings.scraper_min_click_delay_ms,
+            max_click_delay_ms=settings.scraper_max_click_delay_ms,
+            min_key_delay_ms=settings.scraper_min_key_delay_ms,
+            max_key_delay_ms=settings.scraper_max_key_delay_ms,
+            stealth_mode=settings.scraper_stealth_mode,
+            harden_headless=settings.scraper_harden_headless,
+            extra_chromium_args=settings.scraper_extra_chromium_args,
+        )
+
     async def analyze_business(
         self,
         name: str,
@@ -132,8 +158,11 @@ class BusinessService:
         interactive_max_rounds: int | None = None,
         html_scroll_max_rounds: int | None = None,
         html_stable_rounds: int | None = None,
+        tripadvisor_max_pages: int | None = None,
+        tripadvisor_pages_percent: float | None = None,
         progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> dict:
+        del tripadvisor_max_pages, tripadvisor_pages_percent
         selected_force_mode = self._resolve_force_mode(force_mode)
         if selected_force_mode != "fallback_existing":
             raise ValueError(
@@ -160,11 +189,27 @@ class BusinessService:
         interactive_max_rounds: int | None = None,
         html_scroll_max_rounds: int | None = None,
         html_stable_rounds: int | None = None,
+        tripadvisor_max_pages: int | None = None,
+        tripadvisor_pages_percent: float | None = None,
+        sources: tuple[str, ...] | list[str] | None = None,
         progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> dict[str, Any]:
         business_name = self._validate_business_name(name)
         selected_strategy = self._resolve_reviews_strategy(strategy)
         selected_force_mode = self._resolve_force_mode(force_mode)
+        selected_sources = self._resolve_scrape_sources(sources)
+        effective_tripadvisor_max_pages = self._resolve_optional_int_override(
+            value=tripadvisor_max_pages,
+            fallback=25,
+            min_value=1,
+            field_name="tripadvisor_max_pages",
+        ) if tripadvisor_max_pages is not None else None
+        effective_tripadvisor_pages_percent = self._resolve_optional_float_override(
+            value=tripadvisor_pages_percent,
+            min_value=0.1,
+            max_value=100.0,
+            field_name="tripadvisor_pages_percent",
+        ) if tripadvisor_pages_percent is not None else None
         name_normalized = self._normalize_text(business_name)
         database = get_database()
         now = datetime.now(timezone.utc)
@@ -187,6 +232,9 @@ class BusinessService:
                 "interactive_max_rounds": interactive_max_rounds,
                 "html_scroll_max_rounds": html_scroll_max_rounds,
                 "html_stable_rounds": html_stable_rounds,
+                "tripadvisor_max_pages": effective_tripadvisor_max_pages,
+                "tripadvisor_pages_percent": effective_tripadvisor_pages_percent,
+                "sources": list(selected_sources),
             },
         )
 
@@ -223,23 +271,80 @@ class BusinessService:
                         "scraped_review_count": existing_business_doc.get("scraped_review_count"),
                         "processed_review_count": existing_business_doc.get("processed_review_count"),
                         "listing_total_reviews": listing_payload.get("total_reviews") if isinstance(listing_payload, dict) else None,
+                        "sources": {},
+                        "failed_sources": {},
                     }
                 )
 
-        listing, raw_reviews = await self._scrape_business_page(
-            business_name,
-            strategy=selected_strategy,
-            interactive_max_rounds=interactive_max_rounds,
-            html_scroll_max_rounds=html_scroll_max_rounds,
-            html_stable_rounds=html_stable_rounds,
-            progress_callback=progress_callback,
+        source_tasks: dict[str, asyncio.Task[tuple[dict[str, Any], list[dict[str, Any]]]]] = {}
+        if "google_maps" in selected_sources:
+            source_tasks["google_maps"] = asyncio.create_task(
+                self._scrape_business_page(
+                    business_name,
+                    strategy=selected_strategy,
+                    interactive_max_rounds=interactive_max_rounds,
+                    html_scroll_max_rounds=html_scroll_max_rounds,
+                    html_stable_rounds=html_stable_rounds,
+                    progress_callback=self._build_source_progress_callback(
+                        progress_callback=progress_callback,
+                        source="google_maps",
+                    ),
+                )
+            )
+        if "tripadvisor" in selected_sources:
+            source_tasks["tripadvisor"] = asyncio.create_task(
+                self._scrape_tripadvisor_business_page(
+                    business_name,
+                    max_pages=effective_tripadvisor_max_pages,
+                    pages_percent=effective_tripadvisor_pages_percent,
+                    progress_callback=self._build_source_progress_callback(
+                        progress_callback=progress_callback,
+                        source="tripadvisor",
+                    ),
+                )
+            )
+        source_results: dict[str, dict[str, Any]] = {}
+        failed_sources: dict[str, str] = {}
+        gathered = await asyncio.gather(*source_tasks.values(), return_exceptions=True)
+        for source, result in zip(source_tasks.keys(), gathered):
+            if isinstance(result, Exception):
+                failed_sources[source] = str(result)
+                await self._emit_progress(
+                    progress_callback,
+                    "scrape_source_failed",
+                    "Source scrape failed.",
+                    {"source": source, "error": str(result)},
+                )
+                continue
+            listing, raw_reviews = result
+            listing_payload = Listing(**listing).model_dump(mode="python")
+            normalized_raw_reviews = [self._normalize_scraped_review(item) for item in raw_reviews]
+            processed_reviews = self.preprocessor.process(normalized_raw_reviews)
+            source_results[source] = {
+                "listing_payload": listing_payload,
+                "raw_reviews": raw_reviews,
+                "processed_reviews": processed_reviews,
+                "scraped_review_count": len(raw_reviews),
+                "processed_review_count": len(processed_reviews),
+                "stats": self.preprocessor.compute_stats(processed_reviews),
+            }
+
+        if not source_results:
+            raise RuntimeError(
+                "All configured sources failed during scrape stage. "
+                + "; ".join(f"{source}: {error}" for source, error in failed_sources.items())
+            )
+
+        primary_source = self._PRIMARY_SOURCE if self._PRIMARY_SOURCE in source_results else next(iter(source_results))
+        primary_result = source_results[primary_source]
+        listing_payload = primary_result["listing_payload"]
+        stats = primary_result["stats"]
+        scraped_review_count = sum(
+            int(payload.get("scraped_review_count", 0)) for payload in source_results.values()
         )
-        listing_payload = Listing(**listing).model_dump(mode="python")
-        scraped_review_count = len(raw_reviews)
-        normalized_raw_reviews = [self._normalize_scraped_review(item) for item in raw_reviews]
-        processed_reviews = self.preprocessor.process(normalized_raw_reviews)
-        processed_review_count = len(processed_reviews)
-        stats = self.preprocessor.compute_stats(processed_reviews)
+        processed_review_count = sum(
+            int(payload.get("processed_review_count", 0)) for payload in source_results.values()
+        )
 
         business_doc = await businesses.find_one_and_update(
             {"name_normalized": name_normalized},
@@ -247,7 +352,7 @@ class BusinessService:
                 "$set": {
                     "name": business_name,
                     "name_normalized": name_normalized,
-                    "source": "google_maps",
+                    "source": primary_source,
                     "listing": listing_payload,
                     "stats": stats,
                     "review_count": processed_review_count,
@@ -265,95 +370,160 @@ class BusinessService:
             raise RuntimeError("Failed to upsert business document during scrape stage.")
 
         business_id = str(business_doc["_id"])
-        source_profile = await self._get_or_create_source_profile(
-            source_profiles_collection=source_profiles,
-            business_id=business_id,
-            source="google_maps",
-            name_normalized=name_normalized,
-            listing_payload=listing_payload,
-            now=now,
-        )
-        source_profile_id = str(source_profile["_id"])
+        source_runtime: dict[str, dict[str, Any]] = {}
+        dataset_review_count_total = 0
+        for source in (item for item in selected_sources if item in source_results):
+            payload = source_results[source]
+            source_profile = await self._get_or_create_source_profile(
+                source_profiles_collection=source_profiles,
+                business_id=business_id,
+                source=source,
+                name_normalized=name_normalized,
+                listing_payload=payload["listing_payload"],
+                now=now,
+            )
+            source_profile_id = str(source_profile["_id"])
 
-        legacy_dataset_result = await self._package_legacy_reviews_into_dataset(
-            reviews_collection=reviews,
-            datasets_collection=datasets,
-            source_profiles_collection=source_profiles,
-            business_id=business_id,
-            source_profile_id=source_profile_id,
-            now=now,
-        )
-        legacy_dataset_id = legacy_dataset_result.get("dataset_id")
+            legacy_dataset_result = await self._package_legacy_reviews_into_dataset(
+                reviews_collection=reviews,
+                datasets_collection=datasets,
+                source_profiles_collection=source_profiles,
+                business_id=business_id,
+                source_profile_id=source_profile_id,
+                source=source,
+                now=now,
+            )
+            legacy_dataset_id = legacy_dataset_result.get("dataset_id")
 
-        scrape_run = await self._create_scrape_run(
-            scrape_runs_collection=scrape_runs,
-            business_id=business_id,
-            source_profile_id=source_profile_id,
-            source="google_maps",
-            strategy=selected_strategy,
-            force=bool(force),
-            force_mode=selected_force_mode,
-            now=now,
-        )
-        scrape_run_id = str(scrape_run["_id"])
-        await source_profiles.update_one(
-            {"_id": source_profile["_id"]},
-            {
-                "$inc": {"metrics.total_runs": 1},
-                "$set": {"updated_at": now},
-            },
-        )
-        scrape_dataset = await self._create_dataset_snapshot(
-            datasets_collection=datasets,
-            business_id=business_id,
-            source_profile_id=source_profile_id,
-            source="google_maps",
-            scrape_run_id=scrape_run_id,
-            now=now,
-        )
-        scrape_dataset_id = str(scrape_dataset["_id"])
-
-        await self._upsert_reviews(
-            reviews_collection=reviews,
-            business_id=business_id,
-            processed_reviews=processed_reviews,
-            scraped_at=now,
-            source_profile_id=source_profile_id,
-            dataset_id=scrape_dataset_id,
-            scrape_run_id=scrape_run_id,
-        )
-        scrape_dataset_review_count = await reviews.count_documents(
-            {"business_id": business_id, "dataset_id": scrape_dataset_id}
-        )
-        dataset_status = "ready" if scrape_dataset_review_count > 0 else "empty"
-        await datasets.update_one(
-            {"_id": scrape_dataset["_id"]},
-            {
-                "$set": {
-                    "status": dataset_status,
-                    "metrics.review_count": scrape_dataset_review_count,
-                    "updated_at": now,
-                }
-            },
-        )
-        if scrape_dataset_review_count > 0:
+            scrape_run = await self._create_scrape_run(
+                scrape_runs_collection=scrape_runs,
+                business_id=business_id,
+                source_profile_id=source_profile_id,
+                source=source,
+                strategy=selected_strategy,
+                force=bool(force),
+                force_mode=selected_force_mode,
+                now=now,
+            )
+            scrape_run_id = str(scrape_run["_id"])
             await source_profiles.update_one(
                 {"_id": source_profile["_id"]},
                 {
+                    "$inc": {"metrics.total_runs": 1},
+                    "$set": {"updated_at": now},
+                },
+            )
+
+            scrape_dataset = await self._create_dataset_snapshot(
+                datasets_collection=datasets,
+                business_id=business_id,
+                source_profile_id=source_profile_id,
+                source=source,
+                scrape_run_id=scrape_run_id,
+                now=now,
+            )
+            scrape_dataset_id = str(scrape_dataset["_id"])
+
+            await self._upsert_reviews(
+                reviews_collection=reviews,
+                business_id=business_id,
+                processed_reviews=payload["processed_reviews"],
+                scraped_at=now,
+                source_profile_id=source_profile_id,
+                dataset_id=scrape_dataset_id,
+                scrape_run_id=scrape_run_id,
+            )
+            scrape_dataset_review_count = await reviews.count_documents(
+                {"business_id": business_id, "dataset_id": scrape_dataset_id}
+            )
+            dataset_review_count_total += scrape_dataset_review_count
+            dataset_status = "ready" if scrape_dataset_review_count > 0 else "empty"
+            await datasets.update_one(
+                {"_id": scrape_dataset["_id"]},
+                {
                     "$set": {
-                        "active_dataset_id": scrape_dataset_id,
-                        "active_scrape_run_id": scrape_run_id,
-                        "metrics.active_review_count": scrape_dataset_review_count,
+                        "status": dataset_status,
+                        "metrics.review_count": scrape_dataset_review_count,
                         "updated_at": now,
                     }
                 },
             )
+            if scrape_dataset_review_count > 0:
+                await source_profiles.update_one(
+                    {"_id": source_profile["_id"]},
+                    {
+                        "$set": {
+                            "active_dataset_id": scrape_dataset_id,
+                            "active_scrape_run_id": scrape_run_id,
+                            "metrics.active_review_count": scrape_dataset_review_count,
+                            "updated_at": now,
+                        }
+                    },
+                )
+
+            fallback_active_dataset_id = str(
+                source_profile.get("active_dataset_id") or legacy_dataset_id or ""
+            ).strip() or None
+            source_runtime[source] = {
+                "source": source,
+                "source_profile_id": source_profile_id,
+                "legacy_dataset_id": legacy_dataset_id,
+                "scrape_run_id": scrape_run_id,
+                "scrape_dataset_id": scrape_dataset_id,
+                "dataset_review_count": scrape_dataset_review_count,
+                "scraped_review_count": payload["scraped_review_count"],
+                "processed_review_count": payload["processed_review_count"],
+                "stats": payload["stats"],
+                "listing_payload": payload["listing_payload"],
+                "fallback_active_dataset_id": fallback_active_dataset_id,
+            }
 
         review_count = await reviews.count_documents({"business_id": business_id})
-        fallback_active_dataset_id = str(
-            source_profile.get("active_dataset_id") or legacy_dataset_id or ""
-        ).strip() or None
+        scrape_produced_new_reviews = bool(
+            any(int(runtime.get("dataset_review_count", 0)) > 0 for runtime in source_runtime.values())
+        )
+        strict_rescrape_failed = bool(
+            bool(force)
+            and selected_force_mode == "strict_rescrape"
+            and not scrape_produced_new_reviews
+        )
+        for runtime in source_runtime.values():
+            await self._finalize_scrape_run(
+                scrape_runs_collection=scrape_runs,
+                scrape_run_id=str(runtime["scrape_run_id"]),
+                now=now,
+                status="failed" if strict_rescrape_failed else "done",
+                metrics={
+                    "scraped_review_count": int(runtime.get("scraped_review_count", 0)),
+                    "processed_review_count": int(runtime.get("processed_review_count", 0)),
+                    "stored_review_count_before": stored_review_count_before,
+                    "stored_review_count_after": review_count,
+                    "dataset_review_count": int(runtime.get("dataset_review_count", 0)),
+                },
+                dataset_id=str(runtime["scrape_dataset_id"]),
+            )
+
+        primary_runtime = source_runtime[primary_source]
+        active_runtime = primary_runtime
+        if int(primary_runtime.get("dataset_review_count", 0)) <= 0:
+            for runtime in source_runtime.values():
+                if int(runtime.get("dataset_review_count", 0)) > 0:
+                    active_runtime = runtime
+                    break
+
+        source_profile_id = str(active_runtime["source_profile_id"])
+        scrape_run_id = str(active_runtime["scrape_run_id"])
+        scrape_dataset_id = str(active_runtime["scrape_dataset_id"])
+        scrape_dataset_review_count = int(active_runtime["dataset_review_count"])
+        legacy_dataset_id = active_runtime.get("legacy_dataset_id")
+        fallback_active_dataset_id = active_runtime.get("fallback_active_dataset_id")
         analysis_dataset_id = (
+            scrape_dataset_id
+            if len(source_runtime) == 1 and scrape_dataset_review_count > 0
+            else fallback_active_dataset_id if len(source_runtime) == 1
+            else None
+        )
+        business_active_dataset_id = (
             scrape_dataset_id
             if scrape_dataset_review_count > 0
             else fallback_active_dataset_id
@@ -363,33 +533,13 @@ class BusinessService:
             {
                 "$set": {
                     "review_count": review_count,
-                    "active_dataset_id": analysis_dataset_id,
+                    "active_dataset_id": business_active_dataset_id,
                     "updated_at": now,
                 }
             },
         )
 
-        scrape_produced_new_reviews = bool(scrape_dataset_review_count > 0)
-
-        if (
-            bool(force)
-            and selected_force_mode == "strict_rescrape"
-            and not scrape_produced_new_reviews
-        ):
-            await self._finalize_scrape_run(
-                scrape_runs_collection=scrape_runs,
-                scrape_run_id=scrape_run_id,
-                now=now,
-                status="failed",
-                metrics={
-                    "scraped_review_count": scraped_review_count,
-                    "processed_review_count": processed_review_count,
-                    "stored_review_count_before": stored_review_count_before,
-                    "stored_review_count_after": review_count,
-                    "dataset_review_count": scrape_dataset_review_count,
-                },
-                dataset_id=scrape_dataset_id,
-            )
+        if strict_rescrape_failed:
             await self._emit_progress(
                 progress_callback,
                 "scrape_pipeline_strict_rescrape_failed",
@@ -399,31 +549,18 @@ class BusinessService:
                     "strategy": selected_strategy,
                     "force_mode": selected_force_mode,
                     "scraped_review_count": scraped_review_count,
-                    "dataset_review_count": scrape_dataset_review_count,
+                    "dataset_review_count": dataset_review_count_total,
                     "dataset_id": scrape_dataset_id,
                     "analysis_dataset_id": analysis_dataset_id,
                     "legacy_dataset_id": legacy_dataset_id,
+                    "sources": source_runtime,
+                    "failed_sources": failed_sources,
                 },
             )
             raise RuntimeError(
                 "Strict rescrape mode is enabled and scrape produced 0 reviews. "
                 "No fallback to stored reviews was applied."
             )
-
-        await self._finalize_scrape_run(
-            scrape_runs_collection=scrape_runs,
-            scrape_run_id=scrape_run_id,
-            now=now,
-            status="done",
-            metrics={
-                "scraped_review_count": scraped_review_count,
-                "processed_review_count": processed_review_count,
-                "stored_review_count_before": stored_review_count_before,
-                "stored_review_count_after": review_count,
-                "dataset_review_count": scrape_dataset_review_count,
-            },
-            dataset_id=scrape_dataset_id,
-        )
 
         if not scrape_produced_new_reviews and review_count > 0:
             await self._emit_progress(
@@ -436,6 +573,8 @@ class BusinessService:
                     "stored_review_count_after": review_count,
                     "analysis_dataset_id": analysis_dataset_id,
                     "legacy_dataset_id": legacy_dataset_id,
+                    "sources": source_runtime,
+                    "failed_sources": failed_sources,
                 },
             )
 
@@ -450,13 +589,15 @@ class BusinessService:
                 "processed_review_count": processed_review_count,
                 "stored_review_count_before": stored_review_count_before,
                 "stored_review_count_after": review_count,
-                "dataset_review_count": scrape_dataset_review_count,
+                "dataset_review_count": dataset_review_count_total,
                 "dataset_id": scrape_dataset_id,
                 "analysis_dataset_id": analysis_dataset_id,
                 "legacy_dataset_id": legacy_dataset_id,
                 "source_profile_id": source_profile_id,
                 "scrape_run_id": scrape_run_id,
                 "scrape_produced_new_reviews": scrape_produced_new_reviews,
+                "sources": source_runtime,
+                "failed_sources": failed_sources,
             },
         )
         return self._sanitize_response_payload(
@@ -473,7 +614,7 @@ class BusinessService:
                 "processed_review_count": processed_review_count,
                 "stored_review_count_before": stored_review_count_before,
                 "stored_review_count_after": review_count,
-                "dataset_review_count": scrape_dataset_review_count,
+                "dataset_review_count": dataset_review_count_total,
                 "dataset_id": scrape_dataset_id,
                 "analysis_dataset_id": analysis_dataset_id,
                 "legacy_dataset_id": legacy_dataset_id,
@@ -481,6 +622,8 @@ class BusinessService:
                 "scrape_run_id": scrape_run_id,
                 "scrape_produced_new_reviews": scrape_produced_new_reviews,
                 "listing_total_reviews": listing_payload.get("total_reviews"),
+                "sources": source_runtime,
+                "failed_sources": failed_sources,
             }
         )
 
@@ -555,6 +698,8 @@ class BusinessService:
         interactive_max_rounds: int | None = None,
         html_scroll_max_rounds: int | None = None,
         html_stable_rounds: int | None = None,
+        tripadvisor_max_pages: int | None = None,
+        tripadvisor_pages_percent: float | None = None,
     ) -> dict:
         business_name = self._validate_business_name(name)
         selected_strategy = self._resolve_reviews_strategy(strategy)
@@ -568,10 +713,33 @@ class BusinessService:
             interactive_max_rounds=interactive_max_rounds,
             html_scroll_max_rounds=html_scroll_max_rounds,
             html_stable_rounds=html_stable_rounds,
+            tripadvisor_max_pages=tripadvisor_max_pages,
+            tripadvisor_pages_percent=tripadvisor_pages_percent,
         )
-        return await self.job_service.enqueue_analyze_business_job(
+        google_job = await self.job_service.enqueue_job(
             task_payload=task_payload,
             name_normalized=name_normalized,
+            queue_name="scrape_google_maps",
+            job_type="business_analyze",
+        )
+        tripadvisor_job = await self.job_service.enqueue_job(
+            task_payload=task_payload,
+            name_normalized=name_normalized,
+            queue_name="scrape_tripadvisor",
+            job_type="business_analyze",
+        )
+        primary_job_id = str(google_job.get("job_id", "")).strip()
+        return self._sanitize_response_payload(
+            {
+                "job_id": primary_job_id,
+                "primary_job_id": primary_job_id,
+                "status": "queued",
+                "name": business_name,
+                "jobs_by_source": {
+                    "google_maps": google_job,
+                    "tripadvisor": tripadvisor_job,
+                },
+            }
         )
 
     async def get_business_analysis_job(self, job_id: str) -> dict:
@@ -588,6 +756,107 @@ class BusinessService:
             page=page,
             page_size=page_size,
             status_filter=status_filter,
+        )
+
+    async def delete_business_analysis_job(
+        self,
+        *,
+        job_id: str,
+        wait_active_stop_seconds: float = 10.0,
+        poll_seconds: float = 0.5,
+        force_delete_on_timeout: bool = True,
+    ) -> dict:
+        return await self.job_service.delete_job(
+            job_id=job_id,
+            wait_active_stop_seconds=wait_active_stop_seconds,
+            poll_seconds=poll_seconds,
+            force_delete_on_timeout=force_delete_on_timeout,
+        )
+
+    async def stop_business_scrape_job(
+        self,
+        *,
+        job_id: str,
+        continue_analysis_if_google: bool = True,
+        wait_active_stop_seconds: float = 10.0,
+        poll_seconds: float = 0.5,
+    ) -> dict[str, Any]:
+        job_payload = await self.job_service.get_job(job_id=job_id)
+        queue_name = str(job_payload.get("queue_name") or "").strip().lower()
+        job_type = str(job_payload.get("job_type") or "").strip().lower()
+        if job_type != "business_analyze" or queue_name not in {"scrape", "scrape_google_maps", "scrape_tripadvisor"}:
+            raise ValueError(
+                "Only scraping jobs can be stopped with this endpoint "
+                "(queue_name in scrape/scrape_google_maps/scrape_tripadvisor)."
+            )
+
+        cancel_result = await self.job_service.request_job_cancellation(
+            job_id=job_id,
+            reason="Manual scrape stop requested via API.",
+        )
+
+        safe_wait_seconds = max(0.5, float(wait_active_stop_seconds))
+        safe_poll_seconds = max(0.1, float(poll_seconds))
+        started_wait_at = time.monotonic()
+        timed_out_waiting_stop = False
+        final_job_payload = cancel_result
+
+        while True:
+            try:
+                current = await self.job_service.get_job(job_id=job_id)
+            except LookupError:
+                break
+            final_job_payload = current
+            current_status = str(current.get("status") or "").strip().lower()
+            if current_status not in self._ACTIVE_JOB_STATUSES:
+                break
+            if (time.monotonic() - started_wait_at) >= safe_wait_seconds:
+                timed_out_waiting_stop = True
+                break
+            await asyncio.sleep(safe_poll_seconds)
+
+        is_google_scrape_queue = queue_name in {"scrape", "scrape_google_maps"}
+        analysis_already_handed_off = (
+            str(final_job_payload.get("queue_name") or "").strip().lower() == "analysis"
+            or str(final_job_payload.get("job_type") or "").strip().lower() == "analysis_generate"
+        )
+        continue_analysis_requested = bool(continue_analysis_if_google and is_google_scrape_queue)
+
+        analysis_enqueue_result: dict[str, Any] | None = None
+        continue_analysis_note: str | None = None
+        if continue_analysis_requested and not analysis_already_handed_off:
+            business_id = await self._resolve_business_id_for_scrape_job(final_job_payload)
+            if business_id:
+                analysis_task_payload = AnalysisGenerateTaskPayload(
+                    business_id=business_id,
+                    source_job_id=str(job_id),
+                )
+                analysis_enqueue_result = await self.job_service.enqueue_analysis_generate_job(
+                    task_payload=analysis_task_payload
+                )
+                continue_analysis_note = "Analysis job was enqueued after stopping scrape."
+            else:
+                continue_analysis_note = (
+                    "Scrape stop requested, but analysis could not be enqueued yet "
+                    "because no business_id was resolved from current data."
+                )
+        elif continue_analysis_requested and analysis_already_handed_off:
+            continue_analysis_note = "Analysis flow was already handed off before stop completion."
+        elif not continue_analysis_requested:
+            continue_analysis_note = "No analysis continuation was requested for this source."
+
+        return self._sanitize_response_payload(
+            {
+                "job_id": str(job_id),
+                "queue_name": queue_name,
+                "cancel_requested": True,
+                "status": final_job_payload.get("status"),
+                "timed_out_waiting_stop": timed_out_waiting_stop,
+                "continue_analysis_requested": continue_analysis_requested,
+                "analysis_already_handed_off": analysis_already_handed_off,
+                "analysis_enqueue_result": analysis_enqueue_result,
+                "note": continue_analysis_note,
+            }
         )
 
     async def _build_cached_response(
@@ -732,6 +1001,114 @@ class BusinessService:
         finally:
             await self.scraper.close()
 
+    def _build_source_progress_callback(
+        self,
+        *,
+        progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None,
+        source: str,
+    ) -> Callable[[dict[str, Any]], Awaitable[None] | None] | None:
+        if progress_callback is None:
+            return None
+
+        async def _source_progress(event: dict[str, Any]) -> None:
+            stage = str(event.get("stage", "") or "scraper_source_progress")
+            message = str(event.get("message", "") or "Scraper source progress.")
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            payload_data = {"source": source, **data}
+            await self._emit_progress(
+                progress_callback,
+                stage,
+                message,
+                payload_data,
+            )
+
+        return _source_progress
+
+    async def _scrape_tripadvisor_business_page(
+        self,
+        business_name: str,
+        *,
+        max_pages: int | None = None,
+        pages_percent: float | None = None,
+        progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        scraper = self.tripadvisor_scraper
+
+        async def _scraper_progress(event: dict[str, Any]) -> None:
+            await self._emit_progress(
+                progress_callback,
+                "scraper_reviews_progress",
+                "Review pagination in progress.",
+                event,
+            )
+
+        await self._emit_progress(
+            progress_callback,
+            "scraper_starting",
+            "Starting browser and scraper.",
+            {"source": "tripadvisor"},
+        )
+        await scraper.start()
+        try:
+            await self._emit_progress(
+                progress_callback,
+                "scraper_search_started",
+                "Searching business on TripAdvisor.",
+                {"source": "tripadvisor", "query": business_name},
+            )
+            await scraper.search_business(business_name)
+            await self._emit_progress(
+                progress_callback,
+                "scraper_search_completed",
+                "Business page opened.",
+                {"source": "tripadvisor", "query": business_name},
+            )
+
+            listing = await scraper.extract_listing()
+            await self._emit_progress(
+                progress_callback,
+                "scraper_listing_completed",
+                "Listing extracted.",
+                {
+                    "source": "tripadvisor",
+                    "business_name": listing.get("business_name"),
+                    "total_reviews": listing.get("total_reviews"),
+                },
+            )
+
+            await self._emit_progress(
+                progress_callback,
+                "scraper_reviews_started",
+                "Starting reviews extraction.",
+                {
+                    "source": "tripadvisor",
+                    "tripadvisor_max_pages": max_pages,
+                    "tripadvisor_pages_percent": pages_percent,
+                },
+            )
+            reviews = await scraper.extract_reviews(
+                max_rounds=0,
+                html_scroll_max_rounds=0,
+                html_stable_rounds=6,
+                html_min_interval_s=max(0.2, settings.scraper_html_scroll_min_interval_s),
+                html_max_interval_s=max(
+                    max(0.2, settings.scraper_html_scroll_min_interval_s),
+                    settings.scraper_html_scroll_max_interval_s,
+                ),
+                max_pages=max_pages,
+                max_pages_percent=pages_percent,
+                progress_callback=_scraper_progress,
+            )
+            await self._emit_progress(
+                progress_callback,
+                "scraper_reviews_completed",
+                "Reviews extracted.",
+                {"source": "tripadvisor", "scraped_review_count": len(reviews)},
+            )
+            return listing, reviews
+        finally:
+            await scraper.close()
+
     def _resolve_reviews_strategy(self, strategy: str | None) -> str:
         if strategy is None:
             return "scroll_copy"
@@ -748,6 +1125,53 @@ class BusinessService:
             supported = ", ".join(sorted(self._SUPPORTED_REVIEW_STRATEGIES))
             raise ValueError(f"Unknown strategy '{raw_value}'. Supported: {supported}.")
         return normalized
+
+    def _resolve_scrape_sources(self, sources: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
+        if sources is None:
+            return tuple(self._SCRAPE_SOURCES)
+
+        normalized_sources: list[str] = []
+        for raw in sources:
+            normalized = (
+                self._normalize_text(str(raw or ""))
+                .replace("-", "_")
+                .replace(" ", "_")
+            )
+            if not normalized:
+                continue
+            if normalized not in self._SCRAPE_SOURCES:
+                supported = ", ".join(self._SCRAPE_SOURCES)
+                raise ValueError(f"Unknown scrape source '{raw}'. Supported: {supported}.")
+            if normalized not in normalized_sources:
+                normalized_sources.append(normalized)
+
+        if not normalized_sources:
+            raise ValueError("At least one scrape source is required.")
+        return tuple(normalized_sources)
+
+    async def _resolve_business_id_for_scrape_job(self, job_payload: dict[str, Any]) -> str | None:
+        result_payload = job_payload.get("result")
+        if isinstance(result_payload, dict):
+            result_business_id = str(result_payload.get("business_id") or "").strip()
+            if result_business_id:
+                return result_business_id
+
+        payload_data = job_payload.get("payload")
+        payload_name = ""
+        if isinstance(payload_data, dict):
+            payload_name = str(payload_data.get("name") or "").strip()
+        if not payload_name:
+            payload_name = str(job_payload.get("name") or "").strip()
+        if not payload_name:
+            return None
+
+        name_normalized = self._normalize_text(payload_name)
+        database = get_database()
+        businesses = database[self._BUSINESSES_COLLECTION]
+        business_doc = await businesses.find_one({"name_normalized": name_normalized}, projection={"_id": 1})
+        if business_doc is None:
+            return None
+        return str(business_doc.get("_id") or "").strip() or None
 
     def _resolve_force_mode(self, force_mode: str | None) -> str:
         if force_mode is None:
@@ -782,6 +1206,26 @@ class BusinessService:
             raise ValueError(f"{field_name} must be an integer.") from exc
         if parsed < min_value:
             raise ValueError(f"{field_name} must be >= {min_value}.")
+        return parsed
+
+    def _resolve_optional_float_override(
+        self,
+        *,
+        value: float | None,
+        min_value: float,
+        max_value: float,
+        field_name: str,
+    ) -> float:
+        if value is None:
+            raise ValueError(f"{field_name} is required when override validation is requested.")
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field_name} must be a number.") from exc
+        if parsed < min_value:
+            raise ValueError(f"{field_name} must be >= {min_value}.")
+        if parsed > max_value:
+            raise ValueError(f"{field_name} must be <= {max_value}.")
         return parsed
 
     async def _emit_progress(
@@ -933,12 +1377,15 @@ class BusinessService:
         source_profiles_collection,
         business_id: str,
         source_profile_id: str,
+        source: str,
         now: datetime,
     ) -> dict[str, Any]:
+        normalized_source = str(source or "google_maps").strip() or "google_maps"
         legacy_dataset_doc = await datasets_collection.find_one(
             {
                 "business_id": business_id,
                 "source_profile_id": source_profile_id,
+                "source": normalized_source,
                 "kind": "legacy_packaged",
             },
             sort=[("created_at", 1), ("_id", 1)],
@@ -950,12 +1397,26 @@ class BusinessService:
                 "created": False,
             }
 
+        source_filters: list[dict[str, Any]] = [{"source": normalized_source}]
+        if normalized_source == "google_maps":
+            source_filters.extend(
+                [
+                    {"source": {"$exists": False}},
+                    {"source": None},
+                    {"source": ""},
+                ]
+            )
         legacy_query = {
             "business_id": business_id,
-            "$or": [
-                {"dataset_id": {"$exists": False}},
-                {"dataset_id": None},
-                {"dataset_id": ""},
+            "$and": [
+                {
+                    "$or": [
+                        {"dataset_id": {"$exists": False}},
+                        {"dataset_id": None},
+                        {"dataset_id": ""},
+                    ],
+                },
+                {"$or": source_filters},
             ],
         }
         legacy_count = await reviews_collection.count_documents(legacy_query)
@@ -965,7 +1426,7 @@ class BusinessService:
         dataset_doc = {
             "business_id": business_id,
             "source_profile_id": source_profile_id,
-            "source": "google_maps",
+            "source": normalized_source,
             "kind": "legacy_packaged",
             "status": "migrating",
             "scrape_run_id": None,

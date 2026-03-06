@@ -92,7 +92,7 @@ Important worker vars:
 
 - `WORKER_POLL_SECONDS`: polling interval used by queue workers.
 - `WORKER_IDLE_LOG_SECONDS`: idle heartbeat interval in worker logs when no jobs are found.
-- `WORKER_BROKER_BACKEND`: queue broker backend for workers (`mongo` by default, `rabbitmq` reserved for future migration).
+- `WORKER_BROKER_BACKEND`: queue broker backend for workers (`mongo` by default). `rabbitmq` is currently deferred and not enabled.
 
 Important LLM vars:
 
@@ -134,7 +134,8 @@ docker compose --profile worker up --build
 ```
 
 Worker profile now includes:
-- `scraper-worker` (scrape stage)
+- `scraper-google-worker` (Google Maps scrape stage)
+- `scraper-tripadvisor-worker` (TripAdvisor scrape stage)
 - `analysis-worker` (analysis stage)
 
 Infra-only (Mongo in Docker, API local):
@@ -149,13 +150,31 @@ API docs:
 
 - Swagger UI: `http://localhost:8000/docs`
 
+### 4.1) Local manager UI (TypeScript, fastest setup)
+
+```bash
+cd apps/manager
+npm install
+npm run dev
+```
+
+- Default UI URL: `http://localhost:5173`
+- Set API base in the UI header (default: `http://localhost:8000`)
+- Features:
+  - queue analysis jobs
+  - search businesses
+  - list jobs
+  - inspect job detail
+  - live SSE event stream per job
+
 ### 5) Local vs Docker Profile
 
 - Local profile (recommended for login/manual checks): `SCRAPER_HEADLESS=false`
 - Incognito in official API flow (no persisted login cookies): `SCRAPER_INCOGNITO=true`
 - Docker/dev profile (recommended for server stability): `SCRAPER_HEADLESS_DOCKER=true`
 - Docker uses its own Playwright profile dir by default: `SCRAPER_USER_DATA_DIR_DOCKER=playwright-data-docker`
-- Worker has its own profile dir by default: `SCRAPER_USER_DATA_DIR_WORKER_DOCKER=playwright-data-worker-docker`
+- Google worker profile dir by default: `SCRAPER_USER_DATA_DIR_GOOGLE_WORKER_DOCKER=playwright-data-google-worker-docker`
+- TripAdvisor worker profile dir by default: `SCRAPER_USER_DATA_DIR_TRIPADVISOR_WORKER_DOCKER=playwright-data-tripadvisor-worker-docker`
 - Optional Docker virtual display mode: `SCRAPER_USE_XVFB_DOCKER=true` with `SCRAPER_HEADLESS_DOCKER=false`
 - Optional worker mode in Docker profile: `docker compose --profile worker up -d`
 - Local API expects `MONGO_URI=mongodb://localhost:27017`
@@ -200,7 +219,7 @@ uv run python scripts/bootstrap_google_maps_login.py
 If you use worker flow and want the worker to share the same session, set:
 
 ```env
-SCRAPER_USER_DATA_DIR_WORKER_DOCKER=playwright-data-docker
+SCRAPER_USER_DATA_DIR_GOOGLE_WORKER_DOCKER=playwright-data-docker
 ```
 
 Then run the smoke test:
@@ -257,6 +276,7 @@ Expected output includes:
   - Accepts optional `strategy` too, persisted in job and used by worker.
 - `GET /business/analyze/queue`: list analysis jobs with `page` and `page_size`.
 - `GET /business/analyze/queue/{job_id}`: read worker job status/result.
+- `POST /business/analyze/queue/{job_id}/stop-scrape`: stop a running scrape job (Google/TripAdvisor); optionally enqueue analysis continuation when stopping Google.
 - `GET /business/analyze/queue/{job_id}/events`: SSE stream with real-time progress events.
 
 Example (SSE progress stream):

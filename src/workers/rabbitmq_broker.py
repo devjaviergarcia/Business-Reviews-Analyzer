@@ -17,6 +17,11 @@ class RabbitMQJobBroker(WorkerJobBroker):
             f"RabbitMQJobBroker is not implemented yet (queue_name={queue_name!r})."
         )
 
+    async def is_cancel_requested(self, *, job_id: Any) -> bool:
+        raise NotImplementedError(
+            f"RabbitMQJobBroker cancel-check is not implemented yet (job_id={job_id!r})."
+        )
+
     async def append_event(
         self,
         *,

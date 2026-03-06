@@ -46,7 +46,8 @@ try {
     }
     $upArgs += @("up", "-d", "mongodb", "app")
     if ($UseWorker) {
-        $upArgs += "scraper-worker"
+        $upArgs += "scraper-google-worker"
+        $upArgs += "scraper-tripadvisor-worker"
         $upArgs += "analysis-worker"
     }
     docker @upArgs | Out-Host

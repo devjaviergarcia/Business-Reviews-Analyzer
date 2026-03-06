@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 
 from src.config import settings
@@ -15,6 +16,8 @@ logging.basicConfig(
     level=getattr(logging, str(settings.log_level).upper(), logging.INFO),
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
+
+_CANCELLED_BY_USER_ERROR = "Cancelled by user."
 
 
 class AnalysisWorker(QueuedJobWorkerBase):
@@ -32,6 +35,7 @@ class AnalysisWorker(QueuedJobWorkerBase):
     async def _process_job(self, job: dict) -> None:
         job_id = job.get("_id")
         job_type = str(job.get("job_type") or "").strip() or "unknown"
+        cancellation_watch_task: asyncio.Task[None] | None = None
         try:
             task_payload = parse_analysis_generate_payload(job)
             LOGGER.info(
@@ -56,13 +60,42 @@ class AnalysisWorker(QueuedJobWorkerBase):
                 },
             )
 
-            result = await self._service.reanalyze_business_from_stored_reviews(
-                business_id=task_payload.business_id,
-                dataset_id=task_payload.dataset_id,
-                batchers=task_payload.batchers,
-                batch_size=task_payload.batch_size,
-                max_reviews_pool=task_payload.max_reviews_pool,
+            async def cancellation_watch_loop() -> None:
+                while True:
+                    should_cancel = await self._job_broker.is_cancel_requested(job_id=job_id)
+                    if should_cancel:
+                        LOGGER.warning("Cancellation requested for analysis job=%s", job_id)
+                        return
+                    await asyncio.sleep(1.0)
+
+            cancellation_watch_task = asyncio.create_task(cancellation_watch_loop())
+            analysis_task = asyncio.create_task(
+                self._service.reanalyze_business_from_stored_reviews(
+                    business_id=task_payload.business_id,
+                    dataset_id=task_payload.dataset_id,
+                    batchers=task_payload.batchers,
+                    batch_size=task_payload.batch_size,
+                    max_reviews_pool=task_payload.max_reviews_pool,
+                )
             )
+            done, _ = await asyncio.wait(
+                {analysis_task, cancellation_watch_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if cancellation_watch_task in done:
+                analysis_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await analysis_task
+                raise RuntimeError(_CANCELLED_BY_USER_ERROR)
+
+            result = await analysis_task
+            cancellation_watch_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cancellation_watch_task
+
+            if await self._job_broker.is_cancel_requested(job_id=job_id):
+                raise RuntimeError(_CANCELLED_BY_USER_ERROR)
+
             LOGGER.info(
                 "Analysis result job=%s business_id=%s dataset_id=%s review_count=%s processed_review_count=%s batchers_used=%s",
                 job_id,
@@ -97,6 +130,16 @@ class AnalysisWorker(QueuedJobWorkerBase):
             }
             await self._job_broker.mark_done(job_id=job_id, result=result)
             LOGGER.info("Analysis job done=%s business_id=%s", job_id, task_payload.business_id)
+        except RuntimeError as exc:
+            if str(exc).strip() != _CANCELLED_BY_USER_ERROR:
+                raise
+            await self._job_broker.mark_failed(job_id=job_id, error=_CANCELLED_BY_USER_ERROR)
+            LOGGER.warning(
+                "Analysis job cancelled id=%s job_type=%s business_id=%s",
+                job_id,
+                job_type,
+                (task_payload.business_id if "task_payload" in locals() else None),
+            )
         except Exception as exc:  # noqa: BLE001
             await self._job_broker.mark_failed(job_id=job_id, error=str(exc))
             LOGGER.exception(
@@ -105,6 +148,11 @@ class AnalysisWorker(QueuedJobWorkerBase):
                 job_type,
                 exc,
             )
+        finally:
+            if cancellation_watch_task is not None:
+                cancellation_watch_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await cancellation_watch_task
 
 
 async def _main() -> None:

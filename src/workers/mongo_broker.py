@@ -16,6 +16,9 @@ class MongoJobBroker(WorkerJobBroker):
     async def claim_next_job(self, *, queue_name: str) -> dict[str, Any] | None:
         return await self._job_service.pick_next_queued_job(queue_name=queue_name)
 
+    async def is_cancel_requested(self, *, job_id: Any) -> bool:
+        return await self._job_service.is_job_cancel_requested(job_id=job_id)
+
     async def append_event(
         self,
         *,
