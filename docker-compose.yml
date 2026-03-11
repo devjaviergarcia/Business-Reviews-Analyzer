@@ -1,4 +1,10 @@
 x-app-env: &app_env
+  LANG: ${LANG_DOCKER:-es_ES.UTF-8}
+  LC_ALL: ${LC_ALL_DOCKER:-es_ES.UTF-8}
+  LANGUAGE: ${LANGUAGE_DOCKER:-es_ES:es}
+  TZ: ${TZ_DOCKER:-Europe/Madrid}
+  HOST: ${HOST_DOCKER:-0.0.0.0}
+  PORT: ${PORT_DOCKER:-8000}
   MONGO_URI: ${MONGO_URI_DOCKER:-mongodb://mongodb:27017}
   DB_NAME: ${DB_NAME:-business_reviews_analyzer}
   GEMINI_API_KEY: ${GEMINI_API_KEY:-}
@@ -7,6 +13,7 @@ x-app-env: &app_env
   SCRAPER_HEADLESS: ${SCRAPER_HEADLESS_DOCKER:-true}
   SCRAPER_INCOGNITO: ${SCRAPER_INCOGNITO_DOCKER:-false}
   SCRAPER_USER_DATA_DIR: ${SCRAPER_USER_DATA_DIR_DOCKER:-playwright-data-docker}
+  SCRAPER_TRIPADVISOR_USER_DATA_DIR: ${SCRAPER_TRIPADVISOR_USER_DATA_DIR_DOCKER:-playwright-data-tripadvisor-docker}
   SCRAPER_REVIEWS_STRATEGY: ${SCRAPER_REVIEWS_STRATEGY:-interactive}
   SCRAPER_STEALTH_MODE: ${SCRAPER_STEALTH_MODE:-true}
   SCRAPER_HARDEN_HEADLESS: ${SCRAPER_HARDEN_HEADLESS:-true}
@@ -72,7 +79,7 @@ services:
       <<: *app_env
       WORKER_SCRAPE_QUEUE: scrape_tripadvisor
       WORKER_SCRAPE_SOURCE: tripadvisor
-      SCRAPER_USER_DATA_DIR: ${SCRAPER_USER_DATA_DIR_TRIPADVISOR_WORKER_DOCKER:-playwright-data-tripadvisor-worker-docker}
+      SCRAPER_TRIPADVISOR_USER_DATA_DIR: ${SCRAPER_USER_DATA_DIR_TRIPADVISOR_WORKER_DOCKER:-playwright-data-tripadvisor-worker-docker}
     command: python -m src.workers.scraper_worker
 
   analysis-worker:

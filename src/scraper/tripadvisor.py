@@ -76,15 +76,9 @@ class TripadvisorScraper:
         self._context: BrowserContext | None = None
         self._last_click_ts: float | None = None
         self._rng = random.Random()
-        self._default_user_agent = (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/136.0.0.0 Safari/537.36"
-        )
         self._stealth = Stealth(
             navigator_languages_override=("es-ES", "es"),
             navigator_platform_override="Win32",
-            navigator_user_agent_override=self._default_user_agent,
         )
 
     def bind_page(self, page: Page) -> None:
@@ -129,7 +123,6 @@ class TripadvisorScraper:
                 viewport={"width": 1366, "height": 900},
                 locale="es-ES",
                 timezone_id="Europe/Madrid",
-                user_agent=self._default_user_agent,
             )
         else:
             user_data_dir = self._resolve_user_data_dir()
@@ -140,7 +133,6 @@ class TripadvisorScraper:
                 "viewport": {"width": 1366, "height": 900},
                 "locale": "es-ES",
                 "timezone_id": "Europe/Madrid",
-                "user_agent": self._default_user_agent,
                 "args": self._build_chromium_args(),
             }
             if self._browser_channel:
@@ -182,16 +174,37 @@ class TripadvisorScraper:
         self._external_page = False
         self._last_click_ts = None
 
-    async def search_business(self, name: str) -> None:
+    async def search_business(
+        self,
+        name: str,
+        *,
+        progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
+    ) -> None:
         query = self._clean_text(name)
         if not query:
             raise ValueError("Business query is empty.")
 
         page = await self.start()
+        started_at = monotonic()
+
+        async def _emit_search_progress(event: str, *, step: str, step_started_at: float) -> None:
+            await self._emit_progress(
+                progress_callback,
+                {
+                    "event": event,
+                    "source": "tripadvisor",
+                    "step": step,
+                    "elapsed_step_s": round(monotonic() - step_started_at, 3),
+                    "elapsed_total_s": round(monotonic() - started_at, 3),
+                    "page_url": page.url,
+                },
+            )
+
         await self._accept_cookies_if_present()
         await self._dismiss_consent_if_present()
         await self._dismiss_location_prompt_if_present()
 
+        typing_started_at = monotonic()
         search_input = await self._find_first_visible(
             (
                 "input[role='searchbox'][name='q']",
@@ -203,7 +216,13 @@ class TripadvisorScraper:
         await self._human_click(search_input)
         await self._human_type(search_input, query)
         await page.wait_for_timeout(self._rng.randint(250, 700))
+        await _emit_search_progress(
+            "tripadvisor_search_query_typed",
+            step="type_query",
+            step_started_at=typing_started_at,
+        )
 
+        submit_started_at = monotonic()
         submit_button = await self._find_first_visible(
             (
                 "div.bOfFT button[type='submit'][aria-label*='Buscar' i]",
@@ -213,12 +232,39 @@ class TripadvisorScraper:
             timeout_ms=6000,
         )
         await self._human_click(submit_button)
+        await _emit_search_progress(
+            "tripadvisor_search_submitted",
+            step="submit_query",
+            step_started_at=submit_started_at,
+        )
 
+        results_ready_started_at = monotonic()
         await self._wait_after_navigation()
         await self._accept_cookies_if_present()
         await self._dismiss_consent_if_present()
         await self._dismiss_location_prompt_if_present()
+        await _emit_search_progress(
+            "tripadvisor_search_results_ready",
+            step="results_ready",
+            step_started_at=results_ready_started_at,
+        )
+
+        open_listing_started_at = monotonic()
         await self._open_best_search_result(query)
+        await _emit_search_progress(
+            "tripadvisor_search_listing_opened",
+            step="open_listing",
+            step_started_at=open_listing_started_at,
+        )
+        await self._emit_progress(
+            progress_callback,
+            {
+                "event": "tripadvisor_search_completed",
+                "source": "tripadvisor",
+                "elapsed_total_s": round(monotonic() - started_at, 3),
+                "page_url": page.url,
+            },
+        )
 
     async def extract_listing(self) -> dict[str, Any]:
         page = self._require_page()
@@ -458,13 +504,17 @@ class TripadvisorScraper:
         await self._accept_cookies_if_present()
         await self._dismiss_consent_if_present()
         await self._dismiss_location_prompt_if_present()
-        await self._find_first_visible(
-            (
-                "input[role='searchbox'][name='q']",
-                "input[type='search'][name='q'][aria-label*='Buscar' i]",
-            ),
-            timeout_ms=12000,
-        )
+        try:
+            await self._find_first_visible(
+                (
+                    "input[role='searchbox'][name='q']",
+                    "input[type='search'][name='q'][aria-label*='Buscar' i]",
+                ),
+                timeout_ms=12000,
+            )
+        except Exception:
+            # Do not fail startup here; search stage handles retries/selectors.
+            return
 
     async def _open_best_search_result(self, query: str) -> None:
         page = self._require_page()
@@ -1880,4 +1930,3 @@ class TripadvisorScraper:
             await locator.type(char, delay=self._rng.randint(self._min_key_delay_ms, self._max_key_delay_ms))
             if self._rng.random() < 0.1:
                 await self._sleep_ms(self._rng.randint(220, 700))
-

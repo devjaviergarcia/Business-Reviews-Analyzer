@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import time
 import re
+import random
+import time
 import unicodedata
 from collections import Counter
 from datetime import datetime, timezone
@@ -27,6 +28,10 @@ from src.services.reanalyze_use_case import ReanalyzeUseCase
 from src.workers.contracts import AnalysisGenerateTaskPayload, AnalyzeBusinessTaskPayload
 
 
+class ScrapeBotDetectedError(RuntimeError):
+    """Raised when an anti-bot challenge is detected during scraping."""
+
+
 class BusinessService:
     _BUSINESSES_COLLECTION = "businesses"
     _REVIEWS_COLLECTION = "reviews"
@@ -35,6 +40,18 @@ class BusinessService:
     _SOURCE_PROFILES_COLLECTION = "source_profiles"
     _DATASETS_COLLECTION = "datasets"
     _SCRAPE_RUNS_COLLECTION = "scrape_runs"
+    _SCRAPE_DIAGNOSTICS_COLLECTION = "scrape_diagnostics"
+    _ANTI_BOT_KEYWORDS = (
+        "bot",
+        "captcha",
+        "robot",
+        "verify you are human",
+        "verifica que eres humano",
+        "tráfico inusual",
+        "unusual traffic",
+        "security check",
+        "automated access",
+    )
     _SUPPORTED_REANALYZE_BATCHERS = {
         "latest_text",
         "balanced_rating",
@@ -136,7 +153,7 @@ class BusinessService:
             headless=settings.scraper_headless,
             incognito=settings.scraper_incognito,
             slow_mo_ms=settings.scraper_slow_mo_ms,
-            user_data_dir="playwright-data-tripadvisor",
+            user_data_dir=settings.scraper_tripadvisor_user_data_dir,
             browser_channel=settings.scraper_browser_channel,
             tripadvisor_url="https://www.tripadvisor.es",
             timeout_ms=settings.scraper_timeout_ms,
@@ -305,10 +322,12 @@ class BusinessService:
             )
         source_results: dict[str, dict[str, Any]] = {}
         failed_sources: dict[str, str] = {}
+        failed_source_errors: dict[str, Exception] = {}
         gathered = await asyncio.gather(*source_tasks.values(), return_exceptions=True)
         for source, result in zip(source_tasks.keys(), gathered):
             if isinstance(result, Exception):
                 failed_sources[source] = str(result)
+                failed_source_errors[source] = result
                 await self._emit_progress(
                     progress_callback,
                     "scrape_source_failed",
@@ -330,6 +349,19 @@ class BusinessService:
             }
 
         if not source_results:
+            bot_failed_sources = [
+                source_name
+                for source_name, source_error in failed_source_errors.items()
+                if isinstance(source_error, ScrapeBotDetectedError)
+            ]
+            if bot_failed_sources:
+                raise ScrapeBotDetectedError(
+                    "Anti-bot challenge detected. "
+                    + "; ".join(
+                        f"{source}: {failed_sources.get(source, 'unknown anti-bot error')}"
+                        for source in bot_failed_sources
+                    )
+                )
             raise RuntimeError(
                 "All configured sources failed during scrape stage. "
                 + "; ".join(f"{source}: {error}" for source, error in failed_sources.items())
@@ -1033,6 +1065,9 @@ class BusinessService:
         progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         scraper = self.tripadvisor_scraper
+        stage_timeout_seconds = max(1, int(settings.scraper_tripadvisor_stage_timeout_seconds))
+        stage_elapsed_seconds: dict[str, float] = {}
+        current_stage = "init"
 
         async def _scraper_progress(event: dict[str, Any]) -> None:
             await self._emit_progress(
@@ -1042,29 +1077,132 @@ class BusinessService:
                 event,
             )
 
+        async def _run_stage(
+            *,
+            stage: str,
+            operation: Callable[[], Awaitable[Any]],
+        ) -> Any:
+            nonlocal current_stage
+            current_stage = stage
+            started_at = time.monotonic()
+            try:
+                result = await asyncio.wait_for(operation(), timeout=float(stage_timeout_seconds))
+                elapsed_seconds = round(time.monotonic() - started_at, 3)
+                stage_elapsed_seconds[stage] = elapsed_seconds
+                await self._emit_progress(
+                    progress_callback,
+                    "scraper_stage_timing",
+                    "Tripadvisor stage completed.",
+                    {
+                        "source": "tripadvisor",
+                        "stage_name": stage,
+                        "elapsed_seconds": elapsed_seconds,
+                        "stage_timeout_seconds": stage_timeout_seconds,
+                    },
+                )
+                return result
+            except asyncio.TimeoutError as exc:
+                elapsed_seconds = round(time.monotonic() - started_at, 3)
+                stage_elapsed_seconds[stage] = elapsed_seconds
+                diagnostic_payload = await self._record_tripadvisor_stage_timeout_diagnostic(
+                    business_name=business_name,
+                    stage=stage,
+                    timeout_seconds=stage_timeout_seconds,
+                    elapsed_seconds=elapsed_seconds,
+                    scraper=scraper,
+                    error=f"Stage '{stage}' timed out after {stage_timeout_seconds}s.",
+                )
+                await self._emit_progress(
+                    progress_callback,
+                    "scraper_stage_timeout",
+                    "Tripadvisor stage timed out.",
+                    {
+                        "source": "tripadvisor",
+                        "query": business_name,
+                        "stage_name": stage,
+                        "elapsed_seconds": elapsed_seconds,
+                        "stage_timeout_seconds": stage_timeout_seconds,
+                        "diagnostic_id": diagnostic_payload.get("diagnostic_id"),
+                        "diagnostic_persist_error": diagnostic_payload.get("persist_error"),
+                        "bot_match_count": diagnostic_payload.get("bot_match_count", 0),
+                        "anti_bot_detected": bool(diagnostic_payload.get("anti_bot_detected")),
+                        "page_url": diagnostic_payload.get("page_url"),
+                    },
+                )
+                diagnostic_id = str(diagnostic_payload.get("diagnostic_id") or "").strip() or "n/a"
+                if bool(diagnostic_payload.get("anti_bot_detected")):
+                    raise ScrapeBotDetectedError(
+                        f"Tripadvisor anti-bot challenge detected during stage '{stage}' "
+                        f"(diagnostic_id={diagnostic_id})."
+                    ) from exc
+                raise RuntimeError(
+                    f"Tripadvisor stage '{stage}' timed out after {stage_timeout_seconds}s "
+                    f"(diagnostic_id={diagnostic_id})."
+                ) from exc
+
+        start_delay_seconds = self._resolve_effective_tripadvisor_start_delay_seconds()
         await self._emit_progress(
             progress_callback,
             "scraper_starting",
             "Starting browser and scraper.",
-            {"source": "tripadvisor"},
+            {
+                "source": "tripadvisor",
+                "stage_timeout_seconds": stage_timeout_seconds,
+                "start_delay_seconds": start_delay_seconds,
+                "start_delay_min_seconds": settings.scraper_tripadvisor_start_delay_min_seconds,
+                "start_delay_max_seconds": settings.scraper_tripadvisor_start_delay_max_seconds,
+            },
         )
-        await scraper.start()
         try:
+            await _run_stage(stage="start", operation=scraper.start)
+            await self._emit_progress(
+                progress_callback,
+                "scraper_started",
+                "Browser and scraper started.",
+                {
+                    "source": "tripadvisor",
+                    "elapsed_seconds": stage_elapsed_seconds.get("start"),
+                },
+            )
+            if start_delay_seconds > 0:
+                await self._emit_progress(
+                    progress_callback,
+                    "scraper_start_delay_started",
+                    "Waiting before starting Tripadvisor search.",
+                    {
+                        "source": "tripadvisor",
+                        "start_delay_seconds": start_delay_seconds,
+                        "start_delay_min_seconds": settings.scraper_tripadvisor_start_delay_min_seconds,
+                        "start_delay_max_seconds": settings.scraper_tripadvisor_start_delay_max_seconds,
+                    },
+                )
+                await _run_stage(
+                    stage="start_delay",
+                    operation=lambda: asyncio.sleep(start_delay_seconds),
+                )
             await self._emit_progress(
                 progress_callback,
                 "scraper_search_started",
                 "Searching business on TripAdvisor.",
-                {"source": "tripadvisor", "query": business_name},
+                {
+                    "source": "tripadvisor",
+                    "query": business_name,
+                    "stage_timeout_seconds": stage_timeout_seconds,
+                },
             )
-            await scraper.search_business(business_name)
+            await _run_stage(stage="search", operation=lambda: scraper.search_business(business_name))
             await self._emit_progress(
                 progress_callback,
                 "scraper_search_completed",
                 "Business page opened.",
-                {"source": "tripadvisor", "query": business_name},
+                {
+                    "source": "tripadvisor",
+                    "query": business_name,
+                    "elapsed_seconds": stage_elapsed_seconds.get("search"),
+                },
             )
 
-            listing = await scraper.extract_listing()
+            listing = await _run_stage(stage="listing", operation=scraper.extract_listing)
             await self._emit_progress(
                 progress_callback,
                 "scraper_listing_completed",
@@ -1073,6 +1211,7 @@ class BusinessService:
                     "source": "tripadvisor",
                     "business_name": listing.get("business_name"),
                     "total_reviews": listing.get("total_reviews"),
+                    "elapsed_seconds": stage_elapsed_seconds.get("listing"),
                 },
             )
 
@@ -1084,30 +1223,270 @@ class BusinessService:
                     "source": "tripadvisor",
                     "tripadvisor_max_pages": max_pages,
                     "tripadvisor_pages_percent": pages_percent,
+                    "stage_timeout_seconds": stage_timeout_seconds,
                 },
             )
-            reviews = await scraper.extract_reviews(
-                max_rounds=0,
-                html_scroll_max_rounds=0,
-                html_stable_rounds=6,
-                html_min_interval_s=max(0.2, settings.scraper_html_scroll_min_interval_s),
-                html_max_interval_s=max(
-                    max(0.2, settings.scraper_html_scroll_min_interval_s),
-                    settings.scraper_html_scroll_max_interval_s,
+            reviews = await _run_stage(
+                stage="reviews",
+                operation=lambda: scraper.extract_reviews(
+                    max_rounds=0,
+                    html_scroll_max_rounds=0,
+                    html_stable_rounds=6,
+                    html_min_interval_s=max(0.2, settings.scraper_html_scroll_min_interval_s),
+                    html_max_interval_s=max(
+                        max(0.2, settings.scraper_html_scroll_min_interval_s),
+                        settings.scraper_html_scroll_max_interval_s,
+                    ),
+                    max_pages=max_pages,
+                    max_pages_percent=pages_percent,
+                    progress_callback=_scraper_progress,
                 ),
-                max_pages=max_pages,
-                max_pages_percent=pages_percent,
-                progress_callback=_scraper_progress,
             )
             await self._emit_progress(
                 progress_callback,
                 "scraper_reviews_completed",
                 "Reviews extracted.",
-                {"source": "tripadvisor", "scraped_review_count": len(reviews)},
+                {
+                    "source": "tripadvisor",
+                    "scraped_review_count": len(reviews),
+                    "elapsed_seconds": stage_elapsed_seconds.get("reviews"),
+                    "stage_elapsed_seconds": stage_elapsed_seconds,
+                },
             )
             return listing, reviews
+        except ScrapeBotDetectedError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if "diagnostic_id=" in str(exc):
+                raise
+
+            diagnostic_payload = await self._record_tripadvisor_failure_diagnostic(
+                business_name=business_name,
+                stage=current_stage,
+                scraper=scraper,
+                error=str(exc),
+            )
+            diagnostic_id = str(diagnostic_payload.get("diagnostic_id") or "").strip()
+            await self._emit_progress(
+                progress_callback,
+                "scraper_stage_error",
+                "Tripadvisor stage failed.",
+                {
+                    "source": "tripadvisor",
+                    "query": business_name,
+                    "stage_name": current_stage,
+                    "diagnostic_id": diagnostic_payload.get("diagnostic_id"),
+                    "diagnostic_persist_error": diagnostic_payload.get("persist_error"),
+                    "bot_match_count": diagnostic_payload.get("bot_match_count", 0),
+                    "anti_bot_detected": bool(diagnostic_payload.get("anti_bot_detected")),
+                    "page_url": diagnostic_payload.get("page_url"),
+                },
+            )
+            if diagnostic_id:
+                if bool(diagnostic_payload.get("anti_bot_detected")):
+                    raise ScrapeBotDetectedError(
+                        f"Tripadvisor anti-bot challenge detected during stage '{current_stage}' "
+                        f"(diagnostic_id={diagnostic_id})."
+                    ) from exc
+                raise RuntimeError(
+                    f"Tripadvisor stage '{current_stage}' failed: {exc} "
+                    f"(diagnostic_id={diagnostic_id})."
+                ) from exc
+            raise
         finally:
             await scraper.close()
+
+    def _resolve_effective_tripadvisor_start_delay_seconds(self) -> float:
+        fixed = max(0.0, float(settings.scraper_tripadvisor_start_delay_seconds))
+        minimum = settings.scraper_tripadvisor_start_delay_min_seconds
+        maximum = settings.scraper_tripadvisor_start_delay_max_seconds
+
+        if minimum is None and maximum is None:
+            return fixed
+
+        lower = fixed if minimum is None else max(0.0, float(minimum))
+        upper = fixed if maximum is None else max(0.0, float(maximum))
+        if upper < lower:
+            lower, upper = upper, lower
+        if abs(upper - lower) < 1e-9:
+            return lower
+        return random.uniform(lower, upper)
+
+    async def _record_tripadvisor_failure_diagnostic(
+        self,
+        *,
+        business_name: str,
+        stage: str,
+        scraper: TripadvisorScraper,
+        error: str,
+        diagnostic_type: str = "stage_error",
+        timeout_seconds: int | None = None,
+        elapsed_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        now = datetime.now(timezone.utc)
+        snapshot = await self._capture_tripadvisor_snapshot(scraper=scraper)
+        full_html = str(snapshot.get("html") or "")
+        max_html_length = 200_000
+        html_truncated = len(full_html) > max_html_length
+        stored_html = full_html[:max_html_length] if html_truncated else full_html
+        bot_snippets = self._extract_keyword_context_snippets(
+            full_html,
+            keyword="bot",
+            max_matches=8,
+            context_chars=140,
+        )
+        anti_bot_matches = self._extract_anti_bot_keyword_matches(full_html)
+        anti_bot_match_count = sum(len(items) for items in anti_bot_matches.values())
+        anti_bot_detected = anti_bot_match_count > 0
+
+        doc = {
+            "source": "tripadvisor",
+            "diagnostic_type": diagnostic_type,
+            "business_name": business_name,
+            "stage": stage,
+            "timeout_seconds": int(timeout_seconds) if timeout_seconds is not None else None,
+            "elapsed_seconds": float(elapsed_seconds) if elapsed_seconds is not None else None,
+            "error": str(error or "").strip(),
+            "page_url": str(snapshot.get("url") or ""),
+            "page_title": str(snapshot.get("title") or ""),
+            "html_snapshot": stored_html,
+            "html_snapshot_length": len(full_html),
+            "html_snapshot_truncated": bool(html_truncated),
+            "keyword_matches": {
+                "keyword": "bot",
+                "count": len(bot_snippets),
+                "snippets": bot_snippets,
+            },
+            "anti_bot": {
+                "detected": anti_bot_detected,
+                "total_matches": anti_bot_match_count,
+                "keywords": anti_bot_matches,
+            },
+            "capture_errors": list(snapshot.get("capture_errors") or []),
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        diagnostics_collection = get_database()[self._SCRAPE_DIAGNOSTICS_COLLECTION]
+        try:
+            insert_result = await diagnostics_collection.insert_one(doc)
+            diagnostic_id = str(insert_result.inserted_id)
+            persist_error = None
+        except Exception as exc:  # noqa: BLE001
+            diagnostic_id = None
+            persist_error = str(exc)
+
+        return {
+            "diagnostic_id": diagnostic_id,
+            "persist_error": persist_error,
+            "page_url": str(snapshot.get("url") or ""),
+            "bot_match_count": len(bot_snippets),
+            "anti_bot_detected": anti_bot_detected,
+            "anti_bot_match_count": anti_bot_match_count,
+        }
+
+    async def _record_tripadvisor_stage_timeout_diagnostic(
+        self,
+        *,
+        business_name: str,
+        stage: str,
+        timeout_seconds: int,
+        elapsed_seconds: float,
+        scraper: TripadvisorScraper,
+        error: str,
+    ) -> dict[str, Any]:
+        return await self._record_tripadvisor_failure_diagnostic(
+            business_name=business_name,
+            stage=stage,
+            scraper=scraper,
+            error=error,
+            diagnostic_type="stage_timeout",
+            timeout_seconds=timeout_seconds,
+            elapsed_seconds=elapsed_seconds,
+        )
+
+    async def _capture_tripadvisor_snapshot(
+        self,
+        *,
+        scraper: TripadvisorScraper,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "url": "",
+            "title": "",
+            "html": "",
+            "capture_errors": [],
+        }
+        page = None
+        try:
+            page = scraper.page
+        except Exception as exc:  # noqa: BLE001
+            payload["capture_errors"].append(f"page_unavailable: {exc}")
+            return payload
+
+        try:
+            payload["url"] = str(page.url or "")
+        except Exception as exc:  # noqa: BLE001
+            payload["capture_errors"].append(f"url_read_failed: {exc}")
+        try:
+            payload["title"] = str(await page.title() or "")
+        except Exception as exc:  # noqa: BLE001
+            payload["capture_errors"].append(f"title_read_failed: {exc}")
+        try:
+            payload["html"] = str(await page.content() or "")
+        except Exception as exc:  # noqa: BLE001
+            payload["capture_errors"].append(f"html_capture_failed: {exc}")
+        return payload
+
+    def _extract_anti_bot_keyword_matches(self, text: str) -> dict[str, list[str]]:
+        matches: dict[str, list[str]] = {}
+        for keyword in self._ANTI_BOT_KEYWORDS:
+            snippets = self._extract_keyword_context_snippets(
+                text,
+                keyword=keyword,
+                max_matches=6,
+                context_chars=140,
+            )
+            if snippets:
+                matches[keyword] = snippets
+        return matches
+
+    def _extract_keyword_context_snippets(
+        self,
+        text: str,
+        *,
+        keyword: str,
+        max_matches: int = 8,
+        context_chars: int = 120,
+    ) -> list[str]:
+        haystack = str(text or "")
+        needle = str(keyword or "").strip()
+        if not haystack or not needle:
+            return []
+
+        snippets: list[str] = []
+        context_size = max(20, int(context_chars))
+        limit = max(1, int(max_matches))
+        word_pattern = re.compile(rf"\b{re.escape(needle)}\b", flags=re.IGNORECASE)
+
+        for match in word_pattern.finditer(haystack):
+            start = max(0, match.start() - context_size)
+            end = min(len(haystack), match.end() + context_size)
+            snippet = re.sub(r"\s+", " ", haystack[start:end]).strip()
+            if snippet:
+                snippets.append(snippet)
+            if len(snippets) >= limit:
+                return snippets
+
+        fallback_pattern = re.compile(re.escape(needle), flags=re.IGNORECASE)
+        for match in fallback_pattern.finditer(haystack):
+            start = max(0, match.start() - context_size)
+            end = min(len(haystack), match.end() + context_size)
+            snippet = re.sub(r"\s+", " ", haystack[start:end]).strip()
+            if snippet:
+                snippets.append(snippet)
+            if len(snippets) >= limit:
+                break
+        return snippets
 
     def _resolve_reviews_strategy(self, strategy: str | None) -> str:
         if strategy is None:

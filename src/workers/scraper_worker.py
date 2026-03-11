@@ -9,7 +9,7 @@ from typing import Any
 
 from src.config import settings
 from src.dependencies import create_business_service, create_worker_job_broker
-from src.services.business_service import BusinessService
+from src.services.business_service import BusinessService, ScrapeBotDetectedError
 from src.workers.base_queue_worker import QueuedJobWorkerBase
 from src.workers.broker import WorkerJobBroker
 from src.workers.contracts import AnalysisGenerateTaskPayload, AnalysisJobStatus, parse_analyze_business_payload
@@ -344,19 +344,44 @@ class ScraperWorker(QueuedJobWorkerBase):
                     business_id,
                     self._scrape_source,
                 )
-        except RuntimeError as exc:
-            if str(exc).strip() != _CANCELLED_BY_USER_ERROR:
-                raise
-            await self._job_broker.mark_failed(job_id=job_id, error=_CANCELLED_BY_USER_ERROR)
+        except ScrapeBotDetectedError as exc:
+            await self._job_broker.mark_failed(job_id=job_id, error=str(exc))
             elapsed_s = round(time.monotonic() - started_at, 2)
             LOGGER.warning(
-                "Scrape job cancelled id=%s elapsed=%ss name=%r strategy=%s stage_counts=%s",
+                "Scrape job aborted due to anti-bot detection id=%s elapsed=%ss name=%r strategy=%s stage_counts=%s error=%s",
                 job_id,
                 elapsed_s,
                 job_name,
                 strategy,
                 dict(stage_counts),
+                exc,
             )
+        except RuntimeError as exc:
+            if str(exc).strip() == _CANCELLED_BY_USER_ERROR:
+                await self._job_broker.mark_failed(job_id=job_id, error=_CANCELLED_BY_USER_ERROR)
+                elapsed_s = round(time.monotonic() - started_at, 2)
+                LOGGER.warning(
+                    "Scrape job cancelled id=%s elapsed=%ss name=%r strategy=%s stage_counts=%s",
+                    job_id,
+                    elapsed_s,
+                    job_name,
+                    strategy,
+                    dict(stage_counts),
+                )
+            else:
+                await self._job_broker.mark_failed(job_id=job_id, error=str(exc))
+                elapsed_s = round(time.monotonic() - started_at, 2)
+                LOGGER.exception(
+                    "Scrape job failed id=%s elapsed=%ss name=%r force=%s force_mode=%s strategy=%s stage_counts=%s error=%s",
+                    job_id,
+                    elapsed_s,
+                    job_name,
+                    force,
+                    force_mode,
+                    strategy,
+                    dict(stage_counts),
+                    exc,
+                )
         except Exception as exc:  # noqa: BLE001
             await self._job_broker.mark_failed(job_id=job_id, error=str(exc))
             elapsed_s = round(time.monotonic() - started_at, 2)

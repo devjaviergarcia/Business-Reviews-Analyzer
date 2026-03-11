@@ -84,6 +84,7 @@ Important scraper vars:
 - `SCRAPER_INTERACTIVE_MAX_ROUNDS`: rounds for interactive extraction.
 - `SCRAPER_HTML_SCROLL_MAX_ROUNDS` / `SCRAPER_HTML_STABLE_ROUNDS`: limits for `scroll_copy` (`0` rounds means auto-scroll until end with a high safety cap).
 - `SCRAPER_HTML_SCROLL_MIN_INTERVAL_S` / `SCRAPER_HTML_SCROLL_MAX_INTERVAL_S`: random wait range between scroll iterations in `scroll_copy` (supports decimals, e.g. `1.0` to `2.0`).
+- `SCRAPER_TRIPADVISOR_STAGE_TIMEOUT_SECONDS`: max seconds per Tripadvisor stage (`start`, `search`, `listing`, `reviews`). On timeout, the job fails and stores a diagnostic in Mongo (`scrape_diagnostics`) with page HTML snapshot and `bot` keyword snippets.
 - `ANALYSIS_REANALYZE_DEFAULT_BATCHERS`: batchers used when reanalyzing saved reviews.
 - `ANALYSIS_REANALYZE_BATCH_SIZE`: reviews per batch for reanalysis.
 - `ANALYSIS_REANALYZE_POOL_SIZE`: max stored reviews loaded for reanalysis.

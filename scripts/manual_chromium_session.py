@@ -1,5 +1,6 @@
 ﻿import argparse
 import asyncio
+import random
 import sys
 from pathlib import Path
 from time import monotonic
@@ -29,10 +30,16 @@ def _parse_args() -> argparse.Namespace:
         default=settings.scraper_maps_url,
         help=f"Initial URL to open (default: {settings.scraper_maps_url}).",
     )
-    parser.add_argument(
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "--persistent",
         action="store_true",
-        help="Use persistent profile (default is incognito context).",
+        help="Use persistent profile.",
+    )
+    mode_group.add_argument(
+        "--incognito",
+        action="store_true",
+        help="Force incognito context.",
     )
     parser.add_argument(
         "--profile-dir",
@@ -55,12 +62,35 @@ def _parse_args() -> argparse.Namespace:
         help="Disable stealth init script.",
     )
     parser.add_argument(
+        "--user-agent",
+        default="",
+        help="Optional explicit user-agent. Empty means use browser default.",
+    )
+    parser.add_argument(
         "--tripadvisor-query",
         default="banos arabes de cordoba",
         help=(
             "If URL is Tripadvisor, run search flow with this query "
             "(default: banos arabes de cordoba)."
         ),
+    )
+    parser.add_argument(
+        "--tripadvisor-start-delay-seconds",
+        type=float,
+        default=0.0,
+        help="Delay in seconds before running Tripadvisor flow (default: 0).",
+    )
+    parser.add_argument(
+        "--tripadvisor-start-delay-min-seconds",
+        type=float,
+        default=None,
+        help="Optional minimum delay (seconds) for randomized flow start.",
+    )
+    parser.add_argument(
+        "--tripadvisor-start-delay-max-seconds",
+        type=float,
+        default=None,
+        help="Optional maximum delay (seconds) for randomized flow start.",
     )
     parser.add_argument(
         "--no-tripadvisor-flow",
@@ -107,6 +137,29 @@ def _looks_like_tripadvisor_url(url: str) -> bool:
     return "tripadvisor." in hostname
 
 
+def _is_tripadvisor_context(*urls: str) -> bool:
+    return any(_looks_like_tripadvisor_url(item) for item in urls if str(item or "").strip())
+
+
+def _resolve_effective_start_delay_seconds(
+    *,
+    fixed_seconds: float,
+    min_seconds: float | None,
+    max_seconds: float | None,
+) -> float:
+    fixed = max(0.0, float(fixed_seconds))
+    if min_seconds is None and max_seconds is None:
+        return fixed
+
+    lower = fixed if min_seconds is None else max(0.0, float(min_seconds))
+    upper = fixed if max_seconds is None else max(0.0, float(max_seconds))
+    if upper < lower:
+        lower, upper = upper, lower
+    if abs(upper - lower) < 1e-9:
+        return lower
+    return random.uniform(lower, upper)
+
+
 def _tripadvisor_base_url(url: str) -> str:
     parsed = urlparse(_normalize_url(url))
     scheme = parsed.scheme or "https"
@@ -130,6 +183,21 @@ def _poll_manual_trigger_keys() -> tuple[bool, bool]:
         elif key == "q":
             quit_requested = True
     return start_requested, quit_requested
+
+
+def _pick_runtime_page(*, context: BrowserContext, fallback_page: Page) -> Page:
+    pages = [item for item in context.pages if not item.is_closed()]
+    if not pages:
+        return fallback_page
+
+    # Prefer any tab already on Tripadvisor.
+    for candidate in reversed(pages):
+        if _looks_like_tripadvisor_url(candidate.url):
+            return candidate
+
+    if fallback_page in pages:
+        return fallback_page
+    return pages[-1]
 
 
 def _resolve_user_data_dir(user_data_dir: str) -> Path:
@@ -214,7 +282,11 @@ def _block_geolocation_init_script() -> str:
 
 
 async def _launch_incognito_context(
-    playwright: Playwright, *, channel: str | None, executable_path: str | None
+    playwright: Playwright,
+    *,
+    channel: str | None,
+    executable_path: str | None,
+    user_agent: str | None,
 ) -> tuple[Browser, BrowserContext]:
     launch_options = {
         "headless": False,
@@ -234,36 +306,36 @@ async def _launch_incognito_context(
         launch_options.pop("channel", None)
         browser = await playwright.chromium.launch(**launch_options)
 
-    context = await browser.new_context(
-        viewport={"width": 1366, "height": 900},
-        locale="es-ES",
-        timezone_id="Europe/Madrid",
-        user_agent=(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/133.0.0.0 Safari/537.36"
-        ),
-    )
+    context_options: dict[str, object] = {
+        "viewport": {"width": 1366, "height": 900},
+        "locale": "es-ES",
+        "timezone_id": "Europe/Madrid",
+    }
+    if user_agent:
+        context_options["user_agent"] = user_agent
+    context = await browser.new_context(**context_options)
     return browser, context
 
 
 async def _launch_persistent_context(
-    playwright: Playwright, *, channel: str | None, executable_path: str | None, profile_dir: Path
+    playwright: Playwright,
+    *,
+    channel: str | None,
+    executable_path: str | None,
+    profile_dir: Path,
+    user_agent: str | None,
 ) -> tuple[Browser | None, BrowserContext]:
-    launch_options = {
+    launch_options: dict[str, object] = {
         "user_data_dir": str(profile_dir),
         "headless": False,
         "slow_mo": settings.scraper_slow_mo_ms,
         "viewport": {"width": 1366, "height": 900},
         "locale": "es-ES",
         "timezone_id": "Europe/Madrid",
-        "user_agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/133.0.0.0 Safari/537.36"
-        ),
         "args": _build_chromium_args(headless=False),
     }
+    if user_agent:
+        launch_options["user_agent"] = user_agent
     if executable_path:
         launch_options["executable_path"] = executable_path
     elif channel:
@@ -287,9 +359,31 @@ async def _run_tripadvisor_search_flow(
     *,
     reviews_pages: int,
     skip_reviews: bool,
+    start_delay_seconds: float,
 ) -> bool:
+    flow_started_at = monotonic()
+    current_stage = "init"
+    stage_durations: dict[str, float] = {}
+
+    def _log_stage_done(stage_key: str, label: str, started_at: float) -> None:
+        duration_s = max(0.0, monotonic() - started_at)
+        stage_durations[stage_key] = duration_s
+        total_s = max(0.0, monotonic() - flow_started_at)
+        print(
+            f"[tripadvisor-timing] etapa={label} "
+            f"duracion={duration_s:.2f}s total={total_s:.2f}s"
+        )
+
     print(f"Tripadvisor flow: searching '{query}'")
     try:
+        delay_s = max(0.0, float(start_delay_seconds))
+        if delay_s > 0:
+            current_stage = "start_delay"
+            stage_started_at = monotonic()
+            print(f"Tripadvisor flow: waiting {delay_s:.1f}s before starting...")
+            await asyncio.sleep(delay_s)
+            _log_stage_done("start_delay", "espera_inicial", stage_started_at)
+
         tripadvisor_scraper = TripadvisorScraper(
             page=page,
             tripadvisor_url=_tripadvisor_base_url(source_url),
@@ -299,11 +393,47 @@ async def _run_tripadvisor_search_flow(
             min_key_delay_ms=settings.scraper_min_key_delay_ms,
             max_key_delay_ms=settings.scraper_max_key_delay_ms,
         )
-        await tripadvisor_scraper.search_business(query)
+
+        current_stage = "search_business"
+        search_started_at = monotonic()
+
+        def _search_progress_logger(payload: dict[str, object]) -> None:
+            event = str(payload.get("event", "unknown"))
+            step = str(payload.get("step", "") or "-")
+            elapsed_step_s = float(payload.get("elapsed_step_s") or 0.0)
+            elapsed_total_s = float(payload.get("elapsed_total_s") or 0.0)
+            if event.startswith("tripadvisor_search_"):
+                print(
+                    "[tripadvisor-timing] "
+                    f"etapa=buscar step={step} event={event} "
+                    f"paso={elapsed_step_s:.2f}s total_busqueda={elapsed_total_s:.2f}s"
+                )
+
+        await tripadvisor_scraper.search_business(query, progress_callback=_search_progress_logger)
+        _log_stage_done("search_business", "escribir_busqueda_y_abrir_ficha", search_started_at)
+
+        current_stage = "extract_listing"
+        listing_started_at = monotonic()
+        listing = await tripadvisor_scraper.extract_listing()
+        _log_stage_done("extract_listing", "extraer_listing", listing_started_at)
+        print(
+            "Tripadvisor flow: listing detectado "
+            f"nombre='{listing.get('business_name') or ''}' "
+            f"total_reviews={listing.get('total_reviews')}"
+        )
+
         if not skip_reviews:
+            current_stage = "extract_reviews"
+            reviews_started_at = monotonic()
+            last_reviews_progress_at = reviews_started_at
+
             def _progress_logger(payload: dict[str, object]) -> None:
+                nonlocal last_reviews_progress_at
                 event = str(payload.get("event", "unknown"))
                 total_unique = payload.get("total_unique_reviews")
+                now = monotonic()
+                elapsed_reviews_s = max(0.0, now - reviews_started_at)
+                delta_s = max(0.0, now - last_reviews_progress_at)
 
                 if event == "tripadvisor_reviews_started":
                     current = payload.get("current_page")
@@ -316,8 +446,10 @@ async def _run_tripadvisor_search_flow(
                         f"pagina={current or '?'}"
                         f"/{total_pages or '?'} "
                         f"rango={range_start or '?'}-{range_end or '?'} "
-                        f"de {total_results or '?'}"
+                        f"de {total_results or '?'} "
+                        f"t_total={elapsed_reviews_s:.2f}s t_delta={delta_s:.2f}s"
                     )
+                    last_reviews_progress_at = now
                     return
 
                 if event == "tripadvisor_reviews_page_collected":
@@ -335,8 +467,10 @@ async def _run_tripadvisor_search_flow(
                         f"restantes={remaining if remaining is not None else '?'} "
                         f"items_pagina={items_in_page} "
                         f"nuevas={added} "
-                        f"total_unicas={total_unique}"
+                        f"total_unicas={total_unique} "
+                        f"t_total={elapsed_reviews_s:.2f}s t_delta={delta_s:.2f}s"
                     )
+                    last_reviews_progress_at = now
                     return
 
                 if event == "tripadvisor_reviews_end_of_pagination":
@@ -346,15 +480,27 @@ async def _run_tripadvisor_search_flow(
                         "[tripadvisor-progress] fin_paginacion "
                         f"pagina={current or '?'}"
                         f"/{total_pages or '?'} "
-                        f"total_unicas={total_unique}"
+                        f"total_unicas={total_unique} "
+                        f"t_total={elapsed_reviews_s:.2f}s t_delta={delta_s:.2f}s"
                     )
+                    last_reviews_progress_at = now
                     return
 
                 if event == "tripadvisor_reviews_completed":
-                    print(f"[tripadvisor-progress] completado total_unicas={total_unique}")
+                    print(
+                        "[tripadvisor-progress] completado "
+                        f"total_unicas={total_unique} "
+                        f"t_total={elapsed_reviews_s:.2f}s t_delta={delta_s:.2f}s"
+                    )
+                    last_reviews_progress_at = now
                     return
 
-                print(f"[tripadvisor-progress] event={event} total_unicas={total_unique}")
+                print(
+                    "[tripadvisor-progress] "
+                    f"event={event} total_unicas={total_unique} "
+                    f"t_total={elapsed_reviews_s:.2f}s t_delta={delta_s:.2f}s"
+                )
+                last_reviews_progress_at = now
 
             if reviews_pages > 0:
                 max_pages = max(1, int(reviews_pages))
@@ -371,11 +517,28 @@ async def _run_tripadvisor_search_flow(
                 max_rounds=max_rounds,
                 progress_callback=_progress_logger,
             )
+            _log_stage_done("extract_reviews", "extraer_reviews", reviews_started_at)
             _print_reviews(reviews)
+        else:
+            print("Tripadvisor flow: skip reviews enabled.")
+
+        total_flow_s = max(0.0, monotonic() - flow_started_at)
+        print("[tripadvisor-timing] resumen_etapas")
+        for key in ("start_delay", "search_business", "extract_listing", "extract_reviews"):
+            if key in stage_durations:
+                print(f"[tripadvisor-timing] {key}={stage_durations[key]:.2f}s")
+        print(f"[tripadvisor-timing] total={total_flow_s:.2f}s")
         print("Tripadvisor flow completed.")
         return True
     except Exception as exc:
-        print(f"Tripadvisor flow failed: {exc!r}")
+        total_flow_s = max(0.0, monotonic() - flow_started_at)
+        print(
+            "Tripadvisor flow failed: "
+            f"stage={current_stage} elapsed={total_flow_s:.2f}s error={exc!r}"
+        )
+        if stage_durations:
+            for key, value in stage_durations.items():
+                print(f"[tripadvisor-timing] parcial {key}={value:.2f}s")
         return False
 
 
@@ -433,8 +596,10 @@ async def main() -> None:
     args = _parse_args()
     channel = (args.channel or "").strip() or None
     executable_path = (args.executable_path or "").strip() or None
+    user_agent = (args.user_agent or "").strip() or None
     use_stealth = not args.no_stealth
     target_url = _normalize_url(args.url)
+    use_persistent = bool(args.persistent) and not bool(args.incognito)
 
     playwright: Playwright | None = None
     browser: Browser | None = None
@@ -442,22 +607,29 @@ async def main() -> None:
     tripadvisor_flow_started = False
     tripadvisor_flow_completed = False
     manual_trigger_requested = False
+    manual_input_task: asyncio.Task[str] | None = None
+    auto_start_due_at: float | None = None
+    auto_start_delay_seconds = 0.0
 
     try:
         playwright = await async_playwright().start()
 
-        if args.persistent:
+        if use_persistent:
             profile_dir = _resolve_user_data_dir(args.profile_dir)
             browser, context = await _launch_persistent_context(
                 playwright,
                 channel=channel,
                 executable_path=executable_path,
                 profile_dir=profile_dir,
+                user_agent=user_agent,
             )
             print(f"Mode: persistent profile ({profile_dir})")
         else:
             browser, context = await _launch_incognito_context(
-                playwright, channel=channel, executable_path=executable_path
+                playwright,
+                channel=channel,
+                executable_path=executable_path,
+                user_agent=user_agent,
             )
             print("Mode: incognito (fresh context, no saved cookies).")
 
@@ -476,28 +648,28 @@ async def main() -> None:
         if tripadvisor_enabled:
             if manual_trigger_mode:
                 print("Tripadvisor manual-flow is enabled.")
-                print("Press 's' in this terminal to start flow. Press 'q' to quit script.")
+                print("Manual trigger: start Tripadvisor flow from terminal.")
                 if msvcrt is None:
-                    print(
-                        "Manual key trigger is only available on Windows terminals. "
-                        "Use --tripadvisor-trigger auto on this platform."
-                    )
+                    print("Linux/macOS mode: press Enter to trigger, or type 'q' + Enter to quit.")
+                    manual_input_task = asyncio.create_task(asyncio.to_thread(input, ""))
+                else:
+                    print("Windows mode: press 's' to trigger, press 'q' to quit.")
             else:
                 print("Tripadvisor auto-flow is enabled.")
-                print("It will start automatically when current tab URL is Tripadvisor.")
-
-        if _looks_like_tripadvisor_url(target_url) and tripadvisor_enabled and not manual_trigger_mode:
-            query = (args.tripadvisor_query or "").strip()
-            if query:
-                tripadvisor_flow_started = True
-                print("Tripadvisor detected from initial URL. Starting flow now...")
-                tripadvisor_flow_completed = await _run_tripadvisor_search_flow(
-                    page,
-                    query,
-                    target_url,
-                    reviews_pages=args.tripadvisor_reviews_pages,
-                    skip_reviews=args.skip_tripadvisor_reviews,
-                )
+                query = (args.tripadvisor_query or "").strip()
+                if query:
+                    auto_start_delay_seconds = _resolve_effective_start_delay_seconds(
+                        fixed_seconds=args.tripadvisor_start_delay_seconds,
+                        min_seconds=args.tripadvisor_start_delay_min_seconds,
+                        max_seconds=args.tripadvisor_start_delay_max_seconds,
+                    )
+                    auto_start_due_at = monotonic() + auto_start_delay_seconds
+                    print(
+                        "Auto-flow armed. "
+                        f"It will start in {auto_start_delay_seconds:.1f}s (independent of URL condition)."
+                    )
+                else:
+                    print("Tripadvisor auto-flow disabled because --tripadvisor-query is empty.")
 
         print(f"Opened: {page.url}")
         print("Interact manually. This script will exit only when you close the browser window.")
@@ -508,21 +680,36 @@ async def main() -> None:
         if browser is not None:
             last_status_log = monotonic()
             while browser.is_connected():
+                page = _pick_runtime_page(context=context, fallback_page=page)
+
                 if tripadvisor_enabled and manual_trigger_mode and not tripadvisor_flow_started:
-                    start_requested, quit_requested = _poll_manual_trigger_keys()
-                    if quit_requested:
-                        print("Manual quit requested from terminal key 'q'.")
-                        break
-                    if start_requested:
-                        manual_trigger_requested = True
-                        print("Manual trigger received. Starting Tripadvisor flow when URL is Tripadvisor.")
+                    if msvcrt is None:
+                        if manual_input_task is not None and manual_input_task.done():
+                            try:
+                                manual_text = str(manual_input_task.result()).strip().lower()
+                            except Exception:
+                                manual_text = ""
+                            manual_input_task = asyncio.create_task(asyncio.to_thread(input, ""))
+                            if manual_text == "q":
+                                print("Manual quit requested from terminal input.")
+                                break
+                            manual_trigger_requested = True
+                            print("Manual trigger received. Starting Tripadvisor flow when URL is Tripadvisor.")
+                    else:
+                        start_requested, quit_requested = _poll_manual_trigger_keys()
+                        if quit_requested:
+                            print("Manual quit requested from terminal key 'q'.")
+                            break
+                        if start_requested:
+                            manual_trigger_requested = True
+                            print("Manual trigger received. Starting Tripadvisor flow when URL is Tripadvisor.")
 
                 if (
                     tripadvisor_enabled
                     and manual_trigger_mode
                     and manual_trigger_requested
                     and not tripadvisor_flow_started
-                    and _looks_like_tripadvisor_url(page.url)
+                    and _is_tripadvisor_context(page.url, target_url)
                 ):
                     query = (args.tripadvisor_query or "").strip()
                     if query:
@@ -534,25 +721,28 @@ async def main() -> None:
                             page.url,
                             reviews_pages=args.tripadvisor_reviews_pages,
                             skip_reviews=args.skip_tripadvisor_reviews,
+                            start_delay_seconds=args.tripadvisor_start_delay_seconds,
                         )
 
-                # Auto mode: if user navigates to Tripadvisor later, auto-start once.
+                # Auto mode: start on timer, independent of active URL.
                 if (
                     tripadvisor_enabled
                     and not manual_trigger_mode
                     and not tripadvisor_flow_started
-                    and _looks_like_tripadvisor_url(page.url)
+                    and auto_start_due_at is not None
+                    and monotonic() >= auto_start_due_at
                 ):
                     query = (args.tripadvisor_query or "").strip()
                     if query:
                         tripadvisor_flow_started = True
-                        print("Tripadvisor detected from current tab. Starting flow now...")
+                        print("Tripadvisor auto timer reached. Starting flow now...")
                         tripadvisor_flow_completed = await _run_tripadvisor_search_flow(
                             page,
                             query,
-                            page.url,
+                            page.url if str(page.url or "").strip() else target_url,
                             reviews_pages=args.tripadvisor_reviews_pages,
                             skip_reviews=args.skip_tripadvisor_reviews,
+                            start_delay_seconds=0.0,
                         )
                 now = monotonic()
                 if now - last_status_log >= 10:
@@ -560,9 +750,19 @@ async def main() -> None:
                         if manual_trigger_requested:
                             print("Manual trigger is armed. Navigate to Tripadvisor URL to run flow...")
                         else:
-                            print("Waiting manual trigger key 's' in terminal...")
+                            if msvcrt is None:
+                                print("Waiting manual trigger in terminal (Enter to start, q to quit)...")
+                            else:
+                                print("Waiting manual trigger key 's' in terminal...")
                     elif tripadvisor_enabled and not tripadvisor_flow_started and not manual_trigger_mode:
-                        print("Waiting for Tripadvisor URL in current tab to auto-start flow...")
+                        if auto_start_due_at is None:
+                            print("Auto-flow is enabled but not armed (empty query).")
+                        else:
+                            remaining = max(0.0, auto_start_due_at - now)
+                            print(
+                                "Waiting auto timer to start Tripadvisor flow... "
+                                f"(remaining={remaining:.1f}s current={page.url})"
+                            )
                     elif tripadvisor_flow_started and not tripadvisor_flow_completed:
                         print("Tripadvisor flow started. Waiting for completion...")
                     last_status_log = now
@@ -572,6 +772,12 @@ async def main() -> None:
             while True:
                 await asyncio.sleep(1.0)
     finally:
+        if manual_input_task is not None:
+            manual_input_task.cancel()
+            try:
+                await manual_input_task
+            except Exception:
+                pass
         try:
             if context is not None:
                 await context.close()
@@ -582,5 +788,8 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Session interrupted by user.")
 

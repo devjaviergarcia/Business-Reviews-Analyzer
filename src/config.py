@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     scraper_incognito: bool = False
     scraper_slow_mo_ms: int = 50
     scraper_user_data_dir: str = "playwright-data"
+    scraper_tripadvisor_user_data_dir: str = "playwright-data-tripadvisor"
     scraper_browser_channel: str = ""
     scraper_maps_url: str = "https://www.google.com/maps?hl=es"
     scraper_timeout_ms: int = 30000
@@ -37,6 +38,10 @@ class Settings(BaseSettings):
     scraper_html_stable_rounds: int = 10
     scraper_html_scroll_min_interval_s: float = 1.0
     scraper_html_scroll_max_interval_s: float = 2.0
+    scraper_tripadvisor_stage_timeout_seconds: int = 120
+    scraper_tripadvisor_start_delay_seconds: float = 15.0
+    scraper_tripadvisor_start_delay_min_seconds: float | None = None
+    scraper_tripadvisor_start_delay_max_seconds: float | None = None
     analysis_reanalyze_default_batchers: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: [
             "latest_text",
