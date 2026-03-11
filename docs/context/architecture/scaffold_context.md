@@ -1,0 +1,414 @@
+# Contexto de Scaffold del Proyecto
+
+- `run_version`: `8`
+- `generated_at`: `2026-02-26T18:11:29.716313+00:00`
+
+## Leyenda
+
+- `NUEVA`: detectado por primera vez en esta versión.
+- `ACTIVA`: ya existía y sigue presente.
+- `INCONEXA`: callable sin conexión detectada (heurística AST/imports/referencias).
+- `INEXISTENTE`: existía en versión previa y ya no aparece en el análisis actual.
+
+## Resumen
+
+- `kind:class`: `15`
+- `kind:directory`: `15`
+- `kind:file`: `73`
+- `kind:function`: `83`
+- `kind:method`: `166`
+- `status:ACTIVA`: `344`
+- `status:INCONEXA`: `7`
+- `status:INEXISTENTE`: `6`
+- `status:NUEVA`: `1`
+
+## Scaffold Recursivo
+
+- [ACTIVA] Raíz: Raíz del repositorio.
+  Agrupa elementos relacionados del proyecto.
+  - [ACTIVA] `.env`: Archivo `.env`.
+  - [ACTIVA] `.env.example`: Archivo `.env.example`.
+  - [ACTIVA] `.gitignore`: Archivo `.gitignore`.
+  - [ACTIVA] `Dockerfile`: Archivo `Dockerfile`.
+  - [ACTIVA] `README.md`: README principal del proyecto.
+  - [ACTIVA] `docker-compose.yml`: Archivo `docker-compose.yml`.
+  - [ACTIVA] `docker-entrypoint.sh`: Archivo `docker-entrypoint.sh`.
+  - [ACTIVA] `fase1_plan.docx.md`: Documento Markdown `fase1_plan.docx.md`.
+  - [ACTIVA] `pytest.ini`: Archivo `pytest.ini`.
+  - [ACTIVA] `requirements.txt`: Archivo `requirements.txt`.
+  - [ACTIVA] Directorio `docs`: Documentación y fixtures.
+    Agrupa elementos relacionados del proyecto.
+    - [ACTIVA] `docs/google-listing.html`: Archivo `google-listing.html`.
+    - [ACTIVA] `docs/google-maps-search.html`: Archivo `google-maps-search.html`.
+    - [ACTIVA] `docs/google-reviews.html`: Archivo `google-reviews.html`.
+    - [ACTIVA] Directorio `docs/backlogs`: Directorio `backlogs`.
+      Agrupa elementos relacionados del proyecto.
+      - [ACTIVA] `docs/backlogs/README.md`: Documento Markdown `README.md`.
+      - [ACTIVA] `docs/backlogs/fase_00_baseline_actual_google_maps_backlog.md`: Documento Markdown `fase_00_baseline_actual_google_maps_backlog.md`.
+      - [ACTIVA] `docs/backlogs/fase_01_arquitectura_modular_y_workers_backlog.md`: Documento Markdown `fase_01_arquitectura_modular_y_workers_backlog.md`.
+      - [NUEVA] `docs/backlogs/fase_01_arquitectura_modular_y_workers_sprint_plan.md`: Documento Markdown `fase_01_arquitectura_modular_y_workers_sprint_plan.md`.
+      - [ACTIVA] `docs/backlogs/fase_02_modelo_canonico_negocio_y_fuentes_backlog.md`: Documento Markdown `fase_02_modelo_canonico_negocio_y_fuentes_backlog.md`.
+      - [ACTIVA] `docs/backlogs/fase_03_scraper_tripadvisor_backlog.md`: Documento Markdown `fase_03_scraper_tripadvisor_backlog.md`.
+      - [ACTIVA] `docs/backlogs/fase_04_scraper_trustpilot_backlog.md`: Documento Markdown `fase_04_scraper_trustpilot_backlog.md`.
+      - [ACTIVA] `docs/backlogs/fase_05_scraper_reddit_backlog.md`: Documento Markdown `fase_05_scraper_reddit_backlog.md`.
+      - [ACTIVA] `docs/backlogs/fase_06_refinamiento_analisis_llm_rag_backlog.md`: Documento Markdown `fase_06_refinamiento_analisis_llm_rag_backlog.md`.
+      - [ACTIVA] `docs/backlogs/fase_07_informe_estructurado_backlog.md`: Documento Markdown `fase_07_informe_estructurado_backlog.md`.
+      - [ACTIVA] `docs/backlogs/fase_08_interfaz_mvp_analisis_backlog.md`: Documento Markdown `fase_08_interfaz_mvp_analisis_backlog.md`.
+      - [ACTIVA] `docs/backlogs/fase_09_landing_demo_y_email_backlog.md`: Documento Markdown `fase_09_landing_demo_y_email_backlog.md`.
+    - [ACTIVA] Directorio `docs/context`: Directorio `context`.
+      Agrupa elementos relacionados del proyecto.
+      - [ACTIVA] `docs/context/README.md`: Documento Markdown `README.md`.
+      - [ACTIVA] `docs/context/project_objective.md`: Documento Markdown `project_objective.md`.
+      - [ACTIVA] Directorio `docs/context/architecture`: Directorio `architecture`.
+        Agrupa elementos relacionados del proyecto.
+        - [ACTIVA] `docs/context/architecture/README.md`: Documento Markdown `README.md`.
+      - [ACTIVA] Directorio `docs/context/phases`: Directorio `phases`.
+        Agrupa elementos relacionados del proyecto.
+        - [ACTIVA] `docs/context/phases/README.md`: Documento Markdown `README.md`.
+        - [ACTIVA] `docs/context/phases/fase_00_baseline_actual_google_maps.md`: Documento Markdown `fase_00_baseline_actual_google_maps.md`.
+        - [ACTIVA] `docs/context/phases/fase_01_arquitectura_modular_y_workers.md`: Documento Markdown `fase_01_arquitectura_modular_y_workers.md`.
+        - [ACTIVA] `docs/context/phases/fase_02_modelo_canonico_negocio_y_fuentes.md`: Documento Markdown `fase_02_modelo_canonico_negocio_y_fuentes.md`.
+        - [ACTIVA] `docs/context/phases/fase_03_scraper_tripadvisor.md`: Documento Markdown `fase_03_scraper_tripadvisor.md`.
+        - [ACTIVA] `docs/context/phases/fase_04_scraper_trustpilot.md`: Documento Markdown `fase_04_scraper_trustpilot.md`.
+        - [ACTIVA] `docs/context/phases/fase_05_scraper_reddit.md`: Documento Markdown `fase_05_scraper_reddit.md`.
+        - [ACTIVA] `docs/context/phases/fase_06_refinamiento_analisis_llm_rag.md`: Documento Markdown `fase_06_refinamiento_analisis_llm_rag.md`.
+        - [ACTIVA] `docs/context/phases/fase_07_informe_estructurado.md`: Documento Markdown `fase_07_informe_estructurado.md`.
+        - [ACTIVA] `docs/context/phases/fase_08_interfaz_mvp_analisis.md`: Documento Markdown `fase_08_interfaz_mvp_analisis.md`.
+        - [ACTIVA] `docs/context/phases/fase_09_landing_demo_y_email.md`: Documento Markdown `fase_09_landing_demo_y_email.md`.
+  - [ACTIVA] Directorio `scripts`: Scripts operativos y de prueba.
+    Agrupa elementos relacionados del proyecto.
+    - [ACTIVA] `scripts/bootstrap_google_maps_login.py`: Módulo Python `bootstrap_google_maps_login`.
+      - [ACTIVA] `async def main()`
+    - [ACTIVA] `scripts/dev_infra.ps1`: Archivo `dev_infra.ps1`.
+    - [ACTIVA] `scripts/e2e_docker_scrape.ps1`: Archivo `e2e_docker_scrape.ps1`.
+    - [ACTIVA] `scripts/generate_context_docs.py`: Módulo Python `generate_context_docs`.
+      - [ACTIVA] `def now_iso()`
+      - [ACTIVA] `def to_posix(path)`
+      - [ACTIVA] `def nid(kind, path, qual)`
+      - [ACTIVA] `def is_excluded_path(root, path, *, exclude_generated)`
+      - [ACTIVA] `def iter_files(root, *, exclude_generated)`
+      - [ACTIVA] `def module_from_rel(rel)`
+      - [ACTIVA] `def scan_python_file(root, file_path)`
+      - [ACTIVA] `def resolve_from_import(module, level, current_module)`
+      - [ACTIVA] `def default_short(kind, path, name)`
+      - [ACTIVA] `def default_long(kind, path, name, doc)`
+      - [ACTIVA] `def build_scaffold_tree(root, files)`
+      - [ACTIVA] `def ensure_dir(rel_dir)`
+      - [ACTIVA] `def sort_dir(node)`
+      - [ACTIVA] `def flatten_tree(tree)`
+      - [ACTIVA] `def walk_dir(d)`
+      - [ACTIVA] `def load_json(path)`
+      - [ACTIVA] `def prev_nodes_map(prev_json)`
+      - [ACTIVA] `def parse_context_input_md(path)`
+      - [ACTIVA] `def is_inconexa(item)`
+      - [ACTIVA] `def _is_dynamic_dispatch_method(item)`
+      - [ACTIVA] `def merge_desc(item, prev_item, md_desc)`
+      - [ACTIVA] `def assign_status(item, prev_item, run_version)`
+      - [ACTIVA] `def apply_versioning(tree, prev_map, md_desc, run_version)`
+      - [ACTIVA] `def walk_dir(d)`
+      - [ACTIVA] `def stats_from_tree(tree, deleted)`
+      - [ACTIVA] `def write_json(path, data)`
+      - [ACTIVA] `def context_item_obj(item)`
+      - [ACTIVA] `def iter_items_for_input(tree)`
+      - [ACTIVA] `def write_context_input_md(path, tree, deleted)`
+      - [ACTIVA] `def render_tree_md(tree)`
+      - [ACTIVA] `def walk_dir(d, depth)`
+      - [ACTIVA] `def write_scaffold_context_md(path, payload)`
+      - [ACTIVA] `def ensure_file(path, content)`
+      - [ACTIVA] `def ensure_static_docs(root)`
+      - [ACTIVA] `def markdown_files_for_dictionary(root)`
+      - [ACTIVA] `def md_category(rel)`
+      - [ACTIVA] `def md_use(rel)`
+      - [ACTIVA] `def write_context_dictionary(root, path)`
+      - [ACTIVA] `def build_payload(root, tree, deleted, run_version)`
+      - [ACTIVA] `def main()`
+      - [ACTIVA] `PyScanner`
+        - [ACTIVA] `def __init__(self, rel)`
+        - [ACTIVA] `def visit_Import(self, node)`
+        - [ACTIVA] `def visit_ImportFrom(self, node)`
+        - [ACTIVA] `def visit_Name(self, node)`
+        - [ACTIVA] `def visit_Attribute(self, node)`
+        - [ACTIVA] `def visit_ClassDef(self, node)`
+        - [ACTIVA] `def visit_FunctionDef(self, node)`
+        - [ACTIVA] `def visit_AsyncFunctionDef(self, node)`
+        - [ACTIVA] `def _add_fn(self, node, *, is_async)`
+        - [ACTIVA] `def _find_class(self, qual)`
+        - [ACTIVA] `def _args(self, args)`
+        - [ACTIVA] `def _dec_text(self, node)`
+        - [ACTIVA] `def _expr_text(self, node)`
+        - [ACTIVA] `def _first(self, text)`
+    - [ACTIVA] `scripts/generate_phase_backlogs.py`: Módulo Python `generate_phase_backlogs`.
+    - [ACTIVA] `scripts/incognito_scroll_all_reviews.py`: Módulo Python `incognito_scroll_all_reviews`.
+      - [ACTIVA] `def _parse_args()`
+      - [ACTIVA] `async def main()`
+    - [ACTIVA] `scripts/manual_chromium_session.py`: Módulo Python `manual_chromium_session`.
+      - [ACTIVA] `def _parse_args()`
+      - [ACTIVA] `def _resolve_user_data_dir(user_data_dir)`
+      - [ACTIVA] `def _build_chromium_args(headless)`
+      - [ACTIVA] `def _stealth_init_script()`
+      - [ACTIVA] `async def _launch_incognito_context(playwright, *, channel, executable_path)`
+      - [ACTIVA] `async def _launch_persistent_context(playwright, *, channel, executable_path, profile_dir)`
+      - [ACTIVA] `async def main()`
+    - [ACTIVA] `scripts/run_business_analysis.py`: Módulo Python `run_business_analysis`.
+      - [ACTIVA] `def _parse_args()`
+      - [ACTIVA] `def _json_default(value)`
+      - [ACTIVA] `async def _run()`
+    - [ACTIVA] `scripts/run_local_api.ps1`: Archivo `run_local_api.ps1`.
+    - [ACTIVA] `scripts/smoke_test_gemini_flash.py`: Módulo Python `smoke_test_gemini_flash`.
+      - [ACTIVA] `def _parse_args()`
+      - [ACTIVA] `def main()`
+      - [ACTIVA] `def _extract_text(response)`
+    - [ACTIVA] `scripts/smoke_test_google_maps_incognito.py`: Módulo Python `smoke_test_google_maps_incognito`.
+      - [ACTIVA] `def _parse_args()`
+      - [ACTIVA] `async def main()`
+    - [ACTIVA] `scripts/smoke_test_google_maps_search.py`: Módulo Python `smoke_test_google_maps_search`.
+      - [ACTIVA] `def _parse_args()`
+      - [ACTIVA] `async def main()`
+  - [ACTIVA] Directorio `src`: Código fuente principal.
+    Agrupa elementos relacionados del proyecto.
+    - [ACTIVA] `src/__init__.py`: Módulo Python `__init__`.
+    - [ACTIVA] `src/config.py`: Módulo Python `config`.
+      - [ACTIVA] `Settings`
+        - [ACTIVA] `def parse_cors_origins(cls, value)`
+        - [ACTIVA] `def parse_scraper_extra_chromium_args(cls, value)`
+        - [ACTIVA] `def parse_analysis_reanalyze_default_batchers(cls, value)`
+    - [ACTIVA] `src/database.py`: Módulo Python `database`.
+      - [ACTIVA] `async def connect_to_mongo()`
+      - [ACTIVA] `async def close_mongo_connection()`
+      - [ACTIVA] `async def ping_mongo_detailed()`
+      - [INCONEXA] `async def ping_mongo()`
+      - [ACTIVA] `def get_database()`
+    - [ACTIVA] `src/main.py`: Módulo Python `main`.
+      - [ACTIVA] `async def lifespan(_)`
+    - [ACTIVA] Directorio `src/models`: Directorio `models`.
+      Agrupa elementos relacionados del proyecto.
+      - [ACTIVA] `src/models/__init__.py`: Módulo Python `__init__`.
+      - [ACTIVA] `src/models/analysis.py`: Módulo Python `analysis`.
+        - [ACTIVA] `ReviewAnalysis`
+      - [ACTIVA] `src/models/business.py`: Módulo Python `business`.
+        - [ACTIVA] `OwnerReply`
+        - [ACTIVA] `Review`
+        - [ACTIVA] `Listing`
+        - [ACTIVA] `Business`
+    - [ACTIVA] Directorio `src/pipeline`: Directorio `pipeline`.
+      Agrupa elementos relacionados del proyecto.
+      - [ACTIVA] `src/pipeline/__init__.py`: Módulo Python `__init__`.
+      - [ACTIVA] `src/pipeline/llm_analyzer.py`: Módulo Python `llm_analyzer`.
+        - [ACTIVA] `ReviewLLMAnalyzer`
+          - [ACTIVA] `def __init__(self, model_name)`
+          - [ACTIVA] `async def analyze(self, business_name, reviews, stats)`
+          - [ACTIVA] `def _generate_content(self, prompt)`
+          - [ACTIVA] `def _parse_analysis(self, response_text, business_name, stats)`
+          - [ACTIVA] `def _safe_str_list(self, value)`
+          - [ACTIVA] `def _extract_text(self, response)`
+          - [ACTIVA] `def _fallback_analysis(self, business_name, stats)`
+      - [ACTIVA] `src/pipeline/preprocessor.py`: Módulo Python `preprocessor`.
+        - [ACTIVA] `ReviewPreprocessor`
+          - [ACTIVA] `def process(self, reviews)`
+          - [ACTIVA] `def compute_stats(self, reviews)`
+          - [ACTIVA] `def _clean_text(self, text)`
+          - [ACTIVA] `def _coerce_rating(self, rating)`
+          - [ACTIVA] `def _relative_time_bucket(self, relative_time)`
+    - [ACTIVA] Directorio `src/routers`: Directorio `routers`.
+      Agrupa elementos relacionados del proyecto.
+      - [ACTIVA] `src/routers/__init__.py`: Módulo Python `__init__`.
+      - [ACTIVA] `src/routers/analysis.py`: Módulo Python `analysis`.
+        - [ACTIVA] `async def get_business_analysis(business_id)`
+        - [ACTIVA] `async def list_business_analyses(business_id, page, page_size)`
+      - [ACTIVA] `src/routers/business.py`: Módulo Python `business`.
+        - [ACTIVA] `def _json_default(value)`
+        - [ACTIVA] `def _sse_event(event_name, payload)`
+        - [ACTIVA] `async def analyze_business(payload)`
+        - [ACTIVA] `async def enqueue_analyze_business(payload)`
+        - [ACTIVA] `async def list_analyze_business_jobs(page, page_size, status_filter)`
+        - [ACTIVA] `async def get_analyze_business_job(job_id)`
+        - [ACTIVA] `async def stream_analyze_business_job_events(job_id, from_index, poll_seconds)`
+        - [ACTIVA] `async def event_generator()`
+        - [ACTIVA] `async def reanalyze_business_from_stored_reviews(business_id, payload)`
+        - [ACTIVA] `async def list_businesses(page, page_size, include_listing)`
+        - [ACTIVA] `async def get_business(business_id, include_listing)`
+        - [ACTIVA] `async def get_business_reviews(business_id, page, page_size)`
+        - [INCONEXA] `AnalyzeBusinessRequest`
+          - [ACTIVA] `def normalize_cached_to_force(cls, raw)`
+        - [ACTIVA] `ReanalyzeStoredReviewsRequest`
+      - [ACTIVA] `src/routers/health.py`: Módulo Python `health`.
+        - [ACTIVA] `async def get_health()`
+        - [ACTIVA] `HealthResponse`
+    - [ACTIVA] Directorio `src/scraper`: Directorio `scraper`.
+      Agrupa elementos relacionados del proyecto.
+      - [ACTIVA] `src/scraper/__init__.py`: Módulo Python `__init__`.
+      - [ACTIVA] `src/scraper/google_maps.py`: Módulo Python `google_maps`.
+        - [ACTIVA] `GoogleMapsScraper`
+          - [ACTIVA] `def __init__(self, page, *, headless, slow_mo_ms, user_data_dir, browser_channel, maps_url, timeout_ms, min_click_delay_ms, max_click_delay_ms, min_key_delay_ms, max_key_delay_ms, stealth_mode, harden_headless, extra_chromium_args, incognito, reviews_strategy)`
+          - [INCONEXA] `def bind_page(self, page)`
+          - [ACTIVA] `async def __aenter__(self)`
+          - [ACTIVA] `async def __aexit__(self, exc_type, exc, tb)`
+          - [ACTIVA] `async def start(self)`
+          - [ACTIVA] `async def close(self)`
+          - [ACTIVA] `def page(self)`
+          - [ACTIVA] `async def search_business(self, name)`
+          - [ACTIVA] `async def extract_listing(self)`
+          - [ACTIVA] `async def scroll_reviews(self, max_rounds)`
+          - [ACTIVA] `async def collect_reviews_html_snapshot(self, *, max_rounds, stable_rounds, min_pause_s, max_pause_s, bottom_wait_min_ms, bottom_wait_max_ms, progress_callback)`
+          - [ACTIVA] `async def capture_reviews_container_html(self)`
+          - [ACTIVA] `def extract_reviews_from_html(self, reviews_html, limit)`
+          - [ACTIVA] `async def extract_reviews(self, *, strategy, max_rounds, html_scroll_max_rounds, html_stable_rounds, html_min_interval_s, html_max_interval_s, progress_callback)`
+          - [ACTIVA] `async def _extract_reviews_interactive(self)`
+          - [ACTIVA] `def _resolve_reviews_strategy(self, strategy)`
+          - [ACTIVA] `async def _emit_progress(self, callback, payload)`
+          - [ACTIVA] `async def _go_to_maps_home(self)`
+          - [ACTIVA] `def _require_page(self)`
+          - [ACTIVA] `def _assert_event_loop_compatible_for_playwright(self)`
+          - [ACTIVA] `def _resolve_user_data_dir(self)`
+          - [ACTIVA] `def _build_chromium_args(self)`
+          - [ACTIVA] `def _stealth_init_script(self)`
+          - [ACTIVA] `async def _sleep_ms(self, delay_ms)`
+          - [ACTIVA] `async def _enforce_click_gap(self)`
+          - [ACTIVA] `async def _human_click(self, locator)`
+          - [ACTIVA] `async def _human_type(self, locator, text)`
+          - [ACTIVA] `async def _first_visible_from_patterns(self, key, timeout_ms)`
+          - [ACTIVA] `async def _first_optional_visible_from_patterns(self, key, timeout_ms)`
+          - [ACTIVA] `async def _dismiss_google_consent_if_present(self)`
+          - [ACTIVA] `async def _click_cookie_accept_by_aria_label(self)`
+          - [ACTIVA] `async def _first_available_collection(self, key)`
+          - [ACTIVA] `async def _reviews_panel_root_locator(self)`
+          - [ACTIVA] `async def _panel_scoped_collection(self, key)`
+          - [ACTIVA] `async def _is_any_visible(self, key)`
+          - [ACTIVA] `async def _wait_for_search_state(self, timeout_ms)`
+          - [ACTIVA] `async def _open_first_result(self)`
+          - [ACTIVA] `async def _wait_for_listing_ready(self, timeout_ms)`
+          - [ACTIVA] `async def _ensure_reviews_open(self)`
+          - [ACTIVA] `async def _wait_for_reviews_ready(self, timeout_ms)`
+          - [INCONEXA] `async def _is_reviews_tab_selected(self)`
+          - [ACTIVA] `async def _has_review_entrypoint(self)`
+          - [ACTIVA] `async def _review_count(self)`
+          - [ACTIVA] `async def _click_expand_buttons(self, max_clicks)`
+          - [ACTIVA] `async def _scroll_reviews_feed_once(self)`
+          - [ACTIVA] `async def _reviews_feed_state(self, *, step_px, capture_html)`
+          - [ACTIVA] `async def _scroll_reviews_feed_step(self, step_px)`
+          - [ACTIVA] `async def _capture_reviews_feed_html(self)`
+          - [ACTIVA] `async def _text_from_patterns(self, key)`
+          - [ACTIVA] `async def _attribute_from_patterns(self, key, attribute)`
+          - [ACTIVA] `async def _collect_texts(self, key, limit)`
+          - [ACTIVA] `async def _text_from_descendant_patterns(self, root, key)`
+          - [ACTIVA] `async def _attribute_from_descendant_patterns(self, root, key, attribute)`
+          - [ACTIVA] `async def _click_first_by_text(self, terms)`
+          - [ACTIVA] `async def _click_first_valid_review_button_in_group(self, key)`
+          - [ACTIVA] `async def _find_first_valid_review_button_in_group(self, key)`
+          - [ACTIVA] `async def _find_valid_reviews_tab_from_tablist(self)`
+          - [ACTIVA] `async def _find_any_valid_review_button(self)`
+          - [ACTIVA] `async def _find_more_reviews_summary_button(self)`
+          - [ACTIVA] `async def _click_more_reviews_summary_button(self)`
+          - [ACTIVA] `async def _has_more_reviews_summary_button_visible(self)`
+          - [ACTIVA] `async def _is_valid_review_button(self, candidate, *, must_be_in_tablist)`
+          - [ACTIVA] `async def _button_is_inside_tablist(self, button)`
+          - [ACTIVA] `async def _button_has_nested_review_div_text(self, button)`
+          - [ACTIVA] `async def _click_review_entrypoint(self)`
+          - [ACTIVA] `async def _candidate_label(self, locator)`
+          - [ACTIVA] `async def _text_from_locator(self, locator)`
+          - [ACTIVA] `async def _extract_owner_reply(self, card)`
+          - [ACTIVA] `async def _find_owner_reply_block(self, card)`
+          - [ACTIVA] `async def _looks_like_owner_reply_block(self, block)`
+          - [ACTIVA] `async def _extract_review_photo_urls(self, card)`
+          - [ACTIVA] `def _extract_urls_from_style(self, style)`
+          - [ACTIVA] `def _extract_review_card_html_fragments(self, reviews_html)`
+          - [ACTIVA] `def _extract_attr_value(self, source, attribute)`
+          - [ACTIVA] `def _extract_attr_values(self, source, attribute)`
+          - [ACTIVA] `def _extract_first_attr_value_containing(self, source, attribute, *, contains_terms)`
+          - [ACTIVA] `def _extract_first_html_fragment(self, source, pattern)`
+          - [ACTIVA] `def _strip_html_markup(self, value)`
+          - [ACTIVA] `def _extract_owner_reply_from_card_html(self, card_html)`
+          - [ACTIVA] `def _parse_rating(self, value)`
+          - [ACTIVA] `def _parse_total_reviews(self, value)`
+          - [ACTIVA] `def _is_probable_category(self, value)`
+          - [ACTIVA] `def _is_owner_reply_label(self, value)`
+          - [ACTIVA] `def _is_cookie_accept_label(self, value)`
+          - [ACTIVA] `def _is_more_reviews_label(self, value)`
+          - [ACTIVA] `def _is_review_entrypoint_text(self, value)`
+          - [ACTIVA] `async def _is_limited_maps_view(self)`
+          - [ACTIVA] `def _clean_text(self, value)`
+          - [ACTIVA] `def _normalize_text(self, value)`
+      - [ACTIVA] `src/scraper/selectors.py`: Módulo Python `selectors`.
+    - [ACTIVA] Directorio `src/services`: Directorio `services`.
+      Agrupa elementos relacionados del proyecto.
+      - [ACTIVA] `src/services/__init__.py`: Módulo Python `__init__`.
+      - [ACTIVA] `src/services/business_service.py`: Módulo Python `business_service`.
+        - [ACTIVA] `BusinessService`
+          - [ACTIVA] `def __init__(self)`
+          - [ACTIVA] `async def analyze_business(self, name, force, strategy, progress_callback)`
+          - [ACTIVA] `async def get_business(self, business_id, include_listing)`
+          - [ACTIVA] `async def list_businesses(self, *, page, page_size, include_listing)`
+          - [ACTIVA] `async def get_business_reviews(self, business_id, *, page, page_size)`
+          - [ACTIVA] `async def get_business_analysis(self, business_id)`
+          - [ACTIVA] `async def list_business_analyses(self, business_id, *, page, page_size)`
+          - [ACTIVA] `async def reanalyze_business_from_stored_reviews(self, business_id, *, batchers, batch_size, max_reviews_pool)`
+          - [ACTIVA] `async def enqueue_business_analysis_job(self, name, force, strategy)`
+          - [ACTIVA] `async def get_business_analysis_job(self, job_id)`
+          - [ACTIVA] `async def list_business_analysis_jobs(self, *, page, page_size, status_filter)`
+          - [ACTIVA] `async def _build_cached_response(self, *, businesses, reviews, analyses, name_normalized, strategy)`
+          - [ACTIVA] `async def _scrape_business_page(self, business_name, *, strategy, progress_callback)`
+          - [ACTIVA] `async def _scraper_progress(event)`
+          - [ACTIVA] `def _resolve_reviews_strategy(self, strategy)`
+          - [ACTIVA] `async def _emit_progress(self, callback, stage, message, data)`
+          - [ACTIVA] `async def _upsert_reviews(self, *, reviews_collection, business_id, processed_reviews, scraped_at)`
+          - [ACTIVA] `def _validate_business_name(self, name)`
+          - [ACTIVA] `def _normalize_text(self, value)`
+          - [ACTIVA] `def _normalize_scraped_review(self, review)`
+          - [ACTIVA] `def _normalize_stored_review(self, review)`
+          - [ACTIVA] `def _resolve_reanalysis_batchers(self, batchers)`
+          - [ACTIVA] `def _build_reanalysis_batches(self, reviews, *, batcher_names, batch_size)`
+          - [ACTIVA] `def _build_priority_batch(self, reviews, *, batch_size, primary_predicate)`
+          - [ACTIVA] `def _build_balanced_rating_batch(self, reviews, *, batch_size)`
+          - [ACTIVA] `def _review_identity(self, review)`
+          - [ACTIVA] `def _safe_rating(self, review)`
+          - [ACTIVA] `def _analysis_quality_score(self, analysis_payload)`
+          - [ACTIVA] `def _merge_reanalysis_runs(self, run_results)`
+          - [ACTIVA] `def _merge_reanalysis_terms(self, run_results, *, key, limit)`
+          - [ACTIVA] `def _review_fingerprint(self, review)`
+          - [ACTIVA] `def _parse_object_id(self, value, *, field_name)`
+          - [ACTIVA] `def _coerce_pagination(self, *, page, page_size, max_page_size)`
+          - [ACTIVA] `def _pagination_payload(self, *, items, page, page_size, total)`
+          - [ACTIVA] `def _serialize_business_doc(self, *, business_doc, review_count, include_listing)`
+          - [ACTIVA] `def _serialize_business_summary_doc(self, *, business_doc, latest_analysis, include_listing)`
+          - [ACTIVA] `def _build_business_description(self, *, business_doc, latest_analysis, categories)`
+          - [ACTIVA] `def _serialize_review_doc(self, review_doc)`
+          - [ACTIVA] `def _serialize_analysis_doc(self, analysis_doc)`
+          - [ACTIVA] `def _serialize_analysis_job_doc(self, job_doc)`
+          - [ACTIVA] `def _sanitize_response_payload(self, value)`
+    - [ACTIVA] Directorio `src/workers`: Directorio `workers`.
+      Agrupa elementos relacionados del proyecto.
+      - [ACTIVA] `src/workers/__init__.py`: Módulo Python `__init__`.
+      - [ACTIVA] `src/workers/scraper_worker.py`: Módulo Python `scraper_worker`.
+        - [ACTIVA] `async def _main()`
+        - [ACTIVA] `ScraperWorker`
+          - [ACTIVA] `def __init__(self)`
+          - [ACTIVA] `async def run_forever(self)`
+          - [ACTIVA] `async def _pick_next_job(self)`
+          - [ACTIVA] `async def _process_job(self, job)`
+          - [ACTIVA] `async def on_progress(event)`
+          - [ACTIVA] `async def _emit_job_event(self, *, jobs, job_id, stage, message, data)`
+  - [ACTIVA] Directorio `tests`: Directorio `tests`.
+    Agrupa elementos relacionados del proyecto.
+    - [ACTIVA] `tests/test_preprocessor.py`: Módulo Python `test_preprocessor`.
+      - [INCONEXA] `def test_process_cleans_text_and_rating()`
+      - [INCONEXA] `def test_process_detects_old_reviews()`
+      - [INCONEXA] `def test_compute_stats_returns_expected_values()`
+
+## Callables Inconexas
+
+- `src/database.py` -> `ping_mongo`
+- `src/routers/business.py` -> `AnalyzeBusinessRequest`
+- `src/scraper/google_maps.py` -> `GoogleMapsScraper._is_reviews_tab_selected`
+- `src/scraper/google_maps.py` -> `GoogleMapsScraper.bind_page`
+- `tests/test_preprocessor.py` -> `test_compute_stats_returns_expected_values`
+- `tests/test_preprocessor.py` -> `test_process_cleans_text_and_rating`
+- `tests/test_preprocessor.py` -> `test_process_detects_old_reviews`
+
+## Elementos Inexistentes (Histórico)
+
+- [INEXISTENTE] `file` `docs/context/phases/fase_00_descubrimiento.md` :: `fase_00_descubrimiento.md`
+- [INEXISTENTE] `file` `docs/context/phases/fase_01_mvp_google_maps.md` :: `fase_01_mvp_google_maps.md`
+- [INEXISTENTE] `file` `docs/context/phases/fase_02_multifuente_normalizacion.md` :: `fase_02_multifuente_normalizacion.md`
+- [INEXISTENTE] `file` `docs/context/phases/fase_03_workers_orquestacion.md` :: `fase_03_workers_orquestacion.md`
+- [INEXISTENTE] `file` `docs/context/phases/fase_04_reporting_producto.md` :: `fase_04_reporting_producto.md`
+- [INEXISTENTE] `file` `docs/context/phases/fase_05_plataforma_escala.md` :: `fase_05_plataforma_escala.md`
