@@ -43,10 +43,12 @@ class TripadvisorScraper:
         browser_channel: str | None = None,
         tripadvisor_url: str = "https://www.tripadvisor.es",
         timeout_ms: int = 30000,
-        min_click_delay_ms: int = 3100,
-        max_click_delay_ms: int = 5200,
-        min_key_delay_ms: int = 90,
-        max_key_delay_ms: int = 260,
+        min_click_delay_ms: int = 700,
+        max_click_delay_ms: int = 1500,
+        min_key_delay_ms: int = 35,
+        max_key_delay_ms: int = 95,
+        max_reviews_open_seconds: float = 3.0,
+        max_seconds_per_reviews_page: float = 10.0,
         stealth_mode: bool = True,
         harden_headless: bool = True,
         extra_chromium_args: list[str] | None = None,
@@ -61,10 +63,12 @@ class TripadvisorScraper:
         self._browser_channel = (browser_channel or "").strip() or None
         self._tripadvisor_url = tripadvisor_url
         self._timeout_ms = timeout_ms
-        self._min_click_delay_ms = max(3001, min_click_delay_ms)
-        self._max_click_delay_ms = max(self._min_click_delay_ms, max_click_delay_ms)
-        self._min_key_delay_ms = max(10, min_key_delay_ms)
-        self._max_key_delay_ms = max(self._min_key_delay_ms, max_key_delay_ms)
+        self._min_click_delay_ms = max(120, min(700, int(min_click_delay_ms)))
+        self._max_click_delay_ms = max(self._min_click_delay_ms, min(1500, int(max_click_delay_ms)))
+        self._min_key_delay_ms = max(5, min(60, int(min_key_delay_ms)))
+        self._max_key_delay_ms = max(self._min_key_delay_ms, min(120, int(max_key_delay_ms)))
+        self._max_reviews_open_seconds = max(0.8, float(max_reviews_open_seconds))
+        self._max_seconds_per_reviews_page = max(2.0, float(max_seconds_per_reviews_page))
         self._stealth_mode = stealth_mode
         self._harden_headless = harden_headless
         self._extra_chromium_args = list(extra_chromium_args or [])
@@ -76,6 +80,9 @@ class TripadvisorScraper:
         self._context: BrowserContext | None = None
         self._last_click_ts: float | None = None
         self._rng = random.Random()
+        self._cookies_checked_once = False
+        self._consent_checked_once = False
+        self._location_prompt_checked_once = False
         self._stealth = Stealth(
             navigator_languages_override=("es-ES", "es"),
             navigator_platform_override="Win32",
@@ -186,6 +193,7 @@ class TripadvisorScraper:
 
         page = await self.start()
         started_at = monotonic()
+        direct_listing_url = self._resolve_direct_listing_target_url(query)
 
         async def _emit_search_progress(event: str, *, step: str, step_started_at: float) -> None:
             await self._emit_progress(
@@ -200,19 +208,90 @@ class TripadvisorScraper:
                 },
             )
 
+        if direct_listing_url:
+            open_direct_started_at = monotonic()
+            await self._emit_progress(
+                progress_callback,
+                {
+                    "event": "tripadvisor_search_direct_url_detected",
+                    "source": "tripadvisor",
+                    "input": query,
+                    "target_url": direct_listing_url,
+                    "elapsed_total_s": round(monotonic() - started_at, 3),
+                    "page_url": page.url,
+                },
+            )
+            await page.goto(direct_listing_url, wait_until="domcontentloaded")
+            await self._wait_after_navigation()
+            await self._accept_cookies_if_present()
+            await self._dismiss_consent_if_present()
+            await self._dismiss_location_prompt_if_present()
+            await _emit_search_progress(
+                "tripadvisor_search_listing_opened",
+                step="open_direct_url",
+                step_started_at=open_direct_started_at,
+            )
+            await self._emit_progress(
+                progress_callback,
+                {
+                    "event": "tripadvisor_search_completed",
+                    "source": "tripadvisor",
+                    "elapsed_total_s": round(monotonic() - started_at, 3),
+                    "page_url": page.url,
+                },
+            )
+            return
+
         await self._accept_cookies_if_present()
         await self._dismiss_consent_if_present()
         await self._dismiss_location_prompt_if_present()
 
-        typing_started_at = monotonic()
-        search_input = await self._find_first_visible(
-            (
-                "input[role='searchbox'][name='q']",
-                "input[type='search'][name='q'][aria-label*='Buscar' i]",
-                "input[type='search'][name='q'][title='Buscar']",
-            ),
-            timeout_ms=10000,
+        search_input_selectors = (
+            "form[role='search'] input[type='search'][name='q']",
+            "form[action='/Search'] input[type='search'][name='q']",
+            "input[role='searchbox'][name='q']",
+            "input[type='search'][name='q'][aria-label*='Buscar' i]",
+            "input[type='search'][name='q'][title='Buscar']",
+            "input[type='search'][name='q']",
+            "input[name='q'][type='search']",
         )
+        open_search_button_selectors = (
+            "form[role='search'] button[type='submit'][aria-label*='Buscar' i]",
+            "button[type='submit'][formaction='/Search'][aria-label*='Buscar' i]",
+            "button[type='submit'][title='Buscar'][aria-label*='Buscar' i]",
+            "button[type='submit'][aria-label*='Buscar' i]",
+        )
+
+        typing_started_at = monotonic()
+        search_input = await self._find_first_optional_visible(
+            search_input_selectors,
+            timeout_ms=7000,
+        )
+        if search_input is None:
+            open_search_button = await self._find_first_optional_visible(
+                open_search_button_selectors,
+                timeout_ms=3500,
+            )
+            if open_search_button is not None:
+                try:
+                    await self._human_click(open_search_button)
+                    await page.wait_for_timeout(self._rng.randint(180, 460))
+                except Exception:
+                    pass
+            search_input = await self._find_first_optional_visible(
+                search_input_selectors,
+                timeout_ms=7000,
+            )
+        if search_input is None:
+            page_title = ""
+            try:
+                page_title = self._clean_text(await page.title())
+            except Exception:
+                page_title = ""
+            raise RuntimeError(
+                "Tripadvisor search input not found after retries. "
+                f"url={self._clean_text(page.url)} title={page_title!r}"
+            )
         await self._human_click(search_input)
         await self._human_type(search_input, query)
         await page.wait_for_timeout(self._rng.randint(250, 700))
@@ -222,12 +301,39 @@ class TripadvisorScraper:
             step_started_at=typing_started_at,
         )
 
+        typeahead_started_at = monotonic()
+        opened_from_typeahead = await self._open_exact_typeahead_result(query)
+        if opened_from_typeahead:
+            await _emit_search_progress(
+                "tripadvisor_search_typeahead_exact_match_opened",
+                step="open_typeahead_exact",
+                step_started_at=typeahead_started_at,
+            )
+            await _emit_search_progress(
+                "tripadvisor_search_listing_opened",
+                step="open_listing",
+                step_started_at=typeahead_started_at,
+            )
+            await self._emit_progress(
+                progress_callback,
+                {
+                    "event": "tripadvisor_search_completed",
+                    "source": "tripadvisor",
+                    "elapsed_total_s": round(monotonic() - started_at, 3),
+                    "page_url": page.url,
+                },
+            )
+            return
+
         submit_started_at = monotonic()
         submit_button = await self._find_first_visible(
             (
+                "form[role='search'] button[type='submit'][aria-label*='Buscar' i]",
                 "div.bOfFT button[type='submit'][aria-label*='Buscar' i]",
                 "button[type='submit'][formaction='/Search'][aria-label*='Buscar' i]",
                 "button[type='submit'][title='Buscar'][aria-label*='Buscar' i]",
+                "button[type='submit'][formaction='/Search']",
+                "form[role='search'] button[type='submit']",
             ),
             timeout_ms=6000,
         )
@@ -329,12 +435,16 @@ class TripadvisorScraper:
         html_max_interval_s: float = 2.0,
         max_pages: int | None = None,
         max_pages_percent: float | None = None,
+        max_duration_seconds: float | None = None,
+        include_owner_reply: bool = False,
+        include_image_urls: bool = False,
         progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> list[dict[str, Any]]:
         del strategy, html_stable_rounds
         page = self._require_page()
         await self._accept_cookies_if_present()
         await self._open_reviews_section()
+        reviews_started_at = monotonic()
 
         effective_pages = self._resolve_effective_pages(
             max_pages=max_pages,
@@ -358,6 +468,7 @@ class TripadvisorScraper:
                 "event": "tripadvisor_reviews_started",
                 "max_pages": effective_pages,
                 "max_pages_percent": max_pages_percent,
+                "max_duration_seconds": max_duration_seconds,
                 "pause_interval_s": {"min": min_pause_s, "max": max_pause_s},
                 "range_start": pagination.get("range_start"),
                 "range_end": pagination.get("range_end"),
@@ -369,14 +480,51 @@ class TripadvisorScraper:
 
         all_items: list[dict[str, Any]] = []
         seen: set[str] = set()
+        effective_duration_limit: float | None = None
+        if max_duration_seconds is not None:
+            try:
+                parsed_duration = float(max_duration_seconds)
+            except (TypeError, ValueError):
+                parsed_duration = 0.0
+            if parsed_duration > 0:
+                effective_duration_limit = parsed_duration
 
         for page_index in range(1, effective_pages + 1):
-            await self._expand_reviews(max_clicks=1)
-            current_items = await self._extract_reviews_from_current_page()
+            page_collect_started_at = monotonic()
+            if effective_duration_limit is not None:
+                elapsed_seconds = max(0.0, monotonic() - reviews_started_at)
+                if elapsed_seconds >= effective_duration_limit:
+                    await self._emit_progress(
+                        progress_callback,
+                        {
+                            "event": "tripadvisor_reviews_time_limit_reached",
+                            "reason": "before_page_collection",
+                            "elapsed_seconds": round(elapsed_seconds, 3),
+                            "max_duration_seconds": round(effective_duration_limit, 3),
+                            "last_page_index": page_index - 1,
+                            "pages_target": effective_pages,
+                            "total_unique_reviews": len(all_items),
+                        },
+                    )
+                    break
+
+            await self._expand_reviews(max_clicks=0)
+            current_items = await self._extract_reviews_from_current_page(
+                max_collection_seconds=self._max_seconds_per_reviews_page,
+                include_owner_reply=include_owner_reply,
+                include_image_urls=include_image_urls,
+                ensure_reviews_open=(page_index == 1),
+            )
 
             added_count = 0
-            for item in current_items:
+            for item_index, item in enumerate(current_items):
                 identity = self._review_identity(item)
+                if not identity:
+                    identity = self._review_identity_fallback(
+                        review=item,
+                        page_index=page_index,
+                        item_index=item_index,
+                    )
                 if identity in seen:
                     continue
                 seen.add(identity)
@@ -395,6 +543,8 @@ class TripadvisorScraper:
                 {
                     "event": "tripadvisor_reviews_page_collected",
                     "page": page_index,
+                    "page_elapsed_seconds": round(max(0.0, monotonic() - page_collect_started_at), 3),
+                    "page_budget_seconds": round(self._max_seconds_per_reviews_page, 3),
                     "page_url": page.url,
                     "items_in_page": len(current_items),
                     "added_to_total": added_count,
@@ -408,11 +558,49 @@ class TripadvisorScraper:
                 },
             )
 
+            if effective_duration_limit is not None:
+                elapsed_seconds = max(0.0, monotonic() - reviews_started_at)
+                if elapsed_seconds >= effective_duration_limit:
+                    await self._emit_progress(
+                        progress_callback,
+                        {
+                            "event": "tripadvisor_reviews_time_limit_reached",
+                            "reason": "after_page_collection",
+                            "elapsed_seconds": round(elapsed_seconds, 3),
+                            "max_duration_seconds": round(effective_duration_limit, 3),
+                            "last_page_index": page_index,
+                            "pages_target": effective_pages,
+                            "total_unique_reviews": len(all_items),
+                        },
+                    )
+                    break
+
             if page_index >= effective_pages:
                 break
 
-            moved = await self._go_next_reviews_page()
+            try:
+                moved = await self._go_next_reviews_page()
+            except Exception as exc:
+                moved = False
+                await self._emit_progress(
+                    progress_callback,
+                    {
+                        "event": "tripadvisor_reviews_next_page_error",
+                        "page": page_index,
+                        "error": self._clean_text(str(exc)),
+                        "total_unique_reviews": len(all_items),
+                    },
+                )
             if not moved:
+                recovered = False
+                if page_index < effective_pages:
+                    recovered = await self._recover_reviews_and_retry_pagination(
+                        page_index=page_index,
+                        progress_callback=progress_callback,
+                    )
+                if recovered:
+                    await page.wait_for_timeout(self._rng.randint(120, 260))
+                    continue
                 pagination = await self._reviews_pagination_snapshot()
                 await self._emit_progress(
                     progress_callback,
@@ -426,7 +614,10 @@ class TripadvisorScraper:
                 )
                 break
 
-            await page.wait_for_timeout(self._rng.uniform(min_pause_s * 1000.0, max_pause_s * 1000.0))
+            # Keep transition pause short for predictable throughput between pages.
+            page_pause_min_s = min(max(0.05, min_pause_s), 0.25)
+            page_pause_max_s = min(max(page_pause_min_s, max_pause_s), 0.45)
+            await page.wait_for_timeout(self._rng.uniform(page_pause_min_s * 1000.0, page_pause_max_s * 1000.0))
 
         await self._emit_progress(
             progress_callback,
@@ -437,66 +628,415 @@ class TripadvisorScraper:
         )
         return all_items
 
-    async def _extract_reviews_from_current_page(self) -> list[dict[str, Any]]:
+    async def _extract_reviews_from_current_page(
+        self,
+        *,
+        max_collection_seconds: float | None = None,
+        include_owner_reply: bool = False,
+        include_image_urls: bool = False,
+        ensure_reviews_open: bool = True,
+    ) -> list[dict[str, Any]]:
         page = self._require_page()
-        await self._reviews_ready(timeout_ms=9000)
-        cards = page.locator("div[data-test-target='reviews-tab'] [data-automation='reviewCard']")
-        total = await cards.count()
-        if total == 0:
-            cards = page.locator("[data-automation='reviewCard']")
+        page_started_at = monotonic()
+        total_budget_seconds = (
+            max(1.0, float(max_collection_seconds))
+            if max_collection_seconds is not None
+            else self._max_seconds_per_reviews_page
+        )
+
+        if ensure_reviews_open:
+            await self._open_reviews_section()
+        await self._prefetch_reviews_by_scroll(max_seconds=min(2.2, max(0.6, total_budget_seconds * 0.28)))
+
+        # Fast DOM polling + progressive scroll: helps with lazy-loaded review cards.
+        best_items: list[dict[str, Any]] = []
+        stable_rounds = 0
+        empty_rounds = 0
+        while (monotonic() - page_started_at) < total_budget_seconds:
+            dom_items = await self._extract_reviews_from_dom(
+                include_owner_reply=include_owner_reply,
+                include_image_urls=include_image_urls,
+            )
+            if len(dom_items) > len(best_items):
+                best_items = dom_items
+                stable_rounds = 0
+            elif dom_items and len(dom_items) == len(best_items):
+                stable_rounds += 1
+            else:
+                stable_rounds = max(0, stable_rounds - 1)
+
+            if dom_items:
+                empty_rounds = 0
+            else:
+                empty_rounds += 1
+
+            if best_items and (stable_rounds >= 3 or len(best_items) >= 32):
+                return best_items
+
+            if empty_rounds >= 2:
+                await self._prefetch_reviews_by_scroll(max_seconds=0.6)
+                empty_rounds = 0
+                continue
+
+            cards = page.locator("[data-automation='reviewCard'], [data-test-target='HR_CC_CARD']")
+            try:
+                card_count = await cards.count()
+            except Exception:
+                card_count = 0
+            if card_count == 0:
+                cards = page.locator("[data-test-target='review-title']")
+                try:
+                    card_count = await cards.count()
+                except Exception:
+                    card_count = 0
+            if card_count > 0:
+                last_index = min(card_count - 1, 31)
+                try:
+                    await cards.nth(last_index).scroll_into_view_if_needed(timeout=900)
+                except Exception:
+                    pass
+            try:
+                await page.mouse.wheel(0, self._rng.randint(850, 1700))
+            except Exception:
+                pass
+            await page.wait_for_timeout(95)
+
+        if not best_items:
+            # Last quick attempt in case cards rendered late.
+            try:
+                await self._wait_for_review_cards(timeout_ms=1500)
+            except Exception:
+                pass
+            best_items = await self._extract_reviews_from_dom(
+                include_owner_reply=include_owner_reply,
+                include_image_urls=include_image_urls,
+            )
+        return best_items
+
+    async def _prefetch_reviews_by_scroll(self, *, max_seconds: float) -> None:
+        page = self._require_page()
+        budget = max(0.4, float(max_seconds))
+        deadline = monotonic() + budget
+        best_count = 0
+        stable_rounds = 0
+
+        while monotonic() < deadline:
+            cards = page.locator("[data-automation='reviewCard'], [data-test-target='HR_CC_CARD']")
+            try:
+                card_count = await cards.count()
+            except Exception:
+                card_count = 0
+            if card_count == 0:
+                cards = page.locator("[data-test-target='review-title']")
+                try:
+                    card_count = await cards.count()
+                except Exception:
+                    card_count = 0
+
+            if card_count > best_count:
+                best_count = card_count
+                stable_rounds = 0
+            else:
+                stable_rounds += 1
+
+            if card_count > 0:
+                try:
+                    await cards.nth(min(card_count - 1, 31)).scroll_into_view_if_needed(timeout=900)
+                except Exception:
+                    pass
+
+            try:
+                await page.mouse.wheel(0, self._rng.randint(1200, 2600))
+            except Exception:
+                pass
+
+            if best_count >= 32 or (best_count >= 8 and stable_rounds >= 2):
+                break
+            await page.wait_for_timeout(80)
+
+    async def _wait_for_review_cards(self, *, timeout_ms: int) -> Locator:
+        page = self._require_page()
+        selectors = (
+            "div[data-test-target='HR_CC_CARD']",
+            "div[data-test-target='reviews-tab'] [data-automation='reviewCard']:visible",
+            "div.AjLYs.e[data-test-target='reviews-tab'] [data-automation='reviewCard']:visible",
+            "[data-automation='reviewCard']:visible",
+            "div[data-test-target='reviews-tab'] [data-test-target='review-title']",
+            "[data-test-target='review-title']",
+            "div[data-test-target='reviews-tab'] [data-automation='reviewCard']",
+            "[data-automation='reviewCard']",
+        )
+        deadline = monotonic() + (max(0, timeout_ms) / 1000.0)
+
+        while monotonic() < deadline:
+            for selector in selectors:
+                locator = page.locator(selector)
+                try:
+                    total = await locator.count()
+                except Exception:
+                    continue
+                if total > 0 and await self._review_cards_have_content(locator):
+                    return locator
+
+            await self._accept_cookies_if_present()
+            await self._dismiss_consent_if_present()
+            await self._dismiss_location_prompt_if_present()
+
+            reviews_tab = page.locator("div[data-test-target='reviews-tab']").first
+            try:
+                if await reviews_tab.count() > 0:
+                    await reviews_tab.scroll_into_view_if_needed()
+            except Exception:
+                pass
+
+            try:
+                await page.mouse.wheel(0, self._rng.randint(300, 900))
+            except Exception:
+                pass
+            await page.wait_for_timeout(220)
+
+        fallback = page.locator("[data-automation='reviewCard']:visible")
+        try:
+            if await fallback.count() > 0:
+                return fallback
+        except Exception:
+            pass
+        fallback_hr = page.locator("[data-test-target='HR_CC_CARD']")
+        try:
+            if await fallback_hr.count() > 0:
+                return fallback_hr
+        except Exception:
+            pass
+        fallback_titles = page.locator("[data-test-target='review-title']")
+        try:
+            if await fallback_titles.count() > 0:
+                return fallback_titles
+        except Exception:
+            pass
+        return page.locator("[data-automation='reviewCard']")
+
+    async def _review_cards_have_content(self, cards: Locator, *, sample_size: int = 6) -> bool:
+        try:
             total = await cards.count()
-        items: list[dict[str, Any]] = []
-
-        for idx in range(total):
+        except Exception:
+            return False
+        for idx in range(min(total, sample_size)):
             card = cards.nth(idx)
+            title = await self._safe_locator_inner_text(card.locator("[data-test-target='review-title']").first)
+            body = await self._safe_locator_inner_text(card.locator("div[data-test-target='review-body']").first)
+            if not body:
+                body = await self._safe_locator_inner_text(card.locator("div._c div._T.FKffI").first)
+            if not body:
+                body = await self._safe_locator_inner_text(card.locator("div._T.FKffI").first)
+            author = await self._safe_locator_inner_text(card.locator("a[href*='/Profile/']").first)
+            if title or body or author:
+                return True
+        return False
 
-            title_anchor = card.locator("h3 a[href*='ShowUserReviews']").first
-            title = await self._safe_locator_inner_text(title_anchor)
-            title_href = await self._safe_locator_attribute(title_anchor, "href")
+    async def _extract_reviews_from_dom(
+        self,
+        *,
+        include_owner_reply: bool,
+        include_image_urls: bool,
+    ) -> list[dict[str, Any]]:
+        page = self._require_page()
+        try:
+            raw_items = await page.evaluate(
+                """
+                ({ includeOwnerReply, includeImageUrls }) => {
+                  const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+                  const hasBodyNode = (root) => !!(
+                    root?.querySelector("[data-test-target='review-body']")
+                    || root?.querySelector("div._T.FKffI")
+                    || root?.querySelector("span.JguWG")
+                  );
+                  const parseRating = (value) => {
+                    const normalized = clean(value).replace(',', '.');
+                    const match = normalized.match(/(\\d+(?:\\.\\d+)?)/);
+                    if (!match) return null;
+                    const parsed = Number(match[1]);
+                    if (!Number.isFinite(parsed)) return null;
+                    if (parsed < 0 || parsed > 5) return null;
+                    return parsed;
+                  };
+                  const pickWrittenDate = (root) => {
+                    const candidates = Array.from(root.querySelectorAll('div.biGQs._P.VImYz.ncFvv.navcl, div.biGQs._P.VImYz.navcl'));
+                    for (const el of candidates) {
+                      const text = clean(el.textContent);
+                      if (!text) continue;
+                      if (/escrita el|escrito el|written|responded/i.test(text)) return text;
+                    }
+                    return '';
+                  };
+                  let cards = Array.from(document.querySelectorAll("div[data-automation='reviewCard'], div[data-test-target='HR_CC_CARD']"));
+                  if (!cards.length) {
+                    const roots = [];
+                    const seen = new Set();
+                    const titles = Array.from(document.querySelectorAll("[data-test-target='review-title'] a[href], [data-test-target='review-title']")).slice(0, 48);
+                    for (const node of titles) {
+                      let root = node;
+                      let selectedRoot = null;
+                      for (let depth = 0; depth < 10 && root; depth += 1) {
+                        const hasTitle = !!root.querySelector("[data-test-target='review-title']");
+                        const hasBody = hasBodyNode(root);
+                        if (hasTitle && hasBody) {
+                          selectedRoot = root;
+                          const hasAuthorProfile = !!root.querySelector("a[href*='/Profile/']");
+                          if (hasAuthorProfile) break;
+                        }
+                        root = root.parentElement;
+                      }
+                      root = selectedRoot;
+                      if (!root) continue;
+                      if (seen.has(root)) continue;
+                      seen.add(root);
+                      roots.push(root);
+                    }
+                    cards = roots;
+                  }
+                  cards = cards.slice(0, 32);
+                  const items = [];
+                  for (const card of cards) {
+                    const titleAnchor = card.querySelector("[data-test-target='review-title'] a[href]") || card.querySelector("h3 a[href]");
+                    const titleNode = card.querySelector("[data-test-target='review-title']");
+                    const title = clean(titleAnchor?.textContent || titleNode?.textContent);
+                    const titleHref = clean(titleAnchor?.getAttribute('href'));
+                    const authorAnchor = card.querySelector("a[href*='/Profile/'].ukgoS") || card.querySelector("span.biGQs._P.ezezH a[href*='/Profile/']");
+                    const authorName = clean(authorAnchor?.textContent);
+                    const relativeTime = clean(
+                      (
+                        card.querySelector('div.VufqL.o.W')
+                        || card.querySelector('div.VufqL')
+                        || card.querySelector('div.ZRBpD div.biGQs._P.VImYz.AWdfh')
+                        || card.querySelector('div.biGQs._P.VImYz.AWdfh')
+                      )?.textContent
+                    );
+                    const writtenDate = pickWrittenDate(card);
+                    const text = clean(
+                      (card.querySelector("div[data-test-target='review-body'] span.JguWG div.biGQs._P.VImYz.AWdfh")
+                        || card.querySelector("div[data-test-target='review-body'] span.JguWG")
+                        || card.querySelector("div[data-test-target='review-body'] div.biGQs._P.VImYz.AWdfh")
+                        || card.querySelector("div[data-test-target='review-body']")
+                        || card.querySelector("div._c div._T.FKffI span.JguWG div.biGQs._P.VImYz.AWdfh")
+                        || card.querySelector("div._c div._T.FKffI span.JguWG")
+                        || card.querySelector("div._c div._T.FKffI")
+                        || card.querySelector("div._T.FKffI"))?.textContent
+                    ).slice(0, 6000);
+                    const rating = parseRating(
+                      clean(card.querySelector("svg[data-automation='bubbleRatingImage'] title")?.textContent)
+                      || clean(card.querySelector("title[id*='_lithium']")?.textContent)
+                    );
+                    const item = {
+                      title_href: titleHref,
+                      review_title: title,
+                      author_name: authorName,
+                      relative_time: relativeTime,
+                      written_date: writtenDate,
+                      text,
+                      rating,
+                      raw_card_html: String(card.outerHTML || '').slice(0, 50000),
+                    };
+                    if (includeImageUrls) {
+                      const images = Array.from(card.querySelectorAll("button img, picture img"))
+                        .map((img) => clean(img.currentSrc || img.getAttribute('src')))
+                        .filter((url) => !!url && !/default-avatar/i.test(url));
+                      item.image_urls = Array.from(new Set(images)).slice(0, 12);
+                    }
+                    if (includeOwnerReply) {
+                      const replyRoot = card.querySelector("div.mahws");
+                      if (replyRoot) {
+                        const replyText = clean(
+                          (replyRoot.querySelector("div._T.FKffI span.JguWG")
+                            || replyRoot.querySelector("div._T.FKffI div.biGQs._P.VImYz.AWdfh")
+                            || replyRoot.querySelector("span.JguWG"))?.textContent
+                        ).slice(0, 3000);
+                        const replyAuthor = clean(
+                          (replyRoot.querySelector("a[href*='/Profile/'].ukgoS")
+                            || replyRoot.querySelector("span.biGQs._P.ezezH"))?.textContent
+                        );
+                        const replyWrittenDate = pickWrittenDate(replyRoot);
+                        if (replyText) {
+                          item.owner_reply = {
+                            text: replyText,
+                            relative_time: replyWrittenDate,
+                            written_date: replyWrittenDate,
+                            author_name: replyAuthor,
+                          };
+                        }
+                      }
+                    }
+                    if (
+                      item.review_title ||
+                      item.author_name ||
+                      item.relative_time ||
+                      item.written_date ||
+                      item.text ||
+                      item.title_href
+                    ) {
+                      items.push(item);
+                    }
+                  }
+                  return items;
+                }
+                """,
+                {
+                    "includeOwnerReply": bool(include_owner_reply),
+                    "includeImageUrls": bool(include_image_urls),
+                },
+            )
+        except Exception:
+            return []
+
+        if not isinstance(raw_items, list):
+            return []
+
+        normalized_items: list[dict[str, Any]] = []
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            title_href = self._clean_text(str(raw.get("title_href", "") or ""))
             review_id = self._extract_review_id_from_href(title_href)
-            if not review_id:
-                review_id = self._extract_review_id_from_href(
-                    await self._safe_locator_attribute(card.locator("a[href*='ShowUserReviews']").first, "href")
-                )
-
-            author_name = await self._safe_locator_inner_text(card.locator("a[href*='/Profile/']").first)
-            relative_time = await self._safe_locator_inner_text(card.locator(".jXCrq").first)
-            written_date = await self._safe_locator_inner_text(card.locator(".BNelO .biGQs").first)
-
-            rating = await self._extract_review_card_rating(card)
-
-            text = await self._safe_locator_inner_text(card.locator("div.biGQs._P.VImYz.AWdfh").first)
-            if not text:
-                text = await self._safe_locator_inner_text(card.locator("div._T.FKffI span.yCeTE").first)
-            if not text:
-                text = await self._safe_locator_inner_text(card.locator("span.yCeTE").first)
-
-            image_urls = await self._extract_review_image_urls(card)
-            owner_reply = await self._extract_owner_reply(card)
-
-            item = {
+            item: dict[str, Any] = {
                 "source": "tripadvisor",
                 "review_id": review_id,
-                "author_name": author_name,
-                "rating": rating if rating is not None else 0.0,
-                "relative_time": relative_time,
-                "text": text,
-                "review_title": title,
-                "written_date": written_date,
-                "image_urls": image_urls,
+                "author_name": self._clean_text(str(raw.get("author_name", "") or "")),
+                "rating": self._parse_rating(raw.get("rating")) or 0.0,
+                "relative_time": self._clean_text(str(raw.get("relative_time", "") or "")),
+                "text": self._clean_text(str(raw.get("text", "") or "")),
+                "review_title": self._clean_text(str(raw.get("review_title", "") or "")),
+                "written_date": self._extract_written_date_line_from_text(str(raw.get("written_date", "") or "")),
             }
-            if owner_reply is not None:
-                item["owner_reply"] = {
-                    "text": owner_reply.get("text", ""),
-                    "relative_time": owner_reply.get("relative_time", ""),
-                }
-                if owner_reply.get("author_name"):
-                    item["owner_reply_author_name"] = owner_reply.get("author_name")
-                if owner_reply.get("written_date"):
-                    item["owner_reply_written_date"] = owner_reply.get("written_date")
-            items.append(item)
+            raw_card_html = str(raw.get("raw_card_html", "") or "").strip()
+            if raw_card_html:
+                item["raw_card_html"] = raw_card_html[:50_000]
+            if include_image_urls:
+                image_urls = raw.get("image_urls")
+                if isinstance(image_urls, list):
+                    item["image_urls"] = [
+                        self._clean_text(str(url or ""))
+                        for url in image_urls
+                        if self._clean_text(str(url or ""))
+                    ]
+            if include_owner_reply:
+                owner_reply = raw.get("owner_reply")
+                if isinstance(owner_reply, dict):
+                    owner_reply_text = self._clean_text(str(owner_reply.get("text", "") or ""))
+                    if owner_reply_text:
+                        owner_written = self._extract_written_date_line_from_text(
+                            str(owner_reply.get("written_date", "") or owner_reply.get("relative_time", "") or "")
+                        )
+                        item["owner_reply"] = {
+                            "text": owner_reply_text,
+                            "relative_time": owner_written,
+                        }
+                        owner_author = self._clean_text(str(owner_reply.get("author_name", "") or ""))
+                        if owner_author:
+                            item["owner_reply_author_name"] = owner_author
+                        if owner_written:
+                            item["owner_reply_written_date"] = owner_written
 
-        return items
+            normalized_items.append(item)
+        return normalized_items
 
     async def _go_to_home(self) -> None:
         page = self._require_page()
@@ -504,14 +1044,38 @@ class TripadvisorScraper:
         await self._accept_cookies_if_present()
         await self._dismiss_consent_if_present()
         await self._dismiss_location_prompt_if_present()
+        search_input_selectors = (
+            "form[role='search'] input[type='search'][name='q']",
+            "form[action='/Search'] input[type='search'][name='q']",
+            "input[role='searchbox'][name='q']",
+            "input[type='search'][name='q'][aria-label*='Buscar' i]",
+            "input[type='search'][name='q']",
+        )
+        open_search_button_selectors = (
+            "form[role='search'] button[type='submit'][aria-label*='Buscar' i]",
+            "button[type='submit'][formaction='/Search'][aria-label*='Buscar' i]",
+            "button[type='submit'][formaction='/Search']",
+        )
         try:
-            await self._find_first_visible(
-                (
-                    "input[role='searchbox'][name='q']",
-                    "input[type='search'][name='q'][aria-label*='Buscar' i]",
-                ),
+            search_input = await self._find_first_optional_visible(
+                search_input_selectors,
                 timeout_ms=12000,
             )
+            if search_input is None:
+                open_search_button = await self._find_first_optional_visible(
+                    open_search_button_selectors,
+                    timeout_ms=3000,
+                )
+                if open_search_button is not None:
+                    try:
+                        await self._human_click(open_search_button)
+                        await page.wait_for_timeout(self._rng.randint(160, 420))
+                    except Exception:
+                        pass
+                    await self._find_first_optional_visible(
+                        search_input_selectors,
+                        timeout_ms=4000,
+                    )
         except Exception:
             # Do not fail startup here; search stage handles retries/selectors.
             return
@@ -583,6 +1147,60 @@ class TripadvisorScraper:
         await self._accept_cookies_if_present()
         await self._dismiss_consent_if_present()
         await self._dismiss_location_prompt_if_present()
+
+    async def _open_exact_typeahead_result(self, query: str, *, timeout_ms: int = 4500) -> bool:
+        page = self._require_page()
+        deadline = monotonic() + (max(0, timeout_ms) / 1000.0)
+        selectors = (
+            "#typeahead_results a[role='option'][href]",
+            "[data-test-attribute='typeahead-results'] a[role='option'][href]",
+            "[role='listbox'] a[role='option'][href]",
+            "[role='listbox'] a[href*='_Review-']",
+            "a[role='option'][href*='_Review-']",
+        )
+
+        while monotonic() < deadline:
+            candidates: list[tuple[str, str]] = []
+            seen_hrefs: set[str] = set()
+            for selector in selectors:
+                anchors = page.locator(selector)
+                try:
+                    total = await anchors.count()
+                except Exception:
+                    continue
+                for idx in range(min(total, 18)):
+                    anchor = anchors.nth(idx)
+                    href = await self._safe_locator_attribute(anchor, "href")
+                    if not href or href in seen_hrefs:
+                        continue
+                    seen_hrefs.add(href)
+                    if not self._looks_like_tripadvisor_listing_href(href):
+                        continue
+
+                    title = await self._safe_locator_inner_text(anchor.locator("div.biGQs._P.ezezH").first)
+                    if not title:
+                        title = await self._safe_locator_inner_text(anchor.locator("div.GWJnL").first)
+                    if not title:
+                        title = await self._safe_locator_attribute(anchor, "aria-label")
+                    if not title:
+                        title = await self._safe_locator_inner_text(anchor)
+                    if not title:
+                        title = self._title_from_tripadvisor_href(href)
+                    if not title:
+                        continue
+                    candidates.append((title, href))
+
+            selected_href = self._pick_exact_typeahead_candidate_href(query=query, candidates=candidates)
+            if selected_href:
+                target_url = urljoin(self._tripadvisor_url, selected_href)
+                await page.goto(target_url, wait_until="domcontentloaded")
+                await self._wait_after_navigation()
+                await self._accept_cookies_if_present()
+                await self._dismiss_consent_if_present()
+                await self._dismiss_location_prompt_if_present()
+                return True
+            await page.wait_for_timeout(140)
+        return False
 
     async def _find_search_result_cards(self, *, timeout_ms: int) -> Locator | None:
         page = self._require_page()
@@ -670,60 +1288,62 @@ class TripadvisorScraper:
 
     async def _open_reviews_section(self) -> None:
         page = self._require_page()
-        await self._accept_cookies_if_present()
+        current_url = self._clean_text(page.url)
+        if "#reviews" not in current_url.lower():
+            opened = False
+            reviews_anchor = await self._find_first_optional_visible(
+                (
+                    "a[href='#REVIEWS']",
+                    "a[href='#reviews']",
+                    "[data-test-target='reviews-tab'] a[href*='#REVIEWS']",
+                ),
+                timeout_ms=1000,
+            )
+            if reviews_anchor is not None:
+                try:
+                    await reviews_anchor.scroll_into_view_if_needed()
+                except Exception:
+                    pass
+                try:
+                    await reviews_anchor.click(timeout=1200, force=True)
+                    opened = True
+                except Exception:
+                    opened = False
+            if not opened:
+                try:
+                    changed = await page.evaluate(
+                        """
+                        () => {
+                          if (window.location.hash === '#REVIEWS') return false;
+                          window.location.hash = 'REVIEWS';
+                          return true;
+                        }
+                        """
+                    )
+                except Exception:
+                    changed = False
+                if not changed:
+                    base_url = page.url.split("#", maxsplit=1)[0]
+                    target_url = f"{base_url}#REVIEWS"
+                    try:
+                        await page.goto(target_url, wait_until="commit")
+                    except Exception:
+                        pass
+            await page.wait_for_timeout(120)
+        await self._accept_cookies_if_present(timeout_seconds=0.7)
         await self._dismiss_consent_if_present()
         await self._dismiss_location_prompt_if_present()
-
-        if await self._reviews_ready(timeout_ms=3500):
-            return
-
-        review_anchor = await self._find_first_optional_visible(
-            (
-                "a[href='#REVIEWS'][data-automation='bubbleReviewCount']",
-                "a[href='#REVIEWS']",
-                "a[href*='#REVIEWS']",
-                "button:has-text('opiniones')",
-                "[aria-label*='opiniones' i]",
-            ),
-            timeout_ms=6000,
-        )
-        if review_anchor is not None:
-            await self._human_click(review_anchor)
-            await self._wait_after_navigation()
-            await self._accept_cookies_if_present()
-            await self._dismiss_consent_if_present()
-            await self._dismiss_location_prompt_if_present()
-            if await self._reviews_ready(timeout_ms=8000):
-                return
-
-        base_url = page.url.split("#", maxsplit=1)[0]
-        if "#REVIEWS" not in page.url:
-            await page.goto(f"{base_url}#REVIEWS", wait_until="domcontentloaded")
-            await self._wait_after_navigation()
-            await self._accept_cookies_if_present()
-            await self._dismiss_consent_if_present()
-            await self._dismiss_location_prompt_if_present()
-        if await self._reviews_ready(timeout_ms=18000):
-            return
-
-        reviews_tab = page.locator("div[data-test-target='reviews-tab']").first
-        try:
-            await reviews_tab.scroll_into_view_if_needed()
-        except Exception:
-            pass
-        if await self._reviews_ready(timeout_ms=9000):
-            return
-        raise RuntimeError("Tripadvisor reviews section did not become available.")
 
     async def _reviews_ready(self, *, timeout_ms: int) -> bool:
         page = self._require_page()
         selectors = (
-            "div[data-test-target='reviews-tab'] [data-automation='reviewCard']",
-            "div.AjLYs.e[data-test-target='reviews-tab'] [data-automation='reviewCard']",
-            "[data-automation='reviewCard']",
-            "div[data-test-target='reviews-tab']",
+            "div[data-test-target='reviews-tab'] [data-automation='reviewCard']:visible",
+            "div.AjLYs.e[data-test-target='reviews-tab'] [data-automation='reviewCard']:visible",
+            "[data-automation='reviewCard']:visible",
+            "div[data-test-target='reviews-tab'] h3[data-test-target='review-title']",
+            "h3[data-test-target='review-title']",
             "[data-smoke-attr='pagination-next-arrow']",
-            "a[href*='ShowUserReviews']",
+            "a[href*='ShowUserReviews-']",
         )
         for selector in selectors:
             locator = page.locator(selector).first
@@ -737,6 +1357,8 @@ class TripadvisorScraper:
         return False
 
     async def _expand_reviews(self, *, max_clicks: int) -> None:
+        if max_clicks <= 0:
+            return
         page = self._require_page()
         buttons = page.locator("div[data-test-target='reviews-tab'] button:has-text('Leer')")
         total = await buttons.count()
@@ -768,10 +1390,13 @@ class TripadvisorScraper:
 
     async def _go_next_reviews_page(self) -> bool:
         page = self._require_page()
+        moved = False
         previous_url = page.url
         previous_marker = await self._first_review_marker()
         previous_range = await self._reviews_pagination_snapshot()
         previous_range_start = previous_range.get("range_start")
+        previous_range_end = previous_range.get("range_end")
+        previous_total_results = previous_range.get("total_results")
         previous_current_page = previous_range.get("current_page")
         previous_total_pages = previous_range.get("total_pages")
         if (
@@ -780,9 +1405,18 @@ class TripadvisorScraper:
             and previous_current_page >= previous_total_pages
         ):
             return False
+        if (
+            isinstance(previous_range_end, int)
+            and isinstance(previous_total_results, int)
+            and previous_range_end >= previous_total_results
+        ):
+            return False
 
         current_offset = self._reviews_offset_from_href(previous_url)
-        next_link = await self._next_reviews_page_link(current_offset=current_offset or 0)
+        try:
+            next_link = await self._next_reviews_page_link(current_offset=current_offset or 0)
+        except Exception:
+            next_link = None
         if next_link is not None:
             try:
                 await next_link.scroll_into_view_if_needed()
@@ -794,31 +1428,100 @@ class TripadvisorScraper:
             except Exception:
                 moved = False
         else:
-            next_arrow = page.locator("a[data-smoke-attr='pagination-next-arrow']").first
+            next_arrow = page.locator(
+                "a[data-smoke-attr='pagination-next-arrow'], button[data-smoke-attr='pagination-next-arrow']"
+            ).first
             if await next_arrow.count() == 0:
                 next_arrow = page.locator("[data-smoke-attr='pagination-next-arrow']").first
-            if await next_arrow.count() == 0:
-                return False
-            next_href = await self._safe_locator_attribute(next_arrow, "href")
-            target_url = urljoin(self._tripadvisor_url, next_href) if next_href else ""
-            if target_url and self._clean_text(target_url) != self._clean_text(previous_url):
-                await page.goto(target_url, wait_until="domcontentloaded")
-                moved = True
+            if await next_arrow.count() > 0:
+                try:
+                    if await next_arrow.is_disabled():
+                        return False
+                except Exception:
+                    pass
+                aria_disabled = await self._safe_locator_attribute(next_arrow, "aria-disabled")
+                if aria_disabled.lower() == "true":
+                    return False
+                next_href = await self._safe_locator_attribute(next_arrow, "href")
+                target_url = urljoin(self._tripadvisor_url, next_href) if next_href else ""
+                if target_url and self._clean_text(target_url) != self._clean_text(previous_url):
+                    await page.goto(target_url, wait_until="domcontentloaded")
+                    moved = True
+                else:
+                    try:
+                        await next_arrow.click(timeout=1800, force=True)
+                        moved = True
+                    except Exception:
+                        moved = False
+            if not moved:
+                next_button = await self._find_first_optional_visible(
+                    (
+                        "button[data-smoke-attr='pagination-next-arrow']",
+                        "a[data-smoke-attr='pagination-next-arrow']",
+                        "button[aria-label*='pagina siguiente' i]",
+                        "button[aria-label*='siguiente' i]",
+                        "button[aria-label*='next page' i]",
+                        "button[aria-label*='next' i]",
+                        "a[aria-label*='pagina siguiente' i]",
+                        "a[aria-label*='siguiente' i]",
+                        "a[aria-label*='next page' i]",
+                        "a[aria-label*='next' i]",
+                    ),
+                    timeout_ms=1800,
+                )
+                if next_button is None:
+                    return False
+                try:
+                    try:
+                        if await next_button.is_disabled():
+                            return False
+                    except Exception:
+                        pass
+                    aria_disabled = await self._safe_locator_attribute(next_button, "aria-disabled")
+                    if aria_disabled.lower() == "true":
+                        return False
+                    await next_button.click(timeout=1800, force=True)
+                    moved = True
+                except Exception:
+                    return False
+
+        if not moved:
+            # Fallback: navigate directly to next reviews offset URL when pagination click is flaky.
+            next_offset_url = self._next_reviews_offset_url(
+                current_url=previous_url,
+                current_offset=current_offset or 0,
+                range_start=previous_range_start if isinstance(previous_range_start, int) else None,
+                range_end=previous_range_end if isinstance(previous_range_end, int) else None,
+                total_results=previous_total_results if isinstance(previous_total_results, int) else None,
+            )
+            if next_offset_url:
+                try:
+                    await page.goto(next_offset_url, wait_until="domcontentloaded")
+                    moved = True
+                except Exception:
+                    moved = False
 
         if not moved:
             return False
 
+        url_changed = False
         try:
-            await page.wait_for_load_state("domcontentloaded", timeout=9000)
-        except PlaywrightTimeoutError:
-            pass
-        await page.wait_for_timeout(self._rng.randint(180, 420))
+            await page.wait_for_url(lambda value: self._clean_text(value) != self._clean_text(previous_url), timeout=5500)
+            url_changed = True
+        except Exception:
+            url_changed = False
+        if not url_changed:
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=5500)
+            except PlaywrightTimeoutError:
+                pass
+        await page.wait_for_timeout(self._rng.randint(90, 220))
 
         await self._accept_cookies_if_present()
         await self._dismiss_consent_if_present()
         await self._dismiss_location_prompt_if_present()
 
-        for _ in range(24):
+        for _ in range(10):
             marker = await self._first_review_marker()
             range_start = (await self._reviews_pagination_snapshot()).get("range_start")
             if page.url != previous_url:
@@ -831,8 +1534,118 @@ class TripadvisorScraper:
                 and range_start > previous_range_start
             ):
                 return True
-            await page.wait_for_timeout(220)
+            await page.wait_for_timeout(120)
         return False
+
+    async def _recover_reviews_and_retry_pagination(
+        self,
+        *,
+        page_index: int,
+        progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
+    ) -> bool:
+        page = self._require_page()
+        await self._emit_progress(
+            progress_callback,
+            {
+                "event": "tripadvisor_reviews_recover_reload_started",
+                "page": page_index,
+                "page_url": page.url,
+            },
+        )
+        try:
+            await page.reload(wait_until="domcontentloaded", timeout=12000)
+        except Exception as exc:
+            await self._emit_progress(
+                progress_callback,
+                {
+                    "event": "tripadvisor_reviews_recover_reload_failed",
+                    "page": page_index,
+                    "error": self._clean_text(str(exc)),
+                    "page_url": page.url,
+                },
+            )
+            return False
+
+        await page.wait_for_timeout(self._rng.randint(120, 300))
+        await self._accept_cookies_if_present(timeout_seconds=0.9)
+        await self._dismiss_consent_if_present()
+        await self._dismiss_location_prompt_if_present()
+        await self._open_reviews_section()
+        await self._prefetch_reviews_by_scroll(max_seconds=0.8)
+
+        try:
+            moved = await self._go_next_reviews_page()
+        except Exception as exc:
+            await self._emit_progress(
+                progress_callback,
+                {
+                    "event": "tripadvisor_reviews_recover_retry_failed",
+                    "page": page_index,
+                    "error": self._clean_text(str(exc)),
+                    "page_url": page.url,
+                },
+            )
+            return False
+
+        pagination = await self._reviews_pagination_snapshot()
+        await self._emit_progress(
+            progress_callback,
+            {
+                "event": "tripadvisor_reviews_recover_retry_done",
+                "page": page_index,
+                "recovered": moved,
+                "page_url": page.url,
+                "current_page": pagination.get("current_page"),
+                "total_pages": pagination.get("total_pages"),
+            },
+        )
+        return moved
+
+    def _next_reviews_offset_url(
+        self,
+        *,
+        current_url: str,
+        current_offset: int,
+        range_start: int | None,
+        range_end: int | None,
+        total_results: int | None,
+    ) -> str:
+        value = self._clean_text(current_url)
+        if not value:
+            return ""
+
+        page_size = 0
+        if (
+            isinstance(range_start, int)
+            and isinstance(range_end, int)
+            and range_start > 0
+            and range_end >= range_start
+        ):
+            page_size = max(1, range_end - range_start + 1)
+        if page_size <= 0:
+            page_size = 15
+
+        next_offset = max(0, current_offset) + page_size
+        if isinstance(total_results, int) and total_results > 0 and next_offset >= total_results:
+            return ""
+
+        if re.search(r"-Reviews-or\d+-", value, flags=re.IGNORECASE):
+            return re.sub(
+                r"-Reviews-or\d+-",
+                f"-Reviews-or{next_offset}-",
+                value,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+        if re.search(r"-Reviews-", value, flags=re.IGNORECASE):
+            return re.sub(
+                r"-Reviews-",
+                f"-Reviews-or{next_offset}-",
+                value,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+        return ""
 
     async def _next_reviews_page_link(self, *, current_offset: int) -> Locator | None:
         page = self._require_page()
@@ -933,9 +1746,11 @@ class TripadvisorScraper:
         first_card = page.locator("div[data-test-target='reviews-tab'] [data-automation='reviewCard']").first
         if await first_card.count() == 0:
             first_card = page.locator("[data-automation='reviewCard']").first
-        if await first_card.count() == 0:
-            return ""
         link = first_card.locator("a[href*='ShowUserReviews']").first
+        if await link.count() == 0:
+            link = page.locator("a[href*='ShowUserReviews-']").first
+        if await link.count() == 0:
+            return ""
         href = await self._safe_locator_attribute(link, "href")
         review_id = self._extract_review_id_from_href(href)
         if review_id:
@@ -948,57 +1763,117 @@ class TripadvisorScraper:
         return value if isinstance(value, int) else None
 
     async def _reviews_pagination_snapshot(self) -> dict[str, int | None]:
+        # Prefer DOM snapshot (current page, visible range and total results) with URL fallback.
         page = self._require_page()
-        range_text = await self._safe_locator_inner_text(
-            page.locator("xpath=//*[contains(translate(., 'SE', 'se'), 'se muestran los resultados')]").first
-        )
-        if not range_text:
-            range_text = await self._safe_locator_inner_text(page.locator("xpath=//*[contains(., ' de ')]").first)
+        dom_snapshot: dict[str, Any] = {}
+        try:
+            raw = await page.evaluate(
+                """
+                () => {
+                  const toInt = (value) => {
+                    const parsed = Number.parseInt(String(value || '').trim(), 10);
+                    return Number.isFinite(parsed) ? parsed : null;
+                  };
+                  const result = {
+                    range_start: null,
+                    range_end: null,
+                    total_results: null,
+                    current_page: null,
+                    total_pages: null,
+                  };
 
-        range_start: int | None = None
-        range_end: int | None = None
-        total_results: int | None = None
+                  const paginators = Array.from(
+                    document.querySelectorAll(
+                      "div.lKkrl, nav[aria-label*='agin' i], nav[aria-label*='page' i], [data-smoke-attr='pagination-next-arrow']"
+                    )
+                  );
+                  for (const root of paginators) {
+                    const labels = Array.from(root.querySelectorAll("button[aria-label], a[aria-label]"))
+                      .map((node) => toInt(node.getAttribute("aria-label")))
+                      .filter((value) => value !== null);
+                    if (!labels.length) continue;
+                    const disabledCurrent = root.querySelector("button[disabled][aria-label]");
+                    if (disabledCurrent) {
+                      const current = toInt(disabledCurrent.getAttribute("aria-label"));
+                      if (current !== null) result.current_page = current;
+                    }
+                    const maxLabel = Math.max(...labels);
+                    if (Number.isFinite(maxLabel) && maxLabel > 0) result.total_pages = maxLabel;
+                    break;
+                  }
 
-        if range_text:
-            match = re.search(
-                r"(\d[\d\.\,\s]*)\s*-\s*(\d[\d\.\,\s]*)\s*de\s*(\d[\d\.\,\s]*)",
-                range_text,
-                flags=re.IGNORECASE,
+                  const textCandidates = Array.from(
+                    document.querySelectorAll("div.Ci, div.biGQs._P.VImYz.ZNjnF, div.qAZoU")
+                  )
+                    .map((node) => (node.textContent || "").replace(/\\u00a0/g, " ").replace(/\\s+/g, " ").trim())
+                    .filter((value) => value.length > 0);
+                  for (const text of textCandidates) {
+                    const match = text.match(/(\\d+)\\s*[-–]\\s*(\\d+)\\s*(?:de|of)\\s*(\\d+)/i);
+                    if (!match) continue;
+                    const start = toInt(match[1]);
+                    const end = toInt(match[2]);
+                    const total = toInt(match[3]);
+                    if (start !== null) result.range_start = start;
+                    if (end !== null) result.range_end = end;
+                    if (total !== null) result.total_results = total;
+                    break;
+                  }
+
+                  if (
+                    result.total_pages === null &&
+                    result.total_results !== null &&
+                    result.range_start !== null &&
+                    result.range_end !== null
+                  ) {
+                    const pageSize = Math.max(1, result.range_end - result.range_start + 1);
+                    result.total_pages = Math.max(1, Math.ceil(result.total_results / pageSize));
+                  }
+
+                  return result;
+                }
+                """
             )
-            if match:
-                parts = [re.sub(r"[^\d]", "", group) for group in match.groups()]
-                if all(parts):
-                    range_start, range_end, total_results = (int(parts[0]), int(parts[1]), int(parts[2]))
-            if range_start is None or range_end is None or total_results is None:
-                numbers = [int(value) for value in re.findall(r"\d+", range_text)]
-                if len(numbers) >= 3:
-                    range_start, range_end, total_results = numbers[0], numbers[1], numbers[2]
+            if isinstance(raw, dict):
+                dom_snapshot = raw
+        except Exception:
+            dom_snapshot = {}
 
-        current_page: int | None = None
-        active_page = await self._active_pagination_button()
-        if active_page is not None:
-            label = await self._safe_locator_attribute(active_page, "aria-label")
-            if label.isdigit():
-                current_page = int(label)
+        def _to_int_or_none(value: Any) -> int | None:
+            try:
+                if value is None:
+                    return None
+                parsed = int(value)
+                return parsed if parsed > 0 else None
+            except (TypeError, ValueError):
+                return None
 
-        page_size: int | None = None
+        range_start = _to_int_or_none(dom_snapshot.get("range_start"))
+        range_end = _to_int_or_none(dom_snapshot.get("range_end"))
+        total_results = _to_int_or_none(dom_snapshot.get("total_results"))
+        current_page = _to_int_or_none(dom_snapshot.get("current_page"))
+        total_pages = _to_int_or_none(dom_snapshot.get("total_pages"))
+
+        offset = self._reviews_offset_from_href(page.url)
+        page_size_guess = 15
+        if offset is not None:
+            if range_start is None:
+                range_start = offset + 1
+            if range_end is None:
+                range_end = offset + page_size_guess
+            if current_page is None:
+                current_page = max(1, (offset // page_size_guess) + 1)
+
         if (
-            isinstance(range_start, int)
-            and isinstance(range_end, int)
-            and range_start > 0
-            and range_end >= range_start
+            total_pages is None
+            and total_results is not None
+            and range_start is not None
+            and range_end is not None
         ):
-            page_size = max(1, range_end - range_start + 1)
+            inferred_page_size = max(1, range_end - range_start + 1)
+            total_pages = max(1, math.ceil(total_results / inferred_page_size))
 
-        total_pages: int | None = None
-        if isinstance(total_results, int) and total_results > 0 and isinstance(page_size, int) and page_size > 0:
-            total_pages = max(1, (total_results + page_size - 1) // page_size)
-
-        if current_page is None and isinstance(range_start, int) and isinstance(page_size, int) and page_size > 0:
-            current_page = max(1, ((range_start - 1) // page_size) + 1)
-
-        if current_page is not None and total_pages is not None:
-            current_page = min(max(1, current_page), total_pages)
+        if current_page is not None and total_pages is not None and current_page > total_pages:
+            total_pages = current_page
 
         return {
             "range_start": range_start,
@@ -1181,51 +2056,73 @@ class TripadvisorScraper:
             return ""
         return re.sub(r"\s+", "", cleaned).lower()
 
-    async def _extract_owner_reply(self, card: Locator) -> dict[str, str] | None:
-        scopes = [card]
-        for level in range(1, 7):
-            scope = card.locator(f"xpath=ancestor::div[{level}]").first
-            if await scope.count() == 0:
-                continue
-            review_cards = scope.locator("[data-automation='reviewCard']")
+    async def _extract_review_author_name(self, card: Locator) -> str:
+        return await self._extract_profile_display_name(
+            scope=card,
+            exclude_names=[],
+        )
+
+    async def _extract_profile_display_name(
+        self,
+        *,
+        scope: Locator,
+        exclude_names: list[str],
+    ) -> str:
+        excluded = {self._normalize_text(value) for value in exclude_names if self._clean_text(value)}
+        selectors = (
+            "div.QIHsu span.biGQs._P.ezezH a[href*='/Profile/']",
+            "a[href*='/Profile/'].ukgoS",
+            "div.QIHsu span.biGQs._P.ezezH",
+            "span.biGQs._P.ezezH",
+        )
+        for selector in selectors:
+            candidates = scope.locator(selector)
             try:
-                review_count = await review_cards.count()
+                total = await candidates.count()
             except Exception:
                 continue
-            if review_count == 1:
-                scopes.append(scope)
-            if review_count > 1:
-                break
+            for idx in range(min(total, 10)):
+                text = await self._safe_locator_inner_text(candidates.nth(idx))
+                if not text:
+                    continue
+                normalized = self._normalize_text(text)
+                if not normalized:
+                    continue
+                if normalized in excluded:
+                    continue
+                if "contribuciones" in normalized:
+                    continue
+                if normalized in {"leer mas", "leer menos", "read more", "read less"}:
+                    continue
+                return text
+        return ""
 
-        seen_scopes: set[str] = set()
-        for scope in scopes:
-            marker = await self._owner_reply_marker_in_scope(scope)
-            if marker is None:
-                continue
-            marker_text = await self._safe_locator_inner_text(marker)
-            marker_key = self._normalize_text(marker_text)
-            if marker_key in seen_scopes:
-                continue
-            seen_scopes.add(marker_key)
-
-            block = marker.locator("xpath=ancestor::div[.//a[contains(@href,'/Profile/')]][1]").first
+    async def _extract_owner_reply(self, card: Locator, *, reviewer_author_name: str = "") -> dict[str, str] | None:
+        # Fast path: Tripadvisor currently wraps owner reply in `div.mahws` inside each review card.
+        block = card.locator("div.mahws").first
+        try:
             if await block.count() == 0:
-                block = marker
+                block = card.locator("div[data-test-target='owner-reply']").first
+        except Exception:
+            block = card.locator("div.mahws").first
+        if await block.count() == 0:
+            return None
 
-            author_name = await self._safe_locator_inner_text(block.locator("a[href*='/Profile/']").first)
-            written_date = await self._owner_reply_written_date(block)
-            reply_text = await self._owner_reply_text(block, author_name=author_name, written_date=written_date)
-            if not reply_text:
-                continue
+        author_name = await self._extract_profile_display_name(
+            scope=block,
+            exclude_names=[reviewer_author_name],
+        )
+        written_date = await self._owner_reply_written_date(block)
+        reply_text = await self._owner_reply_text(block, author_name=author_name, written_date=written_date)
+        if not reply_text:
+            return None
 
-            return {
-                "text": reply_text,
-                "relative_time": written_date or "",
-                "written_date": written_date or "",
-                "author_name": author_name or "",
-            }
-
-        return None
+        return {
+            "text": reply_text,
+            "relative_time": written_date or "",
+            "written_date": written_date or "",
+            "author_name": author_name or "",
+        }
 
     async def _owner_reply_marker_in_scope(self, scope: Locator) -> Locator | None:
         marker_selectors = (
@@ -1247,6 +2144,7 @@ class TripadvisorScraper:
         return None
 
     async def _owner_reply_written_date(self, block: Locator) -> str:
+        matches: list[str] = []
         selectors = (
             "div:has-text('Escrita el')",
             "div:has-text('Escrito el')",
@@ -1254,15 +2152,41 @@ class TripadvisorScraper:
             "div:has-text('Written')",
         )
         for selector in selectors:
-            text = await self._safe_locator_inner_text(block.locator(selector).first)
-            if text and self._looks_like_written_date_text(text):
-                return text
+            candidates = block.locator(selector)
+            try:
+                total = await candidates.count()
+            except Exception:
+                continue
+            for idx in range(min(total, 6)):
+                text = await self._safe_locator_inner_text(candidates.nth(idx))
+                if not text:
+                    continue
+                extracted = self._extract_written_date_line_from_text(text)
+                if extracted:
+                    matches.append(extracted)
 
         lines = await self._locator_text_lines(block)
         for line in lines:
-            if self._looks_like_written_date_text(line):
-                return line
-        return ""
+            extracted = self._extract_written_date_line_from_text(line)
+            if extracted:
+                matches.append(extracted)
+        return matches[-1] if matches else ""
+
+    def _extract_written_date_line_from_text(self, text: str) -> str:
+        cleaned = self._clean_text(text)
+        if not cleaned:
+            return ""
+        patterns = (
+            r"(Escrita el .*?)(?=\s+Esta respuesta|\s+This response|$)",
+            r"(Escrito el .*?)(?=\s+Esta respuesta|\s+This response|$)",
+            r"(Responded .*?)(?=\s+This response|$)",
+            r"(Written .*?)(?=\s+This response|$)",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, cleaned, flags=re.IGNORECASE)
+            if match:
+                return self._clean_text(match.group(1))
+        return cleaned if self._looks_like_written_date_text(cleaned) else ""
 
     async def _owner_reply_text(
         self,
@@ -1420,9 +2344,11 @@ class TripadvisorScraper:
             await page.wait_for_load_state("domcontentloaded", timeout=10000)
         except PlaywrightTimeoutError:
             pass
-        await page.wait_for_timeout(self._rng.randint(900, 1800))
+        await page.wait_for_timeout(self._rng.randint(280, 760))
 
-    async def _accept_cookies_if_present(self) -> None:
+    async def _accept_cookies_if_present(self, *, timeout_seconds: float = 10.0, force_check: bool = False) -> None:
+        if self._cookies_checked_once and not force_check:
+            return
         page = self._require_page()
         accept_selectors = (
             "#onetrust-accept-btn-handler",
@@ -1453,7 +2379,7 @@ class TripadvisorScraper:
         )
 
         start = monotonic()
-        deadline = start + 10.0
+        deadline = start + max(0.4, float(timeout_seconds))
         clicked_any = False
         while monotonic() < deadline:
             scopes: list[Any] = [page, *page.frames]
@@ -1546,12 +2472,16 @@ class TripadvisorScraper:
             # Exit once cookie UI is gone. If we clicked something, give UI a short grace period
             # in case a second-step modal appears and requires "Permitirlas todas".
             if not saw_cookie_ui and monotonic() - start >= (1.2 if clicked_any else 0.9):
+                self._cookies_checked_once = True
                 return
             if opened_panel:
                 await page.wait_for_timeout(120)
             await page.wait_for_timeout(180)
+        self._cookies_checked_once = True
 
-    async def _dismiss_consent_if_present(self) -> None:
+    async def _dismiss_consent_if_present(self, *, force_check: bool = False) -> None:
+        if self._consent_checked_once and not force_check:
+            return
         terms = ("aceptar", "accept", "consentir", "agree")
         page = self._require_page()
         scopes: list[Any] = [page, *page.frames]
@@ -1581,17 +2511,22 @@ class TripadvisorScraper:
                             continue
                         if "acepto" in normalized or "accept all" in normalized:
                             await self._human_click(candidate)
-                            await page.wait_for_timeout(self._rng.randint(700, 1300))
+                            await page.wait_for_timeout(self._rng.randint(220, 450))
+                            self._consent_checked_once = True
                             return
                         if "cookies" not in normalized and "todo" not in normalized and "all" not in normalized:
                             continue
                         await self._human_click(candidate)
-                        await page.wait_for_timeout(self._rng.randint(1200, 2200))
+                        await page.wait_for_timeout(self._rng.randint(280, 520))
+                        self._consent_checked_once = True
                         return
                     except Exception:
                         continue
+        self._consent_checked_once = True
 
-    async def _dismiss_location_prompt_if_present(self) -> None:
+    async def _dismiss_location_prompt_if_present(self, *, force_check: bool = False) -> None:
+        if self._location_prompt_checked_once and not force_check:
+            return
         negative_terms = (
             "no gracias",
             "ahora no",
@@ -1635,10 +2570,12 @@ class TripadvisorScraper:
                         if not any(term in normalized for term in negative_terms):
                             continue
                         await self._human_click(candidate)
-                        await page.wait_for_timeout(self._rng.randint(800, 1400))
+                        await page.wait_for_timeout(self._rng.randint(220, 480))
+                        self._location_prompt_checked_once = True
                         return
                     except Exception:
                         continue
+        self._location_prompt_checked_once = True
 
     async def _emit_progress(
         self,
@@ -1710,6 +2647,25 @@ class TripadvisorScraper:
         except Exception:
             return ""
 
+    async def _first_non_empty_text(
+        self,
+        scope: Locator,
+        *,
+        selectors: tuple[str, ...],
+        max_candidates_per_selector: int = 6,
+    ) -> str:
+        for selector in selectors:
+            candidates = scope.locator(selector)
+            try:
+                total = await candidates.count()
+            except Exception:
+                continue
+            for idx in range(min(total, max_candidates_per_selector)):
+                text = await self._safe_locator_inner_text(candidates.nth(idx))
+                if text:
+                    return text
+        return ""
+
     def _extract_review_id_from_href(self, href: str) -> str:
         if not href:
             return ""
@@ -1718,16 +2674,58 @@ class TripadvisorScraper:
             return match.group(1)
         return ""
 
+    async def _extract_review_id_from_card(self, card: Locator) -> str:
+        direct_attr_candidates = (
+            await self._safe_locator_attribute(card, "data-reviewid"),
+            await self._safe_locator_attribute(card, "data-review-id"),
+            await self._safe_locator_attribute(card, "id"),
+        )
+        for candidate in direct_attr_candidates:
+            extracted = self._extract_review_id_from_href(candidate)
+            if extracted:
+                return extracted
+            normalized_candidate = self._clean_text(candidate)
+            if normalized_candidate.isdigit():
+                return normalized_candidate
+
+        anchors = card.locator("a[href]")
+        try:
+            total = await anchors.count()
+        except Exception:
+            return ""
+        for idx in range(min(total, 24)):
+            href = await self._safe_locator_attribute(anchors.nth(idx), "href")
+            extracted = self._extract_review_id_from_href(href)
+            if extracted:
+                return extracted
+        return ""
+
     def _review_identity(self, review: dict[str, Any]) -> str:
+        review_id = self._clean_text(str(review.get("review_id", "") or ""))
+        if review_id:
+            return f"id:{self._normalize_text(review_id)}"
         parts = [
-            str(review.get("review_id", "") or ""),
             str(review.get("author_name", "") or ""),
             str(review.get("review_title", "") or ""),
             str(review.get("relative_time", "") or ""),
+            str(review.get("written_date", "") or ""),
             str(review.get("text", "") or ""),
         ]
         joined = "|".join(parts).strip()
         return self._normalize_text(joined)
+
+    def _review_identity_fallback(self, *, review: dict[str, Any], page_index: int, item_index: int) -> str:
+        parts = [
+            str(review.get("author_name", "") or ""),
+            str(review.get("review_title", "") or ""),
+            str(review.get("relative_time", "") or ""),
+            str(review.get("written_date", "") or ""),
+            str(review.get("text", "") or ""),
+        ]
+        normalized = self._normalize_text("|".join(parts))
+        if normalized:
+            return f"fallback:{page_index}:{item_index}:{normalized[:220]}"
+        return f"fallback:{page_index}:{item_index}"
 
     def _match_score(self, query_normalized: str, title_normalized: str) -> float:
         if not query_normalized or not title_normalized:
@@ -1797,6 +2795,49 @@ class TripadvisorScraper:
                 "/attractionproductreview",
             )
         )
+
+    def _resolve_direct_listing_target_url(self, value: str) -> str:
+        candidate = self._clean_text(value)
+        if not candidate:
+            return ""
+
+        normalized = candidate.lower()
+        if normalized.startswith(("http://", "https://")):
+            if "tripadvisor." not in normalized:
+                return ""
+            return candidate if self._looks_like_tripadvisor_listing_url(candidate) else ""
+
+        if normalized.startswith("/"):
+            return urljoin(self._tripadvisor_url, candidate) if self._looks_like_tripadvisor_listing_url(candidate) else ""
+
+        if re.match(r"^[a-z]+_review-", normalized, flags=re.IGNORECASE):
+            candidate = f"/{candidate}"
+            return urljoin(self._tripadvisor_url, candidate) if self._looks_like_tripadvisor_listing_url(candidate) else ""
+
+        return ""
+
+    def _pick_exact_typeahead_candidate_href(self, *, query: str, candidates: list[tuple[str, str]]) -> str:
+        query_normalized = self._normalize_text(query)
+        if not query_normalized:
+            return ""
+
+        exact_matches: list[tuple[float, str]] = []
+        for title, href in candidates:
+            cleaned_href = self._clean_text(href)
+            if not cleaned_href:
+                continue
+            title_normalized = self._normalize_text(title)
+            if not title_normalized:
+                continue
+            if title_normalized != query_normalized:
+                continue
+            score = self._match_score(query_normalized, title_normalized)
+            exact_matches.append((score, cleaned_href))
+
+        if not exact_matches:
+            return ""
+        exact_matches.sort(key=lambda item: item[0], reverse=True)
+        return exact_matches[0][1]
 
     def _normalize_text(self, value: Any) -> str:
         text = self._clean_text(value)
@@ -1908,7 +2949,7 @@ class TripadvisorScraper:
     async def _enforce_click_gap(self) -> None:
         target_gap_ms = self._rng.randint(self._min_click_delay_ms, self._max_click_delay_ms)
         if self._last_click_ts is None:
-            await self._sleep_ms(self._rng.randint(450, 1100))
+            await self._sleep_ms(self._rng.randint(120, 320))
             return
         elapsed_ms = int((monotonic() - self._last_click_ts) * 1000)
         remaining = target_gap_ms - elapsed_ms
@@ -1928,5 +2969,5 @@ class TripadvisorScraper:
         await locator.fill("")
         for char in text:
             await locator.type(char, delay=self._rng.randint(self._min_key_delay_ms, self._max_key_delay_ms))
-            if self._rng.random() < 0.1:
-                await self._sleep_ms(self._rng.randint(220, 700))
+            if self._rng.random() < 0.04:
+                await self._sleep_ms(self._rng.randint(80, 220))

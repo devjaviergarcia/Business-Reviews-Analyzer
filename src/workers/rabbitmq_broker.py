@@ -39,6 +39,15 @@ class RabbitMQJobBroker(WorkerJobBroker):
     async def mark_failed(self, *, job_id: Any, error: str) -> None:
         raise NotImplementedError("RabbitMQJobBroker mark_failed is not implemented yet.")
 
+    async def mark_needs_human(
+        self,
+        *,
+        job_id: Any,
+        reason: str,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        raise NotImplementedError("RabbitMQJobBroker mark_needs_human is not implemented yet.")
+
     async def handoff_job(
         self,
         *,

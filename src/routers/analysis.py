@@ -19,6 +19,16 @@ async def get_business_analysis(business_id: str, service: BusinessQueryServiceD
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
+@router.get("/{business_id}/report", tags=["Business"])
+async def get_business_report(business_id: str, service: BusinessQueryServiceDep) -> dict:
+    try:
+        return await service.get_business_report(business_id=business_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
 @router.get("/{business_id}/analyses", tags=["Business"])
 async def list_business_analyses(
     business_id: str,

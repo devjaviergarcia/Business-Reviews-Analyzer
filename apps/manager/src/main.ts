@@ -10,7 +10,7 @@ import { createApiView } from "./views/api-view";
 import { createBusinessView } from "./views/business-view";
 import { createJobsView } from "./views/jobs-view";
 
-const ACTIVE_JOB_STATUSES = ["running", "queued", "retrying", "partial"] as const;
+const ACTIVE_JOB_STATUSES = ["running", "queued", "retrying", "partial", "needs_human"] as const;
 
 const appRoot = mustElement<HTMLDivElement>("#app");
 const storedBase = localStorage.getItem("bra_api_base") || "http://localhost:8000";
@@ -44,7 +44,7 @@ let activeJobPollTimer: number | null = null;
 const menu = createSidebarMenu({
   items: [
     { key: "analysis", label: "Analisis" },
-    { key: "jobs", label: "Jobs lanzados" },
+    { key: "jobs", label: "Pipeline" },
     { key: "business", label: "Negocios" },
     { key: "api", label: "API" },
   ],
@@ -90,7 +90,7 @@ async function refreshActiveJobCard(): Promise<void> {
     const responses = await Promise.all(
       ACTIVE_JOB_STATUSES.map((statusValue) =>
         apiClient.get<PaginatedResponse<AnalyzeJobItem>>(
-          `/business/analyze/queue?page=1&page_size=25&status=${encodeURIComponent(statusValue)}`
+          `/business/scrape/jobs?page=1&page_size=25&status=${encodeURIComponent(statusValue)}`
         )
       )
     );

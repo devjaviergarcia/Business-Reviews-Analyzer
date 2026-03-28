@@ -1,0 +1,1723 @@
+from __future__ import annotations
+
+import asyncio
+import csv
+import html
+import json
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+class StructuredReportRenderer:
+    """Render structured report data to JSON/HTML/PDF artifacts."""
+
+    _PALETTE = (
+        "#DFF7E8",
+        "#71E2EB",
+        "#B1F58C",
+        "#71EBA1",
+        "#71EBCA",
+        "#71EB77",
+    )
+
+    def __init__(self, *, artifacts_root: str | Path = "artifacts/reports") -> None:
+        self.artifacts_root = Path(artifacts_root)
+
+    async def render(
+        self,
+        *,
+        report_payload: dict[str, Any],
+        intro_context_text: str,
+        business_id: str,
+        analysis_id: str,
+        output_format: str = "pdf",
+    ) -> dict[str, Any]:
+        normalized_format = str(output_format or "pdf").strip().lower() or "pdf"
+        business_name = str(report_payload.get("business_name", "") or "").strip() or "negocio"
+        slug_business_name = self._safe_name_slug(business_name)
+        slug_business_id = self._safe_identifier_slug(str(business_id))
+        slug_analysis = self._safe_identifier_slug(str(analysis_id))
+
+        business_dir = self.artifacts_root / f"{slug_business_name}__{slug_business_id}" / f"analisis_{slug_analysis}"
+        reports_dir = business_dir / "reportes"
+        annexes_dir = business_dir / "anexos"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        annexes_dir.mkdir(parents=True, exist_ok=True)
+
+        final_report_stem = f"reporte_final_{slug_business_name}_{slug_analysis}"
+        annex_stem = f"anexo_completo_{slug_business_name}_{slug_analysis}"
+        annex_data_stem = f"anexo_datos_{slug_business_name}_{slug_analysis}"
+
+        json_path = reports_dir / f"{final_report_stem}.json"
+        html_path = reports_dir / f"{final_report_stem}.html"
+        pdf_path = reports_dir / f"{final_report_stem}.pdf"
+        annex_csv_path = annexes_dir / f"{annex_data_stem}.csv"
+        annex_html_path = annexes_dir / f"{annex_stem}.html"
+        annex_pdf_path = annexes_dir / f"{annex_stem}.pdf"
+
+        json_path.write_text(
+            json.dumps(report_payload, ensure_ascii=False, indent=2, default=self._json_default),
+            encoding="utf-8",
+        )
+
+        html_content = self._build_html(report_payload=report_payload, intro_context_text=intro_context_text)
+        html_path.write_text(html_content, encoding="utf-8")
+
+        annexes_payload = report_payload.get("annexes")
+        if not isinstance(annexes_payload, dict):
+            annexes_payload = {}
+        self._write_annex_csv(annexes_payload=annexes_payload, csv_path=annex_csv_path)
+        annex_html = self._build_annex_html(report_payload=report_payload, annexes_payload=annexes_payload)
+        annex_html_path.write_text(annex_html, encoding="utf-8")
+
+        pdf_generated = False
+        pdf_error = None
+        annex_pdf_generated = False
+        annex_pdf_error = None
+        if normalized_format == "pdf":
+            try:
+                await self._render_pdf_from_html(html_content=html_content, pdf_path=pdf_path)
+                pdf_generated = True
+            except Exception as exc:  # noqa: BLE001
+                pdf_error = str(exc)
+            try:
+                await self._render_pdf_from_html(html_content=annex_html, pdf_path=annex_pdf_path)
+                annex_pdf_generated = True
+            except Exception as exc:  # noqa: BLE001
+                annex_pdf_error = str(exc)
+
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "output_format": normalized_format,
+            "display_name": f"Reporte final - {business_name}",
+            "json": {
+                "path": str(json_path.resolve()),
+                "filename": json_path.name,
+                "exists": json_path.exists(),
+            },
+            "html": {
+                "path": str(html_path.resolve()),
+                "filename": html_path.name,
+                "exists": html_path.exists(),
+            },
+            "pdf": {
+                "path": str(pdf_path.resolve()),
+                "filename": pdf_path.name,
+                "exists": pdf_path.exists() if normalized_format == "pdf" else False,
+                "generated": pdf_generated,
+                "error": pdf_error,
+            },
+            "annex": {
+                "csv": {
+                    "path": str(annex_csv_path.resolve()),
+                    "filename": annex_csv_path.name,
+                    "exists": annex_csv_path.exists(),
+                },
+                "html": {
+                    "path": str(annex_html_path.resolve()),
+                    "filename": annex_html_path.name,
+                    "exists": annex_html_path.exists(),
+                },
+                "pdf": {
+                    "path": str(annex_pdf_path.resolve()),
+                    "filename": annex_pdf_path.name,
+                    "exists": annex_pdf_path.exists() if normalized_format == "pdf" else False,
+                    "generated": annex_pdf_generated,
+                    "error": annex_pdf_error,
+                },
+            },
+        }
+
+    async def render_preview(
+        self,
+        *,
+        preview_payload: dict[str, Any],
+        business_id: str,
+        analysis_id: str,
+        output_format: str = "pdf",
+    ) -> dict[str, Any]:
+        normalized_format = str(output_format or "pdf").strip().lower() or "pdf"
+        business_name = str(preview_payload.get("business_name", "") or "").strip() or "negocio"
+        slug_business_name = self._safe_name_slug(business_name)
+        slug_business_id = self._safe_identifier_slug(str(business_id))
+        slug_analysis = self._safe_identifier_slug(str(analysis_id))
+
+        business_dir = self.artifacts_root / f"{slug_business_name}__{slug_business_id}" / f"analisis_{slug_analysis}"
+        reports_dir = business_dir / "reportes"
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        welcome_report_stem = f"reporte_bienvenida_{slug_business_name}_{slug_analysis}"
+        json_path = reports_dir / f"{welcome_report_stem}.json"
+        html_path = reports_dir / f"{welcome_report_stem}.html"
+        pdf_path = reports_dir / f"{welcome_report_stem}.pdf"
+
+        json_path.write_text(
+            json.dumps(preview_payload, ensure_ascii=False, indent=2, default=self._json_default),
+            encoding="utf-8",
+        )
+        html_content = self._build_preview_html(preview_payload=preview_payload)
+        html_path.write_text(html_content, encoding="utf-8")
+
+        pdf_generated = False
+        pdf_error = None
+        if normalized_format == "pdf":
+            try:
+                await self._render_pdf_from_html(html_content=html_content, pdf_path=pdf_path)
+                pdf_generated = True
+            except Exception as exc:  # noqa: BLE001
+                pdf_error = str(exc)
+
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "output_format": normalized_format,
+            "display_name": f"Reporte de bienvenida - {business_name}",
+            "json": {
+                "path": str(json_path.resolve()),
+                "filename": json_path.name,
+                "exists": json_path.exists(),
+            },
+            "html": {
+                "path": str(html_path.resolve()),
+                "filename": html_path.name,
+                "exists": html_path.exists(),
+            },
+            "pdf": {
+                "path": str(pdf_path.resolve()),
+                "filename": pdf_path.name,
+                "exists": pdf_path.exists() if normalized_format == "pdf" else False,
+                "generated": pdf_generated,
+                "error": pdf_error,
+            },
+        }
+
+    async def _render_pdf_from_html(self, *, html_content: str, pdf_path: Path) -> None:
+        from playwright.async_api import async_playwright
+
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(headless=True)
+            try:
+                page = await browser.new_page()
+                await page.set_content(html_content, wait_until="networkidle")
+                await page.emulate_media(media="screen")
+                await page.pdf(
+                    path=str(pdf_path),
+                    format="A4",
+                    print_background=True,
+                    margin={
+                        "top": "12mm",
+                        "bottom": "12mm",
+                        "left": "10mm",
+                        "right": "10mm",
+                    },
+                )
+            finally:
+                await browser.close()
+
+    def _build_html(self, *, report_payload: dict[str, Any], intro_context_text: str) -> str:
+        business_name = str(report_payload.get("business_name", "") or "").strip() or "Business"
+        generated_at = str(report_payload.get("generated_at", "") or "")
+        sections = report_payload.get("sections")
+        if not isinstance(sections, dict):
+            sections = {}
+
+        section_order = report_payload.get("section_order")
+        ordered_keys = section_order if isinstance(section_order, list) else list(sections.keys())
+
+        anexo_resumen = sections.get("5_anexos_resumen") if isinstance(sections.get("5_anexos_resumen"), dict) else {}
+        resumen_dataset = (
+            anexo_resumen.get("resumen_dataset")
+            if isinstance(anexo_resumen.get("resumen_dataset"), dict)
+            else {}
+        )
+        total_reviews = self._safe_int(resumen_dataset.get("total_reviews"))
+        fuentes = resumen_dataset.get("by_source") if isinstance(resumen_dataset.get("by_source"), dict) else {}
+        fuentes_label = ", ".join(
+            f"{self._source_name_spanish(str(source))} ({self._safe_int(count)})"
+            for source, count in list(fuentes.items())[:4]
+            if str(source).strip()
+        )
+
+        body_parts: list[str] = []
+        body_parts.append("<section class='intro'>")
+        body_parts.append("<h2>Introducción: de dónde salen estas reseñas</h2>")
+        intro_text = self._clean_narrative_text(str(intro_context_text or "").strip())
+        if intro_text:
+            body_parts.append(f"<p>{html.escape(intro_text)}</p>")
+        if total_reviews > 0:
+            summary_line = f"Este reporte se construye a partir de {total_reviews} reseñas analizadas."
+            if fuentes_label:
+                summary_line += f" Fuentes detectadas: {fuentes_label}."
+            body_parts.append(f"<p class='muted'>{html.escape(summary_line)}</p>")
+        body_parts.append("</section>")
+
+        for key in ordered_keys:
+            payload = sections.get(key) if isinstance(sections, dict) else None
+            rendered = self._render_section_by_key(section_key=str(key), section_payload=payload)
+            if rendered.strip():
+                body_parts.append(rendered)
+
+        return f"""<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reporte reputación - {html.escape(business_name)}</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
+      :root {{
+        --bg: #f6fffb;
+        --text: #10312a;
+        --muted: #4b6e67;
+        --panel: #ffffff;
+        --line: #c7efe3;
+        --accent-1: {self._PALETTE[0]};
+        --accent-2: {self._PALETTE[1]};
+        --accent-3: {self._PALETTE[2]};
+        --accent-4: {self._PALETTE[3]};
+        --accent-5: {self._PALETTE[4]};
+        --accent-6: {self._PALETTE[5]};
+        --good: #1b9c5a;
+        --warn: #f08b1d;
+        --bad: #cf2f35;
+      }}
+      * {{ box-sizing: border-box; }}
+      body {{
+        margin: 0;
+        color: var(--text);
+        background:
+          radial-gradient(circle at 5% 5%, #ffffff 0%, #f8fffc 45%, #f2fff8 100%),
+          linear-gradient(180deg, #f9fffd 0%, #f4fffb 100%);
+        font-family: "Poppins", "Segoe UI", sans-serif;
+        line-height: 1.45;
+      }}
+      .wrap {{
+        max-width: 1040px;
+        margin: 0 auto;
+        padding: 24px;
+      }}
+      .header {{
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 18px 20px;
+        margin-bottom: 14px;
+        box-shadow: 0 8px 24px rgba(47, 143, 123, 0.08);
+      }}
+      .header h1 {{
+        margin: 0 0 6px 0;
+        font-size: 26px;
+      }}
+      .meta {{
+        color: var(--muted);
+        font-size: 13px;
+      }}
+      .intro, .section {{
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 14px 16px;
+        margin-bottom: 12px;
+        box-shadow: 0 6px 20px rgba(47, 143, 123, 0.06);
+      }}
+      h2 {{
+        margin: 0 0 10px 0;
+        font-size: 18px;
+      }}
+      h3 {{
+        margin: 10px 0 6px 0;
+        font-size: 15px;
+      }}
+      p {{
+        margin: 6px 0;
+      }}
+      ul {{
+        margin: 6px 0 6px 18px;
+        padding: 0;
+      }}
+      li {{
+        margin: 3px 0;
+      }}
+      table {{
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 8px;
+      }}
+      th, td {{
+        border: 1px solid var(--line);
+        padding: 7px 8px;
+        font-size: 12px;
+        vertical-align: top;
+      }}
+      th {{
+        background: var(--accent-1);
+        text-align: left;
+      }}
+      .muted {{ color: var(--muted); }}
+      .pill-grid {{
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 8px;
+        margin-top: 8px;
+      }}
+      .pill {{
+        background: linear-gradient(120deg, var(--accent-1) 0%, #fff 100%);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 8px 10px;
+        font-size: 12px;
+      }}
+      .score-hero {{
+        display: grid;
+        grid-template-columns: 240px 1fr;
+        gap: 12px;
+      }}
+      .score-card {{
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 14px;
+        background: linear-gradient(145deg, var(--accent-2) 0%, var(--accent-5) 100%);
+      }}
+      .score-value {{
+        font-size: 48px;
+        line-height: 1;
+        font-weight: 800;
+      }}
+      .score-label {{
+        margin-top: 6px;
+        font-size: 13px;
+        font-weight: 600;
+      }}
+      .cluster-grid {{
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 8px;
+        margin-top: 8px;
+      }}
+      .cluster-card {{
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 10px;
+        background: linear-gradient(120deg, #fff 0%, var(--accent-1) 100%);
+      }}
+      .timeline {{
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 8px;
+      }}
+      .timeline-col {{
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 10px;
+      }}
+      .timeline-col h4 {{
+        margin: 0 0 6px 0;
+        font-size: 13px;
+      }}
+      .scatter {{
+        margin-top: 10px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: linear-gradient(180deg, #f9fffd 0%, #f2fff8 100%);
+        padding: 6px;
+      }}
+      .action-list {{
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 8px;
+      }}
+      .action-card {{
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 8px 10px;
+        background: #fff;
+      }}
+      .action-card .title {{
+        font-weight: 600;
+        margin-bottom: 4px;
+      }}
+      .meta-line {{
+        color: var(--muted);
+        font-size: 12px;
+      }}
+      .voice-list {{
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 8px;
+      }}
+      .voice-card {{
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 8px 10px;
+        background: #fff;
+      }}
+      .voice-meta {{
+        color: var(--muted);
+        font-size: 12px;
+        margin-bottom: 4px;
+      }}
+      .metric-grid {{
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        gap: 8px;
+        margin-top: 8px;
+      }}
+      .metric-card {{
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 8px 10px;
+        background: #fff;
+      }}
+      .metric-title {{
+        font-weight: 600;
+        margin-bottom: 4px;
+      }}
+      .metric-value {{
+        font-size: 20px;
+        font-weight: 700;
+        line-height: 1.1;
+      }}
+      .metric-explain {{
+        color: var(--muted);
+        font-size: 12px;
+      }}
+      .badge {{
+        display: inline-block;
+        border-radius: 999px;
+        font-size: 11px;
+        padding: 2px 8px;
+        border: 1px solid transparent;
+      }}
+      .badge.good {{ background: #e7fbef; color: var(--good); border-color: #c5f1d7; }}
+      .badge.warn {{ background: #fff3e4; color: #aa5f0e; border-color: #ffd9af; }}
+      .badge.bad {{ background: #ffe8e8; color: #ab2329; border-color: #ffc9cb; }}
+      .footer {{
+        color: var(--muted);
+        text-align: center;
+        margin-top: 16px;
+        font-size: 12px;
+      }}
+      @media (max-width: 820px) {{
+        .score-hero {{ grid-template-columns: 1fr; }}
+        .timeline {{ grid-template-columns: 1fr; }}
+      }}
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="header">
+        <h1>Reporte de reputación de {html.escape(business_name)}</h1>
+        <div class="meta">Generado: {html.escape(generated_at)}</div>
+      </header>
+      {''.join(body_parts)}
+      <div class="footer">Reporte generado automáticamente por Business Review Analyzer.</div>
+    </main>
+  </body>
+</html>
+"""
+
+    def _build_preview_html(self, *, preview_payload: dict[str, Any]) -> str:
+        business_name = str(preview_payload.get("business_name", "") or "").strip() or "Negocio"
+        generated_at = str(preview_payload.get("generated_at", "") or "")
+        sections = preview_payload.get("sections")
+        if not isinstance(sections, dict):
+            sections = {}
+
+        resumen = sections.get("1_resumen_ejecutivo_preview")
+        if not isinstance(resumen, dict):
+            resumen = {}
+        tipos = sections.get("2_tipos_cliente_y_comentarios_relevantes")
+        if not isinstance(tipos, dict):
+            tipos = {}
+        cta = sections.get("3_llamada_a_la_accion")
+        if not isinstance(cta, dict):
+            cta = {}
+
+        types_payload = tipos.get("tipos_cliente")
+        if not isinstance(types_payload, list):
+            types_payload = []
+
+        type_cards: list[str] = []
+        for item in types_payload[:3]:
+            if not isinstance(item, dict):
+                continue
+            comment = item.get("comentario_representativo")
+            if not isinstance(comment, dict):
+                comment = {}
+            type_cards.append(
+                "<article class='type-card'>"
+                f"<h3>{html.escape(str(item.get('label', '') or 'Tipo de cliente'))}</h3>"
+                f"<p><strong>Estado:</strong> {html.escape(str(item.get('estado_emocional', '') or ''))}</p>"
+                f"<p><strong>Intención:</strong> {html.escape(str(item.get('intencion_detectada', '') or ''))}</p>"
+                f"<p><strong>Expectativas:</strong> {html.escape(str(item.get('expectativas', '') or ''))}</p>"
+                "<div class='quote'>"
+                f"<div class='quote-meta'>{html.escape(str(comment.get('author_name', '') or 'Cliente'))} · "
+                f"Rating {html.escape(str(comment.get('rating', '') or '-'))} · "
+                f"{html.escape(str(comment.get('source', '') or 'unknown'))}</div>"
+                f"<div class='quote-text'>“{html.escape(str(comment.get('quote', '') or 'Sin comentario representativo.'))}”</div>"
+                f"<div class='quote-why'>{html.escape(str(comment.get('relevance_reason', '') or ''))}</div>"
+                "</div>"
+                "</article>"
+            )
+
+        return f"""<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Preview de reputación - {html.escape(business_name)}</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
+      :root {{
+        --bg: #f8fffc;
+        --panel: #ffffff;
+        --line: #c7efe3;
+        --text: #12362f;
+        --muted: #4c726a;
+        --a1: {self._PALETTE[0]};
+        --a2: {self._PALETTE[1]};
+        --a3: {self._PALETTE[2]};
+        --a4: {self._PALETTE[3]};
+      }}
+      * {{ box-sizing: border-box; }}
+      body {{
+        margin: 0;
+        background: linear-gradient(180deg, #fbfffd 0%, #f2fff9 100%);
+        color: var(--text);
+        font-family: "Poppins", "Segoe UI", sans-serif;
+      }}
+      .wrap {{ max-width: 940px; margin: 0 auto; padding: 20px; }}
+      .header, .section {{
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 14px 16px;
+        margin-bottom: 12px;
+      }}
+      .header h1 {{ margin: 0 0 4px 0; font-size: 24px; }}
+      .meta {{ color: var(--muted); font-size: 12px; }}
+      h2 {{ margin: 0 0 10px 0; font-size: 18px; }}
+      h3 {{ margin: 0 0 6px 0; font-size: 14px; }}
+      p {{ margin: 6px 0; }}
+      .score-pill {{
+        display: inline-block;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--a1);
+        padding: 4px 10px;
+        font-size: 12px;
+        margin-right: 6px;
+      }}
+      .type-grid {{
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 8px;
+      }}
+      .type-card {{
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 10px;
+        background: linear-gradient(120deg, #fff 0%, var(--a1) 100%);
+      }}
+      .quote {{
+        margin-top: 8px;
+        border-left: 3px solid var(--a2);
+        padding-left: 8px;
+      }}
+      .quote-meta {{ color: var(--muted); font-size: 11px; margin-bottom: 4px; }}
+      .quote-text {{ font-size: 12px; }}
+      .quote-why {{ color: var(--muted); font-size: 11px; margin-top: 4px; }}
+      .cta {{
+        background: linear-gradient(120deg, var(--a3) 0%, var(--a4) 100%);
+        border-radius: 12px;
+        padding: 12px;
+        border: 1px solid var(--line);
+      }}
+      .cta strong {{ display: block; margin-bottom: 6px; }}
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="header">
+        <h1>Avance de reputación - {html.escape(business_name)}</h1>
+        <div class="meta">Generado: {html.escape(generated_at)}</div>
+      </header>
+      <section class="section">
+        <h2>Resumen ejecutivo (avance)</h2>
+        <p>
+          <span class="score-pill">{html.escape(str(resumen.get('score', '') or 'Puntuación no disponible'))}</span>
+          <span class="score-pill">{html.escape(str(resumen.get('nivel_reputacion', '') or 'Nivel no disponible'))}</span>
+        </p>
+        <p>{html.escape(str(resumen.get('texto', '') or 'Sin resumen disponible.'))}</p>
+      </section>
+      <section class="section">
+        <h2>3 tipos de cliente y evidencia</h2>
+        <div class="type-grid">
+          {''.join(type_cards) if type_cards else '<p>No hay segmentos disponibles todavía.</p>'}
+        </div>
+      </section>
+      <section class="section">
+        <div class="cta">
+          <strong>¿Quieres el análisis completo y plan de acción detallado?</strong>
+          <p>{html.escape(str(cta.get('texto', '') or 'Rellena el formulario para recibir el informe completo.'))}</p>
+          <p>{html.escape(str(cta.get('accion_recomendada', '') or 'Completa el formulario para continuar.'))}</p>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
+"""
+
+    def _build_annex_html(self, *, report_payload: dict[str, Any], annexes_payload: dict[str, Any]) -> str:
+        business_name = str(report_payload.get("business_name", "") or "").strip() or "Business"
+        generated_at = str(report_payload.get("generated_at", "") or "")
+
+        full_data = annexes_payload.get("full_data")
+        if not isinstance(full_data, dict):
+            full_data = {}
+        benchmarking = annexes_payload.get("benchmarking_full")
+        if not isinstance(benchmarking, dict):
+            benchmarking = {}
+        voices = annexes_payload.get("voice_of_customer")
+        if not isinstance(voices, dict):
+            voices = {}
+
+        body_parts: list[str] = []
+        dataset_summary_html = self._render_dataset_summary_spanish(full_data.get("dataset_summary"))
+        dimension_guide_html = self._render_dimension_guide(full_data.get("dataset_summary"))
+        rows_table_html = self._render_review_rows_table(full_data.get("review_rows"))
+        benchmark_html = self._render_payload(benchmarking) if not self._is_empty_payload(benchmarking) else ""
+        voices_html = self._render_voice_quotes(voices)
+
+        if dataset_summary_html:
+            body_parts.extend(
+                [
+                    "<section class='section'>",
+                    "<h2>Resumen del conjunto de datos</h2>",
+                    dataset_summary_html,
+                    "</section>",
+                ]
+            )
+        if dimension_guide_html:
+            body_parts.extend(
+                [
+                    "<section class='section'>",
+                    "<h2>Guía para interpretar las métricas</h2>",
+                    "<p>Estas métricas ayudan a leer mejor el estado del negocio. No son solo números: indican riesgos y oportunidades reales.</p>",
+                    dimension_guide_html,
+                    "</section>",
+                ]
+            )
+        if rows_table_html:
+            body_parts.extend(
+                [
+                    "<section class='section'>",
+                    "<h2>Detalle de reseñas (muestra tabular)</h2>",
+                    rows_table_html,
+                    "</section>",
+                ]
+            )
+        if benchmark_html:
+            body_parts.extend(
+                [
+                    "<section class='section'>",
+                    "<h2>Comparativa con competidores</h2>",
+                    benchmark_html,
+                    "</section>",
+                ]
+            )
+        if voices_html:
+            body_parts.extend(
+                [
+                    "<section class='section'>",
+                    "<h2>Voz literal del cliente (anonimizada)</h2>",
+                    voices_html,
+                    "</section>",
+                ]
+            )
+
+        return f"""<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Anexos del reporte - {html.escape(business_name)}</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+      :root {{
+        --bg: #fbfffd;
+        --text: #1a3a34;
+        --muted: #50706a;
+        --line: #c7efe3;
+        --panel: #ffffff;
+        --accent: {self._PALETTE[0]};
+      }}
+      * {{ box-sizing: border-box; }}
+      body {{
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: "Poppins", "Segoe UI", sans-serif;
+        line-height: 1.4;
+      }}
+      .wrap {{ max-width: 1120px; margin: 0 auto; padding: 18px; }}
+      .header {{
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px 14px;
+        margin-bottom: 10px;
+        background: var(--panel);
+      }}
+      .section {{
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px;
+        margin-bottom: 10px;
+        background: var(--panel);
+      }}
+      h1 {{ margin: 0; font-size: 22px; }}
+      h2 {{ margin: 0 0 8px 0; font-size: 16px; }}
+      table {{
+        width: 100%;
+        border-collapse: collapse;
+      }}
+      th, td {{
+        border: 1px solid var(--line);
+        padding: 6px 7px;
+        font-size: 11px;
+        vertical-align: top;
+      }}
+      th {{ background: var(--accent); text-align: left; }}
+      .muted {{ color: var(--muted); font-size: 12px; }}
+      ul {{ margin: 6px 0 6px 16px; }}
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="header">
+        <h1>Anexos completos de {html.escape(business_name)}</h1>
+        <div class="muted">Generado: {html.escape(generated_at)}</div>
+      </header>
+      {''.join(body_parts)}
+    </main>
+  </body>
+</html>
+"""
+
+    def _write_annex_csv(self, *, annexes_payload: dict[str, Any], csv_path: Path) -> None:
+        full_data = annexes_payload.get("full_data")
+        if not isinstance(full_data, dict):
+            full_data = {}
+        review_rows = full_data.get("review_rows")
+        if not isinstance(review_rows, list):
+            review_rows = []
+
+        fieldnames = [
+            "review_index",
+            "customer_key",
+            "cluster_id",
+            "cluster_label",
+            "source",
+            "author_name",
+            "rating",
+            "sentiment",
+            "expectation_gap",
+            "satisfaction",
+            "tranquility_aggressiveness",
+            "improvement_intent",
+            "dominant_problem",
+            "has_owner_reply",
+            "owner_reply_excerpt",
+            "review_excerpt",
+        ]
+
+        with csv_path.open("w", encoding="utf-8", newline="") as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in review_rows:
+                if not isinstance(row, dict):
+                    continue
+                safe_row = {key: row.get(key) for key in fieldnames}
+                writer.writerow(safe_row)
+
+    def _render_section_by_key(self, *, section_key: str, section_payload: Any) -> str:
+        title = self._humanize_section_key(section_key)
+        if not isinstance(section_payload, dict):
+            content = self._render_payload(section_payload)
+            if not content.strip():
+                return ""
+            return "<section class='section'>" f"<h2>{html.escape(title)}</h2>{content}</section>"
+
+        if section_key == "1_resumen_ejecutivo":
+            content = self._render_section_resumen(section_payload)
+        elif section_key == "2_score_reputacion":
+            content = self._render_section_score(section_payload)
+        elif section_key == "3_quien_es_tu_cliente_y_que_le_preocupa":
+            content = self._render_section_clientes(section_payload)
+        elif section_key == "4_plan_de_accion":
+            content = self._render_section_plan(section_payload)
+        elif section_key == "5_anexos_resumen":
+            content = self._render_section_anexos(section_payload)
+        else:
+            content = self._render_payload(section_payload)
+
+        if not content.strip():
+            return ""
+        return f"<section class='section'><h2>{html.escape(title)}</h2>{content}</section>"
+
+    def _render_section_resumen(self, payload: dict[str, Any]) -> str:
+        diagnostico = self._clean_narrative_text(str(payload.get("diagnostico", "") or "").strip())
+        estado = payload.get("estado_actual") if isinstance(payload.get("estado_actual"), dict) else {}
+        aciertos = payload.get("aciertos_notorios") if isinstance(payload.get("aciertos_notorios"), list) else []
+        score = self._safe_float(estado.get("score_reputacion"))
+        score_badge = self._score_badge(score)
+        pills = [
+            f"<div class='pill'><strong>Puntuación:</strong> {round(score, 1)}/100</div>",
+            f"<div class='pill'><strong>Nivel:</strong> {html.escape(str(estado.get('nivel_reputacion', '') or ''))}</div>",
+            f"<div class='pill'><strong>Tipos de cliente detectados:</strong> {self._safe_int(estado.get('cluster_count'))}</div>",
+            f"<div class='pill'><strong>Problemas principales:</strong> {len(estado.get('problemas_principales') or []) if isinstance(estado.get('problemas_principales'), list) else 0}</div>",
+        ]
+        parts = [
+            f"<p>{html.escape(diagnostico)}</p>" if diagnostico else "",
+            f"<p>{score_badge}</p>",
+            f"<div class='pill-grid'>{''.join(pills)}</div>",
+        ]
+        aciertos_items = [str(item or "").strip() for item in aciertos[:3] if str(item or "").strip()]
+        if aciertos_items:
+            aciertos_html = "<ul>" + "".join(f"<li>{html.escape(item)}</li>" for item in aciertos_items) + "</ul>"
+            parts.extend(["<h3>Aciertos que más valoran tus clientes satisfechos</h3>", aciertos_html])
+        return "".join(parts)
+
+    def _render_section_score(self, payload: dict[str, Any]) -> str:
+        display = str(payload.get("score_display", "") or "").strip() or "0/100"
+        label = str(payload.get("nivel_reputacion", "") or "").strip()
+        explicacion = self._clean_narrative_text(str(payload.get("explicacion", "") or "").strip())
+        componentes = payload.get("componentes_numericos")
+        evolucion = payload.get("evolucion")
+        components_html = self._render_score_components(componentes)
+        evolucion_html = self._render_payload(evolucion) if not self._is_empty_payload(evolucion) else ""
+        return (
+            "<div class='score-hero'>"
+            "<div class='score-card'>"
+            f"<div class='score-value'>{html.escape(display)}</div>"
+            f"<div class='score-label'>{html.escape(label)}</div>"
+            "</div>"
+            "<div>"
+            f"<p>{html.escape(explicacion)}</p>"
+            f"{components_html}"
+            "</div>"
+            "</div>"
+            + ("<h3>Evolución y tendencia</h3>" + evolucion_html if evolucion_html else "")
+        )
+
+    def _render_section_clientes(self, payload: dict[str, Any]) -> str:
+        lectura = self._clean_narrative_text(str(payload.get("lectura_ejecutiva", "") or "").strip())
+        clientes = payload.get("tipologias_cliente_top3")
+        if not isinstance(clientes, list):
+            clientes = []
+        preocupaciones = payload.get("preocupaciones_top3")
+        if not isinstance(preocupaciones, list):
+            preocupaciones = []
+        scatter = payload.get("scatter_clientes")
+
+        customer_cards: list[str] = []
+        for item in clientes[:3]:
+            if not isinstance(item, dict):
+                continue
+            customer_cards.append(
+                "<article class='cluster-card'>"
+                f"<h3>{html.escape(str(item.get('label', '') or 'Tipo de cliente'))}</h3>"
+                f"<p><strong>Descripción:</strong> {html.escape(str(item.get('descripcion_segmento', '') or ''))}</p>"
+                f"<p><strong>Estado emocional:</strong> {html.escape(str(item.get('estado_emocional', '') or ''))}</p>"
+                f"<p><strong>Intención:</strong> {html.escape(str(item.get('intencion_detectada', '') or ''))}</p>"
+                f"<p><strong>Expectativas:</strong> {html.escape(str(item.get('expectativas', '') or ''))}</p>"
+                "</article>"
+            )
+
+        problem_cards: list[str] = []
+        for item in preocupaciones[:3]:
+            if not isinstance(item, dict):
+                continue
+            problema = self._humanize_action_text(str(item.get("problema", "") or "Tema"))
+            problem_cards.append(
+                "<article class='cluster-card'>"
+                f"<h3>{html.escape(problema)}</h3>"
+                f"<p><strong>Volumen:</strong> {self._safe_int(item.get('volumen'))}</p>"
+                f"<p><strong>Severidad:</strong> {round(self._safe_float(item.get('severidad')), 3)}</p>"
+                f"<p><strong>Valoración asociada:</strong> {round(self._safe_float(item.get('rating_medio_asociado')), 2)}</p>"
+                f"<p><strong>Ejemplo:</strong> {html.escape(str(item.get('ejemplo_literal', '') or ''))}</p>"
+                "</article>"
+            )
+
+        parts = [f"<p>{html.escape(lectura)}</p>" if lectura else ""]
+        if customer_cards:
+            parts.extend(
+                [
+                    "<h3>Tipos de cliente más relevantes</h3>",
+                    f"<div class='cluster-grid'>{''.join(customer_cards)}</div>",
+                ]
+            )
+        if problem_cards:
+            parts.extend(
+                [
+                    "<h3>Qué le preocupa a cada tipo de cliente</h3>",
+                    f"<div class='cluster-grid'>{''.join(problem_cards)}</div>",
+                ]
+            )
+        scatter_html = self._render_payload(scatter) if not self._is_empty_payload(scatter) else ""
+        if scatter_html:
+            parts.extend(["<h3>Visualización de tipos de clientes</h3>", scatter_html])
+        return "".join(parts)
+
+    def _render_section_plan(self, payload: dict[str, Any]) -> str:
+        lectura = self._clean_narrative_text(str(payload.get("lectura_ejecutiva", "") or "").strip())
+        invisibles = payload.get("problemas_invisibles")
+        if not isinstance(invisibles, list):
+            invisibles = []
+        corto = payload.get("corto_plazo_0_30_dias")
+        medio = payload.get("medio_plazo_30_90_dias")
+        largo = payload.get("largo_plazo_90_mas_dias")
+        quick_wins = payload.get("quick_wins_esta_semana")
+        if not isinstance(corto, list):
+            corto = []
+        if not isinstance(medio, list):
+            medio = []
+        if not isinstance(largo, list):
+            largo = []
+        if not isinstance(quick_wins, list):
+            quick_wins = []
+
+        invisible_items = "".join(
+            "<li>"
+            f"<strong>{html.escape(str(item.get('risk', '') or 'Riesgo detectado'))}:</strong> "
+            f"{html.escape(str(item.get('detail', '') or ''))}"
+            "</li>"
+            for item in invisibles[:6]
+            if isinstance(item, dict)
+        )
+        corto_html = self._render_action_items(corto)
+        medio_html = self._render_action_items(medio)
+        largo_html = self._render_action_items(largo)
+        quick_html = self._render_action_items(quick_wins, is_quick_wins=True)
+
+        parts = [f"<p>{html.escape(lectura)}</p>" if lectura else ""]
+        if invisible_items:
+            parts.extend(["<h3>Problemas invisibles (antes de que escalen)</h3>", f"<ul>{invisible_items}</ul>"])
+
+        if corto_html or medio_html or largo_html:
+            parts.extend(
+                [
+                    "<h3>Plan de acción por plazos</h3>",
+                    "<div class='timeline'>",
+                    f"<div class='timeline-col'><h4>Corto plazo (0-30 días)</h4>{corto_html}</div>",
+                    f"<div class='timeline-col'><h4>Medio plazo (30-90 días)</h4>{medio_html}</div>",
+                    f"<div class='timeline-col'><h4>Largo plazo (+90 días)</h4>{largo_html}</div>",
+                    "</div>",
+                    "<p class='muted'>En el anexo tienes el detalle completo de cada medida para llevarla a la práctica.</p>",
+                ]
+            )
+        if quick_html:
+            parts.extend(["<h3>Acciones rápidas que ya puedes poner en marcha esta semana</h3>", quick_html])
+        return "".join(parts)
+
+    def _render_section_anexos(self, payload: dict[str, Any]) -> str:
+        note = str(payload.get("nota", "") or "").strip()
+        dataset = payload.get("resumen_dataset")
+        benchmarking = payload.get("benchmarking_resumen")
+        voces = payload.get("voz_literal_muestra")
+        dataset_html = self._render_dataset_summary_spanish(dataset)
+        benchmark_html = self._render_payload(benchmarking) if not self._is_empty_payload(benchmarking) else ""
+        voces_html = self._render_voice_quotes(voces)
+        parts = [f"<p>{html.escape(note)}</p>" if note else ""]
+        if dataset_html:
+            parts.extend(["<h3>Resumen del conjunto de datos</h3>", dataset_html, "<h3>Cómo leer estos indicadores</h3>", self._render_dimension_guide(dataset)])
+        if benchmark_html:
+            parts.extend(["<h3>Resumen frente a competidores</h3>", benchmark_html])
+        if voces_html:
+            parts.extend(["<h3>Voz literal del cliente (muestra anonimizada)</h3>", voces_html])
+        return "".join(parts)
+
+    def _render_review_rows_table(self, payload: Any) -> str:
+        if not isinstance(payload, list) or not payload:
+            return ""
+        rows = payload[:2000]
+        headers = [
+            "Índice",
+            "Fuente",
+            "Autor",
+            "Valoración",
+            "Sentimiento",
+            "Brecha de expectativas",
+            "Satisfacción",
+            "Tema principal",
+            "Tiene respuesta del negocio",
+            "Resumen de reseña",
+        ]
+        map_header = {
+            "Índice": "review_index",
+            "Fuente": "source",
+            "Autor": "author_name",
+            "Valoración": "rating",
+            "Sentimiento": "sentiment",
+            "Brecha de expectativas": "expectation_gap",
+            "Satisfacción": "satisfaction",
+            "Tema principal": "dominant_problem",
+            "Tiene respuesta del negocio": "has_owner_reply",
+            "Resumen de reseña": "review_excerpt",
+        }
+        head_html = "".join(f"<th>{html.escape(header)}</th>" for header in headers)
+        body_html_rows = []
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            tds = []
+            for header in headers:
+                value = item.get(map_header[header])
+                tds.append(f"<td>{html.escape(str(value if value is not None else ''))}</td>")
+            body_html_rows.append(f"<tr>{''.join(tds)}</tr>")
+        return f"<table><thead><tr>{head_html}</tr></thead><tbody>{''.join(body_html_rows)}</tbody></table>"
+
+    def _humanize_section_key(self, key: str) -> str:
+        mapped_titles = {
+            "1_resumen_ejecutivo": "Diagnóstico temprano",
+            "2_score_reputacion": "Puntuación de tu reputación",
+            "3_quien_es_tu_cliente_y_que_le_preocupa": "Quién es tu cliente y qué le preocupa",
+            "4_plan_de_accion": "Plan de acción",
+            "5_anexos_resumen": "Anexo resumen",
+        }
+        if key in mapped_titles:
+            return mapped_titles[key]
+        clean = str(key or "").strip()
+        clean = re.sub(r"^\d+[_\-.]?", "", clean)
+        clean = clean.replace("_", " ").replace("-", " ").strip()
+        if not clean:
+            return "Sección"
+        return clean[:1].upper() + clean[1:]
+
+    def _render_payload(self, payload: Any, *, depth: int = 0) -> str:
+        if payload is None:
+            return ""
+
+        if isinstance(payload, (str, int, float, bool)):
+            text = self._clean_narrative_text(str(payload))
+            return f"<p>{html.escape(text)}</p>" if text else ""
+
+        if isinstance(payload, list):
+            if not payload:
+                return ""
+            if all(isinstance(item, (str, int, float, bool)) for item in payload):
+                items = "".join(
+                    f"<li>{html.escape(self._clean_narrative_text(str(item)))}</li>"
+                    for item in payload
+                    if self._clean_narrative_text(str(item))
+                )
+                if not items:
+                    return ""
+                return f"<ul>{items}</ul>"
+            rows = []
+            for item in payload:
+                rendered_item = self._render_payload(item, depth=depth + 1)
+                if rendered_item.strip():
+                    rows.append(f"<li>{rendered_item}</li>")
+            if not rows:
+                return ""
+            return f"<ul>{''.join(rows)}</ul>"
+
+        if isinstance(payload, dict):
+            scatter_html = self._maybe_render_scatter_svg(payload)
+            if scatter_html:
+                return scatter_html
+
+            scalar_rows = []
+            nested_rows = []
+            for key, value in payload.items():
+                key_label = html.escape(self._labelize_key_spanish(str(key)))
+                if isinstance(value, (str, int, float, bool)) or value is None:
+                    if isinstance(value, bool):
+                        rendered_value = "Sí" if value else "No"
+                    elif value is None:
+                        rendered_value = ""
+                    else:
+                        rendered_value = html.escape(self._clean_narrative_text(str(value)))
+                    scalar_rows.append(
+                        f"<tr><th>{key_label}</th><td>{rendered_value}</td></tr>"
+                    )
+                else:
+                    rendered_nested = self._render_payload(value, depth=depth + 1)
+                    if rendered_nested.strip():
+                        nested_rows.append(f"<h3>{key_label}</h3>{rendered_nested}")
+
+            parts = []
+            if scalar_rows:
+                parts.append(f"<table><tbody>{''.join(scalar_rows)}</tbody></table>")
+            if nested_rows:
+                parts.append("".join(nested_rows))
+            if not parts:
+                return ""
+            return "".join(parts)
+
+        text = self._clean_narrative_text(str(payload))
+        return f"<p>{html.escape(text)}</p>" if text else ""
+
+    def _maybe_render_scatter_svg(self, payload: dict[str, Any]) -> str | None:
+        axes = payload.get("axes")
+        circles = payload.get("circles")
+        points = payload.get("points")
+        if not isinstance(axes, dict):
+            return None
+        if not isinstance(circles, list):
+            return None
+
+        width = 860.0
+        height = 380.0
+        pad_left = 84.0
+        pad_right = 42.0
+        pad_top = 48.0
+        pad_bottom = 72.0
+        inner_w = width - (pad_left + pad_right)
+        inner_h = height - (pad_top + pad_bottom)
+
+        def sx(x: float) -> float:
+            x = max(0.0, min(100.0, x))
+            return pad_left + ((x / 100.0) * inner_w)
+
+        def sy(y: float) -> float:
+            y = max(0.0, min(100.0, y))
+            return height - pad_bottom - ((y / 100.0) * inner_h)
+
+        svg_parts = []
+        svg_parts.append(
+            f"<line x1='{pad_left}' y1='{height - pad_bottom}' x2='{width - pad_right}' y2='{height - pad_bottom}' stroke='#8fd6c5' stroke-width='1'/>"
+        )
+        svg_parts.append(
+            f"<line x1='{pad_left}' y1='{height - pad_bottom}' x2='{pad_left}' y2='{pad_top}' stroke='#8fd6c5' stroke-width='1'/>"
+        )
+
+        for tick in (0, 25, 50, 75, 100):
+            x = sx(float(tick))
+            y = sy(float(tick))
+            svg_parts.append(
+                f"<line x1='{x}' y1='{height - pad_bottom}' x2='{x}' y2='{height - pad_bottom + 6}' stroke='#8fd6c5' stroke-width='1'/>"
+            )
+            svg_parts.append(
+                f"<text x='{x - 9}' y='{height - pad_bottom + 22}' fill='#4b6e67' font-size='11'>{tick}</text>"
+            )
+            svg_parts.append(
+                f"<line x1='{pad_left - 6}' y1='{y}' x2='{pad_left}' y2='{y}' stroke='#8fd6c5' stroke-width='1'/>"
+            )
+            svg_parts.append(f"<text x='26' y='{y + 4}' fill='#4b6e67' font-size='11'>{tick}</text>")
+
+        palette = list(self._PALETTE)
+        for index, circle in enumerate(circles):
+            if not isinstance(circle, dict):
+                continue
+            center = circle.get("center") if isinstance(circle.get("center"), dict) else {}
+            cx = sx(float(center.get("x", 0.0)))
+            cy = sy(float(center.get("y", 0.0)))
+            radius_raw = float(circle.get("radius", 4.0))
+            radius = max(4.0, min(36.0, radius_raw))
+            color = palette[index % len(palette)]
+            label = html.escape(str(circle.get("label", f"cluster_{index}") or f"cluster_{index}"))
+            svg_parts.append(
+                f"<circle cx='{cx}' cy='{cy}' r='{radius}' fill='{color}66' stroke='{color}' stroke-width='1.5'/>"
+            )
+            svg_parts.append(f"<text x='{cx + 4}' y='{cy - 4}' fill='#1b3d36' font-size='10'>{label}</text>")
+
+        if isinstance(points, list):
+            for point in points[:500]:
+                if not isinstance(point, dict):
+                    continue
+                x = sx(float(point.get("x", 0.0)))
+                y = sy(float(point.get("y", 0.0)))
+                size = max(2.0, min(6.0, float(point.get("size", 1.0))))
+                svg_parts.append(
+                    f"<circle cx='{x}' cy='{y}' r='{size}' fill='#1b3d36cc' stroke='#ffffff' stroke-width='0.6'/>"
+                )
+
+        x_label = html.escape(str(axes.get("x_label", axes.get("x", "X"))))
+        y_label = html.escape(str(axes.get("y_label", axes.get("y", "Y"))))
+        svg_parts.append(
+            f"<text x='{(pad_left + inner_w / 2) - 120}' y='{height - 16}' fill='#4b6e67' font-size='13'>{x_label}</text>"
+        )
+        svg_parts.append(
+            f"<text x='18' y='{(pad_top + inner_h / 2)}' transform='rotate(-90, 24, {pad_top + inner_h / 2})' fill='#4b6e67' font-size='13'>{y_label}</text>"
+        )
+
+        return (
+            "<div class='scatter'>"
+            f"<svg viewBox='0 0 {width} {height}' width='100%' height='{height}'>{''.join(svg_parts)}</svg>"
+            "</div>"
+        )
+
+    def _render_score_components(self, components: Any) -> str:
+        if not isinstance(components, dict):
+            return ""
+        labels = [
+            (
+                "avg_rating",
+                "Valoración media",
+                "Media de estrellas. Cuanto más cerca de 5, mejor percepción global.",
+                lambda v: f"{self._safe_float(v):.2f} / 5",
+            ),
+            (
+                "response_rate",
+                "Tasa de respuesta a comentarios",
+                "Porcentaje de reseñas respondidas por el negocio.",
+                lambda v: f"{self._safe_float(v) * 100:.1f}%",
+            ),
+            (
+                "negative_ratio",
+                "Proporción de reseñas negativas",
+                "Parte de reseñas con experiencia negativa. Cuanto más baja, mejor.",
+                lambda v: f"{self._safe_float(v) * 100:.1f}%",
+            ),
+            (
+                "sentiment_avg",
+                "Sentimiento medio",
+                "Mide el tono global de las reseñas (de negativo a positivo).",
+                lambda v: f"{self._safe_float(v):.2f}",
+            ),
+            (
+                "tranquility_avg",
+                "Calma percibida",
+                "Mide si el tono es tranquilo o agresivo. Más alto suele ser mejor.",
+                lambda v: f"{self._safe_float(v):.2f}",
+            ),
+        ]
+        cards: list[str] = []
+        for key, title, explain, formatter in labels:
+            if key not in components:
+                continue
+            raw = components.get(key)
+            cards.append(
+                "<article class='metric-card'>"
+                f"<div class='metric-title'>{html.escape(title)}</div>"
+                f"<div class='metric-value'>{html.escape(formatter(raw))}</div>"
+                f"<div class='metric-explain'>{html.escape(explain)}</div>"
+                "</article>"
+            )
+        return f"<div class='metric-grid'>{''.join(cards)}</div>" if cards else ""
+
+    def _render_action_items(self, payload: Any, *, is_quick_wins: bool = False) -> str:
+        if not isinstance(payload, list):
+            return ""
+        cards: list[str] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            if is_quick_wins:
+                titulo = str(item.get("title", "") or "").strip()
+                por_que = str(item.get("why", "") or "").strip()
+                esfuerzo = str(item.get("effort", "") or "").strip()
+                impacto = str(item.get("impact", "") or "").strip()
+                if not titulo:
+                    continue
+                titulo_h = self._humanize_action_text(titulo)
+                por_que_h = self._humanize_action_text(por_que)
+                esfuerzo_h = self._humanize_effort(effort=esfuerzo)
+                impacto_h = self._humanize_impact(impact=impacto)
+                cards.append(
+                    "<li class='action-card'>"
+                    f"<div class='title'>{html.escape(self._clean_narrative_text(titulo_h))}</div>"
+                    f"<div>{html.escape(self._clean_narrative_text(por_que_h))}</div>"
+                    f"<div class='meta-line'>Esfuerzo: {html.escape(esfuerzo_h)} · Impacto esperado: {html.escape(impacto_h)}</div>"
+                    "</li>"
+                )
+                continue
+
+            accion = str(item.get("accion") or item.get("action") or "").strip()
+            if not accion:
+                continue
+            por_que = str(item.get("por_que") or item.get("why") or "").strip()
+            encargado = str(item.get("encargado") or item.get("owner") or "").strip()
+            objetivo = str(item.get("objetivo") or item.get("kpi") or "").strip()
+            accion_h = self._humanize_action_text(accion)
+            por_que_h = self._humanize_action_text(por_que)
+            encargado_h = self._humanize_role(encargado)
+            objetivo_h = self._humanize_action_text(objetivo)
+            plazo = item.get("horizon_days") or item.get("horizonte_dias")
+            plazo_text = ""
+            if plazo is not None:
+                try:
+                    plazo_text = f"{int(plazo)} días"
+                except (TypeError, ValueError):
+                    plazo_text = str(plazo)
+
+            cards.append(
+                "<li class='action-card'>"
+                f"<div class='title'>{html.escape(self._clean_narrative_text(accion_h))}</div>"
+                + (f"<div>{html.escape(self._clean_narrative_text(por_que_h))}</div>" if por_que_h else "")
+                + (
+                    f"<div class='meta-line'>Encargado de resolverlo: {html.escape(encargado_h)}</div>"
+                    if encargado_h
+                    else ""
+                )
+                + (f"<div class='meta-line'>Plazo objetivo: {html.escape(plazo_text)}</div>" if plazo_text else "")
+                + (f"<div class='meta-line'>Indicador de seguimiento: {html.escape(self._clean_narrative_text(objetivo_h))}</div>" if objetivo_h else "")
+                + "</li>"
+            )
+        if not cards:
+            return ""
+        return f"<ul class='action-list'>{''.join(cards)}</ul>"
+
+    def _render_dataset_summary_spanish(self, dataset: Any) -> str:
+        if not isinstance(dataset, dict):
+            return ""
+        total = self._safe_int(dataset.get("total_reviews"))
+        avg_rating = self._safe_float(dataset.get("avg_rating"))
+        response_rate = self._safe_float(dataset.get("response_rate"))
+        by_source = dataset.get("by_source") if isinstance(dataset.get("by_source"), dict) else {}
+        by_problem = dataset.get("by_problem") if isinstance(dataset.get("by_problem"), dict) else {}
+
+        cards = [
+            "<article class='metric-card'>"
+            "<div class='metric-title'>Reseñas analizadas</div>"
+            f"<div class='metric-value'>{total}</div>"
+            "<div class='metric-explain'>Cantidad total de opiniones incluidas en este informe.</div>"
+            "</article>",
+            "<article class='metric-card'>"
+            "<div class='metric-title'>Valoración media</div>"
+            f"<div class='metric-value'>{avg_rating:.2f} / 5</div>"
+            "<div class='metric-explain'>Media de puntuación. Por encima de 4 suele indicar buena percepción.</div>"
+            "</article>",
+            "<article class='metric-card'>"
+            "<div class='metric-title'>Tasa de respuesta a comentarios</div>"
+            f"<div class='metric-value'>{response_rate * 100:.1f}%</div>"
+            "<div class='metric-explain'>Porcentaje de reseñas que reciben respuesta del negocio.</div>"
+            "</article>",
+        ]
+        source_text = ", ".join(
+            f"{self._source_name_spanish(str(k))}: {self._safe_int(v)}"
+            for k, v in by_source.items()
+            if str(k).strip()
+        )
+        problem_text = ", ".join(
+            f"{self._clean_narrative_text(self._humanize_action_text(str(k).replace('_', ' ')))}: {self._safe_int(v)}"
+            for k, v in list(by_problem.items())[:6]
+            if str(k).strip()
+        )
+        extra = []
+        if source_text:
+            extra.append(f"<p><strong>Distribución por fuente:</strong> {html.escape(source_text)}</p>")
+        if problem_text:
+            extra.append(f"<p><strong>Temas más repetidos:</strong> {html.escape(problem_text)}</p>")
+        return f"<div class='metric-grid'>{''.join(cards)}</div>{''.join(extra)}"
+
+    def _render_dimension_guide(self, dataset: Any) -> str:
+        if not isinstance(dataset, dict):
+            return ""
+        dims = dataset.get("dimension_averages") if isinstance(dataset.get("dimension_averages"), dict) else {}
+        if not dims:
+            return ""
+        guide = [
+            (
+                "sentiment",
+                "Sentimiento",
+                "Resume el tono general de las reseñas. Valores más altos suelen ser mejor.",
+                "Una señal saludable suele estar claramente por encima de 0.",
+            ),
+            (
+                "expectation_gap",
+                "Brecha de expectativas",
+                "Mide cuánto se aleja la experiencia de lo que esperaba el cliente.",
+                "Cuanto más cerca de 0, mejor alineación con lo prometido.",
+            ),
+            (
+                "satisfaction",
+                "Satisfacción",
+                "Nivel de satisfacción global detectado en opiniones y valoración.",
+                "Valores altos indican más probabilidad de repetición o recomendación.",
+            ),
+            (
+                "tranquility_aggressiveness",
+                "Tranquilidad vs agresividad",
+                "Captura si el lenguaje es calmado o tenso/agresivo.",
+                "Más alto suele reflejar una conversación más sana con el cliente.",
+            ),
+            (
+                "improvement_intent",
+                "Intención de mejora",
+                "Cuánto piden cambios concretos los clientes.",
+                "Alto no es malo por sí mismo: puede señalar oportunidades claras de mejora.",
+            ),
+        ]
+        rows = []
+        for key, title, meaning, reading in guide:
+            if key not in dims:
+                continue
+            value = self._safe_float(dims.get(key))
+            rows.append(
+                "<article class='metric-card'>"
+                f"<div class='metric-title'>{html.escape(title)}</div>"
+                f"<div class='metric-value'>{value:.2f}</div>"
+                f"<div class='metric-explain'>{html.escape(meaning)}</div>"
+                f"<div class='metric-explain'>{html.escape(reading)}</div>"
+                "</article>"
+            )
+        return f"<div class='metric-grid'>{''.join(rows)}</div>" if rows else ""
+
+    def _render_voice_quotes(self, voces: Any) -> str:
+        if not isinstance(voces, dict):
+            return ""
+        positive = voces.get("positive_quotes") if isinstance(voces.get("positive_quotes"), list) else []
+        negative = voces.get("negative_quotes") if isinstance(voces.get("negative_quotes"), list) else []
+        improvement = voces.get("improvement_quotes") if isinstance(voces.get("improvement_quotes"), list) else []
+        selected = [*positive[:2], *negative[:2], *improvement[:2]]
+        cards: list[str] = []
+        for item in selected:
+            if not isinstance(item, dict):
+                continue
+            quote = str(item.get("quote", "") or "").strip()
+            if not quote:
+                continue
+            source_label = self._source_name_spanish(str(item.get("source", "") or "desconocida"))
+            cards.append(
+                "<li class='voice-card'>"
+                f"<div class='voice-meta'>{html.escape(self._anonymize_person_name(str(item.get('author_name', '') or 'Cliente')))} · "
+                f"Valoración {self._safe_float(item.get('rating')):.1f} · "
+                f"Fuente {html.escape(source_label)}</div>"
+                f"<div>{html.escape(self._clean_narrative_text(quote))}</div>"
+                "</li>"
+            )
+        if not cards:
+            return ""
+        return f"<ul class='voice-list'>{''.join(cards)}</ul>"
+
+    def _clean_narrative_text(self, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        text = text.replace("**", "")
+        text = self._humanize_action_text(text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    def _is_empty_payload(self, payload: Any) -> bool:
+        if payload is None:
+            return True
+        if isinstance(payload, str):
+            return not str(payload).strip()
+        if isinstance(payload, (list, tuple, set)):
+            return len(payload) == 0
+        if isinstance(payload, dict):
+            return len(payload) == 0
+        return False
+
+    def _anonymize_person_name(self, name: str) -> str:
+        clean = str(name or "").strip()
+        if not clean:
+            return "C********"
+        first = clean[0].upper()
+        return f"{first}{'*' * 7}"
+
+    def _source_name_spanish(self, source: str) -> str:
+        normalized = str(source or "").strip().lower()
+        if not normalized:
+            return "fuente no identificada"
+        mapping = {
+            "google_maps": "Google Maps",
+            "tripadvisor": "Tripadvisor",
+            "trustpilot": "Trustpilot",
+            "booking": "Booking",
+            "reddit": "Reddit",
+            "unknown": "fuente no identificada",
+        }
+        if normalized in mapping:
+            return mapping[normalized]
+        return normalized.replace("_", " ")
+
+    def _labelize_key_spanish(self, key: str) -> str:
+        normalized = str(key or "").strip()
+        if not normalized:
+            return "Dato"
+        mapping = {
+            "avg_rating": "Valoración media",
+            "response_rate": "Tasa de respuesta a comentarios",
+            "negative_ratio": "Proporción de reseñas negativas",
+            "sentiment_avg": "Sentimiento medio",
+            "tranquility_avg": "Calma percibida",
+            "trend": "Evolución general",
+            "trend_slope": "Ritmo de cambio",
+            "analyses_history": "Histórico de análisis",
+            "satisfaction_by_relative_time_bucket": "Satisfacción por antigüedad de reseña",
+            "satisfaccion_por_antiguedad_resena": "Satisfacción por antigüedad de reseña",
+            "score_scale": "Escala de puntuación",
+            "target_rank": "Posición del negocio",
+            "total_competitors_compared": "Competidores comparados",
+            "target_reputation_score": "Puntuación del negocio",
+            "top_competitors": "Competidores destacados",
+            "total_reviews": "Reseñas totales",
+            "by_source": "Distribución por fuente",
+            "by_problem": "Distribución por tema",
+            "dimension_averages": "Promedio de dimensiones",
+            "overall_sentiment": "Sentimiento global",
+            "review_count": "Número de reseñas",
+            "cluster_count": "Número de tipos de cliente",
+            "cluster_id": "Tipo de cliente",
+            "review_rows": "Reseñas",
+            "dominant_problem": "Tema principal",
+            "has_owner_reply": "Tiene respuesta del negocio",
+            "owner_reply_excerpt": "Respuesta del negocio (extracto)",
+            "review_excerpt": "Extracto de reseña",
+            "created_at": "Fecha",
+            "source": "Fuente",
+            "author_name": "Cliente",
+            "rating": "Valoración",
+            "score_display": "Puntuación mostrada",
+            "nivel_reputacion": "Nivel de reputación",
+            "problema": "Problema",
+            "severidad": "Severidad",
+            "volumen": "Volumen",
+            "ejemplo_literal": "Ejemplo literal",
+            "impact": "Impacto",
+            "owner": "Encargado",
+            "horizon_days": "Plazo (días)",
+            "kpi": "Indicador de seguimiento",
+            "old": "Antiguas",
+            "medium": "Intermedias",
+            "recent": "Recientes",
+            "unknown": "Sin fecha clara",
+        }
+        if normalized in mapping:
+            return mapping[normalized]
+        prettified = normalized.replace("_", " ").replace("-", " ").strip()
+        if not prettified:
+            return "Dato"
+        return prettified[:1].upper() + prettified[1:]
+
+    def _humanize_action_text(self, text: str) -> str:
+        value = str(text or "").strip()
+        if not value:
+            return ""
+        output = value
+        output = re.sub(
+            r"satisfaction by relative time bucket",
+            "Satisfacción por antigüedad de reseña",
+            output,
+            flags=re.IGNORECASE,
+        )
+        output = re.sub(
+            r"^corregir incidencias de ['\"]?([^'\"]+)['\"]? con checklist operativo diario\.?$",
+            r"Mejorar de inmediato '\1' con una lista de tareas a realizar cada día.",
+            output,
+            flags=re.IGNORECASE,
+        )
+        output = re.sub(
+            r"^estandarizar proceso y formación sobre ['\"]?([^'\"]+)['\"]?\.?$",
+            r"Ordenar el proceso y formar al equipo para evitar fallos en '\1'.",
+            output,
+            flags=re.IGNORECASE,
+        )
+        output = re.sub(
+            r"^automatizar seguimiento de señales tempranas de ['\"]?([^'\"]+)['\"]?\.?$",
+            r"Crear un seguimiento continuo para detectar pronto fallos en '\1'.",
+            output,
+            flags=re.IGNORECASE,
+        )
+        output = re.sub(
+            r"^micro-acción sobre ['\"]?([^'\"]+)['\"]?\.?$",
+            r"Acción rápida sobre '\1'.",
+            output,
+            flags=re.IGNORECASE,
+        )
+        replacements = (
+            ("checklist operativo diario", "lista de tareas a realizar cada día"),
+            ("checklist", "lista de tareas a realizar"),
+            ("checklists", "listas de tareas a realizar"),
+            ("micro-acción", "acción rápida"),
+            ("quick wins", "acciones rápidas"),
+            ("Data/Producto", "Dirección y mejora de procesos"),
+            ("Gerencia + Calidad", "Gerencia y calidad"),
+            ("Responsable de operación", "Encargado de operaciones"),
+            ("precio_valor", "relación calidad-precio"),
+            ("calidad_comida", "calidad de la comida"),
+            ("tiempo_espera", "tiempo de espera"),
+            ("gestion_reservas", "gestión de reservas"),
+            ("ambiente_ruido", "ambiente y ruido"),
+            ("<24h", "menos de 24 horas"),
+            ("KPI", "indicador de seguimiento"),
+            ("KPIs", "indicadores de seguimiento"),
+            ("owner", "encargado"),
+            ("impact", "impacto"),
+            ("score", "puntuación de reputación"),
+            ("trend", "tendencia"),
+            ("response rate", "tasa de respuesta a comentarios"),
+            ("bucket", "tramo temporal"),
+            ("dataset", "conjunto de reseñas"),
+            ("old", "antiguas"),
+            ("medium", "intermedias"),
+            ("recent", "recientes"),
+        )
+        for src, dst in replacements:
+            output = re.sub(re.escape(src), dst, output, flags=re.IGNORECASE)
+        output = re.sub(r"\bel tendencia\b", "la tendencia", output, flags=re.IGNORECASE)
+        output = re.sub(r"\bservicio en reseñas negativas un 25%\b", "las menciones negativas sobre el servicio en un 25%", output, flags=re.IGNORECASE)
+        output = re.sub(r"\bcalidad de la comida en reseñas negativas un 25%\b", "las menciones negativas sobre la calidad de la comida en un 25%", output, flags=re.IGNORECASE)
+        output = re.sub(r"\brelación calidad-precio en reseñas negativas un 25%\b", "las menciones negativas sobre la relación calidad-precio en un 25%", output, flags=re.IGNORECASE)
+        return output
+
+    def _humanize_effort(self, *, effort: str) -> str:
+        value = str(effort or "").strip().lower()
+        mapping = {"low": "bajo", "medium": "medio", "high": "alto", "bajo": "bajo", "medio": "medio", "alto": "alto"}
+        return mapping.get(value, "medio")
+
+    def _humanize_impact(self, *, impact: str) -> str:
+        value = str(impact or "").strip().lower()
+        mapping = {"low": "bajo", "medium": "medio", "high": "alto", "bajo": "bajo", "medio": "medio", "alto": "alto"}
+        return mapping.get(value, "medio")
+
+    def _humanize_role(self, role: str) -> str:
+        value = str(role or "").strip()
+        if not value:
+            return ""
+        return self._humanize_action_text(value)
+
+    def _score_badge(self, score: float) -> str:
+        if score >= 85.0:
+            return "<span class='badge good'>Excelente reputación</span>"
+        if score >= 70.0:
+            return "<span class='badge good'>Reputación sólida</span>"
+        if score >= 55.0:
+            return "<span class='badge warn'>Reputación media mejorable</span>"
+        if score >= 40.0:
+            return "<span class='badge warn'>Reputación mejorable</span>"
+        return "<span class='badge bad'>Reputación crítica</span>"
+
+    def _safe_float(self, value: Any) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _safe_int(self, value: Any) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    def _slugify(self, value: str) -> str:
+        raw = str(value or "").strip().lower()
+        raw = re.sub(r"[^a-z0-9._-]+", "-", raw)
+        raw = raw.strip("-")
+        return raw or "item"
+
+    def _safe_identifier_slug(self, value: str) -> str:
+        slug = self._slugify(value)
+        return slug[:64] if slug else "id"
+
+    def _safe_name_slug(self, value: str) -> str:
+        slug = self._slugify(value)
+        if not slug:
+            return "negocio"
+        return slug[:60]
+
+    def _json_default(self, value: object) -> str:
+        if isinstance(value, datetime):
+            return value.isoformat()
+        return str(value)

@@ -12,6 +12,7 @@ class AnalysisJobStatus(str, Enum):
     RUNNING = "running"
     DONE = "done"
     FAILED = "failed"
+    NEEDS_HUMAN = "needs_human"
     RETRYING = "retrying"
     PARTIAL = "partial"
 
@@ -47,6 +48,11 @@ class JobProgressState(BaseModel):
 
 class AnalyzeBusinessTaskPayload(BaseModel):
     name: str
+    canonical_name: str | None = None
+    canonical_name_normalized: str | None = None
+    source_name: str | None = None
+    source_name_normalized: str | None = None
+    root_business_id: str | None = None
     force: bool = False
     strategy: str | None = None
     force_mode: str | None = None
@@ -65,6 +71,21 @@ class AnalyzeBusinessTaskPayload(BaseModel):
         if not cleaned:
             raise ValueError("Business name cannot be empty.")
         return cleaned
+
+    @field_validator(
+        "canonical_name",
+        "canonical_name_normalized",
+        "source_name",
+        "source_name_normalized",
+        "root_business_id",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_text_fields(cls, value: object) -> object:
+        if value is None:
+            return None
+        cleaned = str(value).strip()
+        return cleaned or None
 
     @field_validator("strategy", mode="before")
     @classmethod
@@ -244,6 +265,11 @@ def parse_analyze_business_payload(job_doc: Mapping[str, Any]) -> AnalyzeBusines
     return AnalyzeBusinessTaskPayload.model_validate(
         {
             "name": str(job_doc.get("name", "")).strip(),
+            "canonical_name": str(job_doc.get("canonical_name") or "").strip() or None,
+            "canonical_name_normalized": str(job_doc.get("canonical_name_normalized") or "").strip() or None,
+            "source_name": str(job_doc.get("source_name") or "").strip() or None,
+            "source_name_normalized": str(job_doc.get("source_name_normalized") or "").strip() or None,
+            "root_business_id": str(job_doc.get("root_business_id") or "").strip() or None,
             "force": bool(job_doc.get("force", False)),
             "strategy": str(job_doc.get("strategy") or "").strip() or None,
             "force_mode": str(job_doc.get("force_mode") or "").strip() or None,
@@ -353,6 +379,11 @@ class AnalysisJobQueueDocument(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     name: str | None = None
     name_normalized: str | None = None
+    canonical_name: str | None = None
+    canonical_name_normalized: str | None = None
+    source_name: str | None = None
+    source_name_normalized: str | None = None
+    root_business_id: str | None = None
     force: bool | None = None
     strategy: str | None = None
     force_mode: str | None = None

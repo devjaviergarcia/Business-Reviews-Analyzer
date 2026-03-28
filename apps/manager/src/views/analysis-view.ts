@@ -73,6 +73,12 @@ export function createAnalysisView(deps: AnalysisViewDeps): ViewModule {
           strategy: values.strategy,
           force_mode: values.forceMode || null,
         };
+        if (values.googleMapsName) {
+          payload.google_maps_name = values.googleMapsName;
+        }
+        if (values.tripadvisorName) {
+          payload.tripadvisor_name = values.tripadvisorName;
+        }
         const interactiveRounds = parseOptionalInteger(values.interactiveRounds);
         const htmlRounds = parseOptionalInteger(values.htmlRounds);
         const stableRounds = parseOptionalInteger(values.stableRounds);
@@ -100,7 +106,7 @@ export function createAnalysisView(deps: AnalysisViewDeps): ViewModule {
           };
         }
         const response = await deps.apiClient.post<{ job_id?: string }>(
-          "/business/analyze/queue",
+          "/business/scrape/jobs",
           payload
         );
         const queuedJobId = String(response.job_id || "").trim();
@@ -258,7 +264,7 @@ export function createAnalysisView(deps: AnalysisViewDeps): ViewModule {
   function startJobStream(jobIdValue: string): void {
     stopJobStream();
     const stream = deps.apiClient.createEventSource(
-      `/business/analyze/queue/${encodeURIComponent(jobIdValue)}/events`
+      `/business/scrape/jobs/${encodeURIComponent(jobIdValue)}/events`
     );
     selectedJobStream = stream;
     appendEventLine(`[open] ${jobIdValue}`);
@@ -350,7 +356,7 @@ export function createAnalysisView(deps: AnalysisViewDeps): ViewModule {
   async function loadJobDetail(jobIdValue: string): Promise<void> {
     try {
       const detail = await deps.apiClient.get<AnalyzeJobItem | Record<string, unknown>>(
-        `/business/analyze/queue/${encodeURIComponent(jobIdValue)}`
+        `/business/scrape/jobs/${encodeURIComponent(jobIdValue)}`
       );
       jobJson.textContent = JSON.stringify(detail, null, 2);
     } catch (error) {

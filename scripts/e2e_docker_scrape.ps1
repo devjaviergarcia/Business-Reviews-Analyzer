@@ -79,7 +79,7 @@ try {
     if ($UseWorker) {
         $job = Invoke-RestMethod `
             -Method Post `
-            -Uri "http://localhost:8000/business/analyze/queue" `
+            -Uri "http://localhost:8000/business/scrape/jobs" `
             -ContentType "application/json" `
             -Body $payload `
             -TimeoutSec 30
@@ -94,7 +94,7 @@ try {
             Start-Sleep -Seconds 2
             $state = Invoke-RestMethod `
                 -Method Get `
-                -Uri ("http://localhost:8000/business/analyze/queue/{0}" -f $job.job_id) `
+                -Uri ("http://localhost:8000/business/scrape/jobs/{0}" -f $job.job_id) `
                 -TimeoutSec 20
             if ($state.status -eq "done") {
                 $result = $state.result

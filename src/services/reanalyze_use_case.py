@@ -21,6 +21,7 @@ class ReanalyzeUseCase:
         analysis_quality_score: Callable[[dict[str, Any]], float],
         merge_reanalysis_runs: Callable[[list[dict[str, Any]]], dict[str, Any]],
         sanitize_response_payload: Callable[[Any], Any],
+        build_advanced_report: Callable[..., Any] | None,
         businesses_collection_name: str,
         reviews_collection_name: str,
         analyses_collection_name: str,
@@ -35,6 +36,7 @@ class ReanalyzeUseCase:
         self._analysis_quality_score = analysis_quality_score
         self._merge_reanalysis_runs = merge_reanalysis_runs
         self._sanitize_response_payload = sanitize_response_payload
+        self._build_advanced_report = build_advanced_report
         self._businesses_collection_name = businesses_collection_name
         self._reviews_collection_name = reviews_collection_name
         self._analyses_collection_name = analyses_collection_name
@@ -138,6 +140,24 @@ class ReanalyzeUseCase:
                 for item in run_results
             ],
         }
+
+        if self._build_advanced_report is not None:
+            try:
+                maybe_report = self._build_advanced_report(
+                    business_id=business_id,
+                    business_name=business_name,
+                    listing=listing_payload if isinstance(listing_payload, dict) else {},
+                    stats=stats,
+                    reviews=processed_reviews,
+                    analysis_payload=merged_analysis_payload,
+                )
+                advanced_report = (
+                    await maybe_report if hasattr(maybe_report, "__await__") else maybe_report
+                )
+                if isinstance(advanced_report, dict):
+                    merged_analysis_payload["advanced_report"] = advanced_report
+            except Exception as exc:  # noqa: BLE001
+                merged_analysis_payload["advanced_report_error"] = str(exc)
 
         inserted_analysis = await analyses.insert_one(merged_analysis_payload)
         review_count_query = {"business_id": business_id}

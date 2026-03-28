@@ -463,6 +463,7 @@ class GoogleMapsScraper:
                 "relative_time": relative_time,
                 "text": review_text,
                 "image_urls": image_urls,
+                "raw_card_html": card_html[:50_000],
             }
 
             owner_reply = self._extract_owner_reply_from_card_html(card_html)
@@ -557,6 +558,7 @@ class GoogleMapsScraper:
             relative_time = await self._text_from_locator(card.locator("span.rsqaWe").first)
             review_text = await self._text_from_locator(card.locator(".MyEned .wiI7pd").first)
             image_urls = await self._extract_review_photo_urls(card)
+            raw_card_html = await self._outer_html_from_locator(card)
 
             review_payload: dict[str, Any] = {
                 "source": "google_maps",
@@ -567,6 +569,8 @@ class GoogleMapsScraper:
                 "text": review_text or "",
                 "image_urls": image_urls,
             }
+            if raw_card_html:
+                review_payload["raw_card_html"] = raw_card_html[:50_000]
 
             owner_reply = await self._extract_owner_reply(card)
             if owner_reply is not None:
@@ -1944,6 +1948,18 @@ class GoogleMapsScraper:
                 text = None
 
         return self._clean_text(text)
+
+    async def _outer_html_from_locator(self, locator: Locator) -> str:
+        try:
+            if await locator.count() <= 0:
+                return ""
+        except Exception:
+            return ""
+        try:
+            value = await locator.evaluate("node => node?.outerHTML || ''")
+        except Exception:
+            return ""
+        return str(value or "").strip()
 
     async def _extract_owner_reply(self, card: Locator) -> dict[str, str] | None:
         block = await self._find_owner_reply_block(card)

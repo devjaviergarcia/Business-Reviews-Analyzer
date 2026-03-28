@@ -24,6 +24,11 @@ x-app-env: &app_env
   WORKER_IDLE_LOG_SECONDS: ${WORKER_IDLE_LOG_SECONDS:-60}
   WORKER_JOB_HEARTBEAT_SECONDS: ${WORKER_JOB_HEARTBEAT_SECONDS:-15}
   WORKER_PROGRESS_STALL_WARNING_SECONDS: ${WORKER_PROGRESS_STALL_WARNING_SECONDS:-90}
+  ANALYSIS_AUTO_ENQUEUE_REPORT_JOB: ${ANALYSIS_AUTO_ENQUEUE_REPORT_JOB:-true}
+  TRIPADVISOR_LOCAL_WORKER_BRIDGE_ENABLED: ${TRIPADVISOR_LOCAL_WORKER_BRIDGE_ENABLED:-false}
+  TRIPADVISOR_LOCAL_WORKER_BRIDGE_URL: ${TRIPADVISOR_LOCAL_WORKER_BRIDGE_URL:-http://host.docker.internal:8765}
+  TRIPADVISOR_LOCAL_WORKER_BRIDGE_TIMEOUT_SECONDS: ${TRIPADVISOR_LOCAL_WORKER_BRIDGE_TIMEOUT_SECONDS:-5}
+  TRIPADVISOR_LOCAL_WORKER_AUTOSTART_ON_ENQUEUE: ${TRIPADVISOR_LOCAL_WORKER_AUTOSTART_ON_ENQUEUE:-false}
 
 x-app-base: &app_base
   image: review-llm-app:latest
@@ -34,6 +39,8 @@ x-app-base: &app_base
       condition: service_healthy
   volumes:
     - .:/app
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
 
 services:
   mongodb:
@@ -57,8 +64,11 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: bra-api
-    ports:
-      - "8000:8000"
+    network_mode: host
+    environment:
+      <<: *app_env
+      MONGO_URI: ${MONGO_URI_APP_HOST:-mongodb://127.0.0.1:27017}
+      TRIPADVISOR_LOCAL_WORKER_BRIDGE_URL: ${TRIPADVISOR_LOCAL_WORKER_BRIDGE_URL_APP:-http://127.0.0.1:8765}
 
   scraper-google-worker:
     <<: *app_base
@@ -71,22 +81,17 @@ services:
       SCRAPER_USER_DATA_DIR: ${SCRAPER_USER_DATA_DIR_GOOGLE_WORKER_DOCKER:-playwright-data-google-worker-docker}
     command: python -m src.workers.scraper_worker
 
-  scraper-tripadvisor-worker:
-    <<: *app_base
-    container_name: bra-scraper-tripadvisor-worker
-    profiles: ["worker"]
-    environment:
-      <<: *app_env
-      WORKER_SCRAPE_QUEUE: scrape_tripadvisor
-      WORKER_SCRAPE_SOURCE: tripadvisor
-      SCRAPER_TRIPADVISOR_USER_DATA_DIR: ${SCRAPER_USER_DATA_DIR_TRIPADVISOR_WORKER_DOCKER:-playwright-data-tripadvisor-worker-docker}
-    command: python -m src.workers.scraper_worker
-
   analysis-worker:
     <<: *app_base
     container_name: bra-analysis-worker
     profiles: ["worker"]
     command: python -m src.workers.analysis_worker
+
+  report-worker:
+    <<: *app_base
+    container_name: bra-report-worker
+    profiles: ["worker"]
+    command: python -m src.workers.report_worker
 
 volumes:
   mongo_data:

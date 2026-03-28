@@ -8,6 +8,7 @@ from src.database import close_mongo_connection, connect_to_mongo
 from src.routers.analysis import router as analysis_router
 from src.routers.business import router as business_router
 from src.routers.health import router as health_router
+from src.routers.tripadvisor import router as tripadvisor_router
 
 
 @asynccontextmanager
@@ -25,8 +26,12 @@ app = FastAPI(
     description="API for scraping, preprocessing and analyzing business reviews.",
     openapi_tags=[
         {
+            "name": "Scrape",
+            "description": "Create and manage scraping jobs by source.",
+        },
+        {
             "name": "Analyze",
-            "description": "Run business analysis now or via async queue jobs.",
+            "description": "Run business analysis now or enqueue analyze-only jobs.",
         },
         {
             "name": "Business",
@@ -39,6 +44,10 @@ app = FastAPI(
         {
             "name": "health",
             "description": "Service and database health checks.",
+        },
+        {
+            "name": "Tripadvisor Session",
+            "description": "Global Tripadvisor session state and manual intervention actions.",
         },
     ],
     lifespan=lifespan,
@@ -55,3 +64,4 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(business_router)
 app.include_router(analysis_router)
+app.include_router(tripadvisor_router)

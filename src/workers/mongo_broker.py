@@ -42,6 +42,19 @@ class MongoJobBroker(WorkerJobBroker):
     async def mark_failed(self, *, job_id: Any, error: str) -> None:
         await self._job_service.mark_failed(job_id=job_id, error=error)
 
+    async def mark_needs_human(
+        self,
+        *,
+        job_id: Any,
+        reason: str,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        await self._job_service.mark_needs_human(
+            job_id=job_id,
+            reason=reason,
+            data=data,
+        )
+
     async def handoff_job(
         self,
         *,

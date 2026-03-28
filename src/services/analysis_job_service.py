@@ -95,6 +95,15 @@ class AnalysisJobService:
         database = get_database()
         jobs = database[self._JOBS_COLLECTION]
         payload_name = payload_data.get("name") if isinstance(payload_data, dict) else None
+        payload_canonical_name = payload_data.get("canonical_name") if isinstance(payload_data, dict) else None
+        payload_canonical_name_normalized = (
+            payload_data.get("canonical_name_normalized") if isinstance(payload_data, dict) else None
+        )
+        payload_source_name = payload_data.get("source_name") if isinstance(payload_data, dict) else None
+        payload_source_name_normalized = (
+            payload_data.get("source_name_normalized") if isinstance(payload_data, dict) else None
+        )
+        payload_root_business_id = payload_data.get("root_business_id") if isinstance(payload_data, dict) else None
         payload_force = payload_data.get("force") if isinstance(payload_data, dict) else None
         payload_strategy = payload_data.get("strategy") if isinstance(payload_data, dict) else None
         payload_force_mode = payload_data.get("force_mode") if isinstance(payload_data, dict) else None
@@ -120,6 +129,23 @@ class AnalysisJobService:
             payload=payload_data,
             name=str(payload_name).strip() if isinstance(payload_name, str) else None,
             name_normalized=str(name_normalized or "").strip() or None,
+            canonical_name=(
+                str(payload_canonical_name).strip() if isinstance(payload_canonical_name, str) else None
+            ),
+            canonical_name_normalized=(
+                str(payload_canonical_name_normalized).strip()
+                if isinstance(payload_canonical_name_normalized, str)
+                else None
+            ),
+            source_name=str(payload_source_name).strip() if isinstance(payload_source_name, str) else None,
+            source_name_normalized=(
+                str(payload_source_name_normalized).strip()
+                if isinstance(payload_source_name_normalized, str)
+                else None
+            ),
+            root_business_id=(
+                str(payload_root_business_id).strip() if isinstance(payload_root_business_id, str) else None
+            ),
             force=bool(payload_force) if isinstance(payload_force, bool) else None,
             strategy=str(payload_strategy).strip() if isinstance(payload_strategy, str) else None,
             force_mode=str(payload_force_mode).strip() if isinstance(payload_force_mode, str) else None,
@@ -167,6 +193,16 @@ class AnalysisJobService:
         }
         if isinstance(payload_name, str):
             payload["name"] = payload_name
+        if isinstance(payload_canonical_name, str):
+            payload["canonical_name"] = payload_canonical_name
+        if isinstance(payload_canonical_name_normalized, str):
+            payload["canonical_name_normalized"] = payload_canonical_name_normalized
+        if isinstance(payload_source_name, str):
+            payload["source_name"] = payload_source_name
+        if isinstance(payload_source_name_normalized, str):
+            payload["source_name_normalized"] = payload_source_name_normalized
+        if isinstance(payload_root_business_id, str):
+            payload["root_business_id"] = payload_root_business_id
         if isinstance(payload_force, bool):
             payload["force"] = payload_force
         if isinstance(payload_strategy, str):
@@ -202,6 +238,8 @@ class AnalysisJobService:
         page: int = 1,
         page_size: int = 20,
         status_filter: str | None = None,
+        queue_names: list[str] | tuple[str, ...] | None = None,
+        job_type_filter: str | None = None,
     ) -> dict[str, Any]:
         page_value, page_size_value = coerce_pagination(page=page, page_size=page_size, max_page_size=100)
 
@@ -216,6 +254,44 @@ class AnalysisJobService:
             except ValueError as exc:
                 allowed_values = ", ".join(status.value for status in AnalysisJobStatus)
                 raise ValueError(f"Invalid status filter '{status_filter}'. Allowed: {allowed_values}.") from exc
+
+        if queue_names is not None:
+            if not isinstance(queue_names, (list, tuple)):
+                raise ValueError("queue_names must be a list of queue names.")
+            allowed_queues = {"scrape", "scrape_google_maps", "scrape_tripadvisor", "analysis", "report"}
+            normalized_queues: list[str] = []
+            for raw in queue_names:
+                normalized_queue = str(raw or "").strip().lower()
+                if not normalized_queue:
+                    continue
+                if normalized_queue not in allowed_queues:
+                    allowed_values = ", ".join(sorted(allowed_queues))
+                    raise ValueError(
+                        f"Invalid queue name '{raw}'. Allowed: {allowed_values}."
+                    )
+                if normalized_queue not in normalized_queues:
+                    normalized_queues.append(normalized_queue)
+            if not normalized_queues:
+                raise ValueError("queue_names cannot be empty.")
+            if len(normalized_queues) == 1:
+                query["queue_name"] = normalized_queues[0]
+            else:
+                query["queue_name"] = {"$in": normalized_queues}
+
+        normalized_job_type = str(job_type_filter or "").strip().lower()
+        if normalized_job_type:
+            allowed_job_types = {
+                "business_analyze",
+                "business_reanalyze",
+                "analysis_generate",
+                "report_generate",
+            }
+            if normalized_job_type not in allowed_job_types:
+                allowed_values = ", ".join(sorted(allowed_job_types))
+                raise ValueError(
+                    f"Invalid job_type filter '{job_type_filter}'. Allowed: {allowed_values}."
+                )
+            query["job_type"] = normalized_job_type
 
         total = await jobs.count_documents(query)
         skip = (page_value - 1) * page_size_value
@@ -235,6 +311,10 @@ class AnalysisJobService:
         )
         if normalized_status:
             payload["status"] = normalized_status
+        if queue_names is not None:
+            payload["queue_names"] = list(query.get("queue_name", {}).get("$in", [])) if isinstance(query.get("queue_name"), dict) else [query.get("queue_name")]
+        if normalized_job_type:
+            payload["job_type"] = normalized_job_type
         return self._sanitize_response_payload(payload)
 
     async def delete_job(
@@ -554,6 +634,223 @@ class AnalysisJobService:
             },
         )
 
+    async def mark_needs_human(
+        self,
+        *,
+        job_id: Any,
+        reason: str,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        database = get_database()
+        jobs = database[self._JOBS_COLLECTION]
+        now, event, _ = build_job_event_and_progress(
+            stage="needs_human",
+            message="Job requires human intervention.",
+            status=AnalysisJobStatus.NEEDS_HUMAN,
+            data={
+                "reason": str(reason or "").strip(),
+                **(data or {}),
+            },
+        )
+        needs_human_progress = build_job_progress(
+            stage="needs_human",
+            message=str(reason or "Human intervention required."),
+            status=AnalysisJobStatus.NEEDS_HUMAN,
+            updated_at=now,
+        )
+        await jobs.update_one(
+            {"_id": job_id},
+            {
+                "$set": {
+                    "status": AnalysisJobStatus.NEEDS_HUMAN.value,
+                    "error": str(reason),
+                    "finished_at": now,
+                    "updated_at": now,
+                    "progress": needs_human_progress,
+                },
+                "$push": {"events": event},
+            },
+        )
+
+    async def relaunch_job(
+        self,
+        *,
+        job_id: str,
+        reason: str | None = None,
+        force: bool = False,
+        restart_from_zero: bool = False,
+    ) -> dict[str, Any]:
+        parsed_id = self._parse_object_id(job_id, field_name="job_id")
+        database = get_database()
+        jobs = database[self._JOBS_COLLECTION]
+
+        existing = await jobs.find_one({"_id": parsed_id})
+        if existing is None:
+            raise LookupError(f"Job '{job_id}' not found.")
+
+        status_before = self._normalize_status_value(existing.get("status"))
+        payload_before = existing.get("payload")
+        payload_for_relaunch = self._build_relaunch_payload(
+            payload_before if isinstance(payload_before, dict) else {},
+            queue_name=existing.get("queue_name"),
+            job_type=existing.get("job_type"),
+            restart_from_zero=bool(restart_from_zero),
+        )
+        legacy_fields = self._extract_legacy_scrape_fields(payload_for_relaunch)
+        if self._is_active_status(status_before) and not bool(force):
+            raise ValueError("Active jobs cannot be relaunched.")
+
+        if self._is_active_status(status_before) and bool(force):
+            now, event, progress = build_job_event_and_progress(
+                stage="queued",
+                message=str(reason or "Job force relaunched while active; queued as a new job."),
+                status=AnalysisJobStatus.QUEUED,
+                data={
+                    "relaunch": True,
+                    "force": True,
+                    "restart_from_zero": bool(restart_from_zero),
+                    "status_before": status_before,
+                    "origin_job_id": str(job_id),
+                },
+            )
+            cloned_doc = dict(existing)
+            cloned_doc.pop("_id", None)
+            cloned_doc.update(
+                {
+                    "payload": payload_for_relaunch,
+                    "status": AnalysisJobStatus.QUEUED.value,
+                    "error": None,
+                    "result": None,
+                    "finished_at": None,
+                    "started_at": None,
+                    "updated_at": now,
+                    "created_at": now,
+                    "attempts": 0,
+                    "progress": progress,
+                    "events": [event],
+                    "cancel_requested": False,
+                    "cancel_requested_at": None,
+                    "cancel_reason": None,
+                }
+            )
+            cloned_doc.update(legacy_fields)
+            insert_result = await jobs.insert_one(cloned_doc)
+            updated_doc = await jobs.find_one({"_id": insert_result.inserted_id})
+            if updated_doc is None:
+                raise LookupError(f"Job '{job_id}' was force relaunched but could not be loaded.")
+            serialized = self._serialize_analysis_job_doc(updated_doc)
+            serialized["force_relaunch"] = True
+            serialized["origin_job_id"] = str(job_id)
+            serialized["restart_from_zero"] = bool(restart_from_zero)
+            return self._sanitize_response_payload(serialized)
+
+        now, event, progress = build_job_event_and_progress(
+            stage="queued",
+            message=str(reason or "Job requeued manually."),
+            status=AnalysisJobStatus.QUEUED,
+            data={
+                "relaunch": True,
+                "status_before": status_before,
+                "force": bool(force),
+                "restart_from_zero": bool(restart_from_zero),
+            },
+        )
+        updated_doc = await jobs.find_one_and_update(
+            {"_id": parsed_id},
+            {
+                "$set": {
+                    "payload": payload_for_relaunch,
+                    "status": AnalysisJobStatus.QUEUED.value,
+                    "error": None,
+                    "result": None,
+                    "finished_at": None,
+                    "started_at": None,
+                    "updated_at": now,
+                    "progress": progress,
+                    "cancel_requested": False,
+                    "cancel_requested_at": None,
+                    "cancel_reason": None,
+                    **legacy_fields,
+                },
+                "$push": {"events": event},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if updated_doc is None:
+            raise LookupError(f"Job '{job_id}' not found.")
+        return self._sanitize_response_payload(self._serialize_analysis_job_doc(updated_doc))
+
+    def _build_relaunch_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        queue_name: Any,
+        job_type: Any,
+        restart_from_zero: bool,
+    ) -> dict[str, Any]:
+        rebuilt = dict(payload)
+        if not restart_from_zero:
+            return rebuilt
+
+        normalized_job_type = str(job_type or "").strip().lower()
+        normalized_queue = str(queue_name or "").strip().lower()
+        is_scrape_job = (
+            normalized_job_type == "business_analyze"
+            and normalized_queue in {"scrape", "scrape_google_maps", "scrape_tripadvisor"}
+        )
+        if not is_scrape_job:
+            return rebuilt
+
+        rebuilt["force"] = True
+        rebuilt["force_mode"] = "strict_rescrape"
+        return rebuilt
+
+    async def relaunch_jobs_waiting_human(
+        self,
+        *,
+        queue_name: JobQueueName = "scrape_tripadvisor",
+        limit: int = 100,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        database = get_database()
+        jobs = database[self._JOBS_COLLECTION]
+        normalized_queue = str(queue_name or "").strip().lower() or "scrape_tripadvisor"
+        safe_limit = max(1, min(int(limit), 500))
+        docs = (
+            await jobs.find(
+                {
+                    "queue_name": normalized_queue,
+                    "status": AnalysisJobStatus.NEEDS_HUMAN.value,
+                }
+            )
+            .sort([("updated_at", 1), ("_id", 1)])
+            .limit(safe_limit)
+            .to_list(length=safe_limit)
+        )
+
+        relaunched: list[str] = []
+        errors: list[dict[str, str]] = []
+        for doc in docs:
+            current_job_id = str(doc.get("_id"))
+            try:
+                await self.relaunch_job(
+                    job_id=current_job_id,
+                    reason=reason or "Relaunched after TripAdvisor manual intervention.",
+                )
+                relaunched.append(current_job_id)
+            except Exception as exc:  # noqa: BLE001
+                errors.append({"job_id": current_job_id, "error": str(exc)})
+
+        return self._sanitize_response_payload(
+            {
+                "queue_name": normalized_queue,
+                "requested_limit": safe_limit,
+                "matched_jobs": len(docs),
+                "relaunched_jobs": relaunched,
+                "errors": errors,
+            }
+        )
+
     def _parse_object_id(self, value: str, *, field_name: str) -> ObjectId:
         try:
             return ObjectId(str(value))
@@ -586,6 +883,15 @@ class AnalysisJobService:
                 task = AnalyzeBusinessTaskPayload.model_validate(
                     {
                         "name": str(payload.get("name", "")).strip(),
+                        "canonical_name": str(payload.get("canonical_name") or "").strip() or None,
+                        "canonical_name_normalized": (
+                            str(payload.get("canonical_name_normalized") or "").strip() or None
+                        ),
+                        "source_name": str(payload.get("source_name") or "").strip() or None,
+                        "source_name_normalized": (
+                            str(payload.get("source_name_normalized") or "").strip() or None
+                        ),
+                        "root_business_id": str(payload.get("root_business_id") or "").strip() or None,
                         "force": bool(payload.get("force", False)),
                         "strategy": str(payload.get("strategy") or "").strip() or None,
                         "force_mode": str(payload.get("force_mode") or "").strip() or None,
@@ -632,6 +938,11 @@ class AnalysisJobService:
     def _extract_legacy_scrape_fields(self, payload_data: dict[str, Any]) -> dict[str, Any]:
         fields: dict[str, Any] = {}
         payload_name = payload_data.get("name")
+        payload_canonical_name = payload_data.get("canonical_name")
+        payload_canonical_name_normalized = payload_data.get("canonical_name_normalized")
+        payload_source_name = payload_data.get("source_name")
+        payload_source_name_normalized = payload_data.get("source_name_normalized")
+        payload_root_business_id = payload_data.get("root_business_id")
         payload_force = payload_data.get("force")
         payload_strategy = payload_data.get("strategy")
         payload_force_mode = payload_data.get("force_mode")
@@ -643,6 +954,16 @@ class AnalysisJobService:
 
         if isinstance(payload_name, str):
             fields["name"] = payload_name
+        if isinstance(payload_canonical_name, str):
+            fields["canonical_name"] = payload_canonical_name
+        if isinstance(payload_canonical_name_normalized, str):
+            fields["canonical_name_normalized"] = payload_canonical_name_normalized
+        if isinstance(payload_source_name, str):
+            fields["source_name"] = payload_source_name
+        if isinstance(payload_source_name_normalized, str):
+            fields["source_name_normalized"] = payload_source_name_normalized
+        if isinstance(payload_root_business_id, str):
+            fields["root_business_id"] = payload_root_business_id
         if isinstance(payload_force, bool):
             fields["force"] = payload_force
         if isinstance(payload_strategy, str):

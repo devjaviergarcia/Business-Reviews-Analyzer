@@ -29,6 +29,15 @@ class WorkerJobBroker(Protocol):
     async def mark_failed(self, *, job_id: Any, error: str) -> None:
         """Mark a job as failed with an error message."""
 
+    async def mark_needs_human(
+        self,
+        *,
+        job_id: Any,
+        reason: str,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        """Mark a job as waiting for human intervention."""
+
     async def handoff_job(
         self,
         *,

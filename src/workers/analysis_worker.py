@@ -3,13 +3,18 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from typing import Any
 
 from src.config import settings
 from src.dependencies import create_business_service, create_worker_job_broker
 from src.services.business_service import BusinessService
 from src.workers.base_queue_worker import QueuedJobWorkerBase
 from src.workers.broker import WorkerJobBroker
-from src.workers.contracts import AnalysisJobStatus, parse_analysis_generate_payload
+from src.workers.contracts import (
+    AnalysisJobStatus,
+    ReportGenerateTaskPayload,
+    parse_analysis_generate_payload,
+)
 
 LOGGER = logging.getLogger("analysis_worker")
 logging.basicConfig(
@@ -124,10 +129,56 @@ class AnalysisWorker(QueuedJobWorkerBase):
                     "analysis_meta": (result.get("analysis") or {}).get("meta"),
                 },
             )
+
+            report_handoff: dict[str, Any] | None = None
+            analysis_payload = result.get("analysis") if isinstance(result.get("analysis"), dict) else {}
+            analysis_id = str(
+                (analysis_payload.get("id") or analysis_payload.get("_id") or "")
+            ).strip()
+            if analysis_id and bool(settings.analysis_auto_enqueue_report_job):
+                try:
+                    report_payload = ReportGenerateTaskPayload(
+                        business_id=task_payload.business_id,
+                        analysis_id=analysis_id,
+                        output_format="pdf",
+                        locale="es-ES",
+                        source_job_id=str(job_id),
+                    )
+                    report_handoff = await self._service.job_service.enqueue_report_generate_job(
+                        task_payload=report_payload
+                    )
+                    await self._job_broker.append_event(
+                        job_id=job_id,
+                        stage="report_handoff_queued",
+                        message="Report job enqueued after analysis completion.",
+                        status=AnalysisJobStatus.RUNNING,
+                        data={
+                            "analysis_id": analysis_id,
+                            "report_job_id": report_handoff.get("job_id"),
+                            "report_queue_name": report_handoff.get("queue_name"),
+                            "report_job_type": report_handoff.get("job_type"),
+                        },
+                    )
+                except Exception as report_exc:  # noqa: BLE001
+                    await self._job_broker.append_event(
+                        job_id=job_id,
+                        stage="report_handoff_failed",
+                        message="Could not enqueue report job after analysis.",
+                        status=AnalysisJobStatus.RUNNING,
+                        data={"analysis_id": analysis_id, "error": str(report_exc)},
+                    )
+
             result["pipeline"] = {
                 "source_job_id": task_payload.source_job_id,
                 "worker": "analysis",
             }
+            if report_handoff:
+                result["report_handoff"] = {
+                    "report_job_id": report_handoff.get("job_id"),
+                    "queue_name": report_handoff.get("queue_name"),
+                    "job_type": report_handoff.get("job_type"),
+                    "status": report_handoff.get("status"),
+                }
             await self._job_broker.mark_done(job_id=job_id, result=result)
             LOGGER.info("Analysis job done=%s business_id=%s", job_id, task_payload.business_id)
         except RuntimeError as exc:

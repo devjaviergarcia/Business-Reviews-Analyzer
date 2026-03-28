@@ -1,7 +1,9 @@
 ﻿import argparse
 import asyncio
+import json
 import random
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from time import monotonic
 from urllib.parse import urlparse
@@ -118,9 +120,31 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--tripadvisor-pages-percent",
+        type=float,
+        default=None,
+        help=(
+            "Optional reviews percentage cap based on detected total pages "
+            "(0 < value <= 100)."
+        ),
+    )
+    parser.add_argument(
         "--skip-tripadvisor-reviews",
         action="store_true",
         help="Skip Tripadvisor reviews extraction after reaching listing.",
+    )
+    parser.add_argument(
+        "--exit-after-tripadvisor-flow",
+        action="store_true",
+        help="Exit session automatically once Tripadvisor flow finishes (success or failure).",
+    )
+    parser.add_argument(
+        "--tripadvisor-output-json",
+        default="",
+        help=(
+            "Optional path to write extracted Tripadvisor listing/reviews as JSON. "
+            "Useful for live commit flows."
+        ),
     )
     return parser.parse_args()
 
@@ -358,12 +382,15 @@ async def _run_tripadvisor_search_flow(
     source_url: str,
     *,
     reviews_pages: int,
+    reviews_pages_percent: float | None,
     skip_reviews: bool,
     start_delay_seconds: float,
-) -> bool:
+) -> dict[str, object]:
     flow_started_at = monotonic()
     current_stage = "init"
     stage_durations: dict[str, float] = {}
+    listing_payload: dict[str, object] = {}
+    reviews_payload: list[dict[str, object]] = []
 
     def _log_stage_done(stage_key: str, label: str, started_at: float) -> None:
         duration_s = max(0.0, monotonic() - started_at)
@@ -415,6 +442,7 @@ async def _run_tripadvisor_search_flow(
         current_stage = "extract_listing"
         listing_started_at = monotonic()
         listing = await tripadvisor_scraper.extract_listing()
+        listing_payload = dict(listing)
         _log_stage_done("extract_listing", "extraer_listing", listing_started_at)
         print(
             "Tripadvisor flow: listing detectado "
@@ -510,13 +538,17 @@ async def _run_tripadvisor_search_flow(
                 max_pages = None
                 max_rounds = 1000
                 pages_label = "all"
+            if reviews_pages_percent is not None:
+                pages_label = f"{pages_label} ({float(reviews_pages_percent):.1f}% max)"
 
             print(f"Tripadvisor flow: opening reviews (pages={pages_label})...")
             reviews = await tripadvisor_scraper.extract_reviews(
                 max_pages=max_pages,
                 max_rounds=max_rounds,
+                max_pages_percent=reviews_pages_percent,
                 progress_callback=_progress_logger,
             )
+            reviews_payload = [dict(item) for item in reviews if isinstance(item, dict)]
             _log_stage_done("extract_reviews", "extraer_reviews", reviews_started_at)
             _print_reviews(reviews)
         else:
@@ -529,7 +561,13 @@ async def _run_tripadvisor_search_flow(
                 print(f"[tripadvisor-timing] {key}={stage_durations[key]:.2f}s")
         print(f"[tripadvisor-timing] total={total_flow_s:.2f}s")
         print("Tripadvisor flow completed.")
-        return True
+        return {
+            "success": True,
+            "listing": listing_payload,
+            "reviews": reviews_payload,
+            "stage_durations": stage_durations,
+            "error": None,
+        }
     except Exception as exc:
         total_flow_s = max(0.0, monotonic() - flow_started_at)
         print(
@@ -539,7 +577,46 @@ async def _run_tripadvisor_search_flow(
         if stage_durations:
             for key, value in stage_durations.items():
                 print(f"[tripadvisor-timing] parcial {key}={value:.2f}s")
-        return False
+        return {
+            "success": False,
+            "listing": listing_payload,
+            "reviews": reviews_payload,
+            "stage_durations": stage_durations,
+            "error": str(exc),
+            "failed_stage": current_stage,
+        }
+
+
+def _write_tripadvisor_capture_json(
+    *,
+    output_path: str,
+    query: str,
+    success: bool,
+    listing: dict[str, object],
+    reviews: list[dict[str, object]],
+    stage_durations: dict[str, float] | None = None,
+    error: str | None = None,
+) -> None:
+    destination = Path(output_path).expanduser()
+    if not destination.is_absolute():
+        destination = (PROJECT_ROOT / destination).resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = {
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "query": str(query or "").strip(),
+        "success": bool(success),
+        "listing": listing if isinstance(listing, dict) else {},
+        "reviews": reviews if isinstance(reviews, list) else [],
+        "review_count": len(reviews) if isinstance(reviews, list) else 0,
+        "stage_durations": stage_durations if isinstance(stage_durations, dict) else {},
+        "error": str(error or "").strip() or None,
+    }
+    destination.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    print(f"Tripadvisor flow: capture JSON saved at {destination}")
 
 
 def _print_reviews(reviews: list[dict[str, object]]) -> None:
@@ -605,11 +682,16 @@ async def main() -> None:
     browser: Browser | None = None
     context: BrowserContext | None = None
     tripadvisor_flow_started = False
+    tripadvisor_flow_finished = False
     tripadvisor_flow_completed = False
+    live_exit_reason: str | None = None
     manual_trigger_requested = False
     manual_input_task: asyncio.Task[str] | None = None
     auto_start_due_at: float | None = None
     auto_start_delay_seconds = 0.0
+    tripadvisor_flow_capture: dict[str, object] | None = None
+    capture_json_written = False
+    output_capture_path = str(args.tripadvisor_output_json or "").strip()
 
     try:
         playwright = await async_playwright().start()
@@ -680,6 +762,10 @@ async def main() -> None:
         if browser is not None:
             last_status_log = monotonic()
             while browser.is_connected():
+                runtime_pages = [item for item in context.pages if not item.is_closed()]
+                if not runtime_pages:
+                    live_exit_reason = "window-close"
+                    break
                 page = _pick_runtime_page(context=context, fallback_page=page)
 
                 if tripadvisor_enabled and manual_trigger_mode and not tripadvisor_flow_started:
@@ -691,6 +777,7 @@ async def main() -> None:
                                 manual_text = ""
                             manual_input_task = asyncio.create_task(asyncio.to_thread(input, ""))
                             if manual_text == "q":
+                                live_exit_reason = "manual-quit"
                                 print("Manual quit requested from terminal input.")
                                 break
                             manual_trigger_requested = True
@@ -698,6 +785,7 @@ async def main() -> None:
                     else:
                         start_requested, quit_requested = _poll_manual_trigger_keys()
                         if quit_requested:
+                            live_exit_reason = "manual-quit"
                             print("Manual quit requested from terminal key 'q'.")
                             break
                         if start_requested:
@@ -715,14 +803,17 @@ async def main() -> None:
                     if query:
                         tripadvisor_flow_started = True
                         print("Tripadvisor detected after manual trigger. Starting flow now...")
-                        tripadvisor_flow_completed = await _run_tripadvisor_search_flow(
+                        tripadvisor_flow_capture = await _run_tripadvisor_search_flow(
                             page,
                             query,
                             page.url,
                             reviews_pages=args.tripadvisor_reviews_pages,
+                            reviews_pages_percent=args.tripadvisor_pages_percent,
                             skip_reviews=args.skip_tripadvisor_reviews,
                             start_delay_seconds=args.tripadvisor_start_delay_seconds,
                         )
+                        tripadvisor_flow_completed = bool(tripadvisor_flow_capture.get("success"))
+                        tripadvisor_flow_finished = True
 
                 # Auto mode: start on timer, independent of active URL.
                 if (
@@ -736,14 +827,57 @@ async def main() -> None:
                     if query:
                         tripadvisor_flow_started = True
                         print("Tripadvisor auto timer reached. Starting flow now...")
-                        tripadvisor_flow_completed = await _run_tripadvisor_search_flow(
+                        tripadvisor_flow_capture = await _run_tripadvisor_search_flow(
                             page,
                             query,
                             page.url if str(page.url or "").strip() else target_url,
                             reviews_pages=args.tripadvisor_reviews_pages,
+                            reviews_pages_percent=args.tripadvisor_pages_percent,
                             skip_reviews=args.skip_tripadvisor_reviews,
                             start_delay_seconds=0.0,
                         )
+                        tripadvisor_flow_completed = bool(tripadvisor_flow_capture.get("success"))
+                        tripadvisor_flow_finished = True
+
+                if (
+                    output_capture_path
+                    and tripadvisor_flow_finished
+                    and not capture_json_written
+                    and isinstance(tripadvisor_flow_capture, dict)
+                ):
+                    _write_tripadvisor_capture_json(
+                        output_path=output_capture_path,
+                        query=str(args.tripadvisor_query or "").strip(),
+                        success=bool(tripadvisor_flow_capture.get("success")),
+                        listing=(
+                            tripadvisor_flow_capture.get("listing")
+                            if isinstance(tripadvisor_flow_capture.get("listing"), dict)
+                            else {}
+                        ),
+                        reviews=(
+                            tripadvisor_flow_capture.get("reviews")
+                            if isinstance(tripadvisor_flow_capture.get("reviews"), list)
+                            else []
+                        ),
+                        stage_durations=(
+                            tripadvisor_flow_capture.get("stage_durations")
+                            if isinstance(tripadvisor_flow_capture.get("stage_durations"), dict)
+                            else {}
+                        ),
+                        error=(
+                            str(tripadvisor_flow_capture.get("error") or "").strip() or None
+                        ),
+                    )
+                    capture_json_written = True
+
+                if args.exit_after_tripadvisor_flow and tripadvisor_flow_finished:
+                    if tripadvisor_flow_completed:
+                        live_exit_reason = "tripadvisor-flow-complete"
+                        print("Tripadvisor flow completed. Closing live session automatically.")
+                    else:
+                        live_exit_reason = "tripadvisor-flow-failed"
+                        print("Tripadvisor flow failed. Closing live session automatically.")
+                    break
                 now = monotonic()
                 if now - last_status_log >= 10:
                     if tripadvisor_enabled and not tripadvisor_flow_started and manual_trigger_mode:
@@ -763,10 +897,16 @@ async def main() -> None:
                                 "Waiting auto timer to start Tripadvisor flow... "
                                 f"(remaining={remaining:.1f}s current={page.url})"
                             )
-                    elif tripadvisor_flow_started and not tripadvisor_flow_completed:
+                    elif tripadvisor_flow_started and not tripadvisor_flow_finished:
                         print("Tripadvisor flow started. Waiting for completion...")
+                    elif tripadvisor_flow_finished and not tripadvisor_flow_completed:
+                        print("Tripadvisor flow ended with failure. Close browser to finish session.")
+                    elif tripadvisor_flow_finished and tripadvisor_flow_completed:
+                        print("Tripadvisor flow completed. Close browser to finish session.")
                     last_status_log = now
                 await asyncio.sleep(0.75)
+            if live_exit_reason is None and not browser.is_connected():
+                live_exit_reason = "window-close"
         else:
             # Fallback: keep process alive until interrupted.
             while True:
@@ -785,11 +925,14 @@ async def main() -> None:
             pass
         if playwright is not None:
             await playwright.stop()
+        if live_exit_reason:
+            print(f"[live-session-exit] reason={live_exit_reason}")
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
+        print("[live-session-exit] reason=keyboard-interrupt")
         print("Session interrupted by user.")
 

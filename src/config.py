@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     scraper_html_scroll_min_interval_s: float = 1.0
     scraper_html_scroll_max_interval_s: float = 2.0
     scraper_tripadvisor_stage_timeout_seconds: int = 120
+    scraper_tripadvisor_reviews_time_limit_seconds: float | None = None
     scraper_tripadvisor_start_delay_seconds: float = 15.0
     scraper_tripadvisor_start_delay_min_seconds: float | None = None
     scraper_tripadvisor_start_delay_max_seconds: float | None = None
@@ -52,6 +53,7 @@ class Settings(BaseSettings):
     )
     analysis_reanalyze_batch_size: int = 30
     analysis_reanalyze_pool_size: int = 350
+    analysis_auto_enqueue_report_job: bool = True
     worker_poll_seconds: int = 5
     worker_idle_log_seconds: int = 60
     worker_job_heartbeat_seconds: int = 15
@@ -59,6 +61,13 @@ class Settings(BaseSettings):
     worker_broker_backend: str = "mongo"
     worker_scrape_queue: str = "scrape"
     worker_scrape_source: str = "all"
+    tripadvisor_local_worker_bridge_enabled: bool = False
+    tripadvisor_local_worker_bridge_url: str = "http://127.0.0.1:8765"
+    tripadvisor_local_worker_bridge_timeout_seconds: float = 5.0
+    tripadvisor_local_worker_autostart_on_enqueue: bool = False
+    tripadvisor_worker_singleton_enabled: bool = True
+    tripadvisor_worker_singleton_heartbeat_seconds: int = 10
+    tripadvisor_worker_singleton_stale_seconds: int = 45
 
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
 

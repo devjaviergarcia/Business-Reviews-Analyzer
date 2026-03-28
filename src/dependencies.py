@@ -6,6 +6,8 @@ from src.pipeline.preprocessor import ReviewPreprocessor
 from src.services.analysis_job_service import AnalysisJobService
 from src.services.business_service import BusinessService
 from src.services.business_query_service import BusinessQueryService
+from src.services.tripadvisor_local_worker_control_service import TripadvisorLocalWorkerControlService
+from src.services.tripadvisor_session_service import TripadvisorSessionService
 from src.workers.broker import WorkerJobBroker
 from src.workers.mongo_broker import MongoJobBroker
 from src.workers.rabbitmq_broker import RabbitMQJobBroker
@@ -31,6 +33,14 @@ def create_analysis_job_service() -> AnalysisJobService:
     return AnalysisJobService()
 
 
+def create_tripadvisor_session_service() -> TripadvisorSessionService:
+    return TripadvisorSessionService()
+
+
+def create_tripadvisor_local_worker_control_service() -> TripadvisorLocalWorkerControlService:
+    return TripadvisorLocalWorkerControlService()
+
+
 def create_worker_job_broker() -> WorkerJobBroker:
     if settings.worker_broker_backend == "rabbitmq":
         raise RuntimeError(
@@ -54,4 +64,5 @@ def create_business_service() -> BusinessService:
         llm_analyzer=create_review_llm_analyzer(),
         job_service=create_analysis_job_service(),
         query_service=create_business_query_service(),
+        tripadvisor_local_worker_control_service=create_tripadvisor_local_worker_control_service(),
     )

@@ -5,6 +5,8 @@ import { createInput } from "../atoms/input";
 
 export type AnalysisNewFormValues = {
   name: string;
+  googleMapsName: string;
+  tripadvisorName: string;
   strategy: string;
   force: boolean;
   forceMode: string;
@@ -24,6 +26,8 @@ export type AnalysisNewFormHandle = {
   statusLabel: HTMLElement;
   fields: {
     nameInput: HTMLInputElement;
+    googleMapsNameInput: HTMLInputElement;
+    tripadvisorNameInput: HTMLInputElement;
     strategySelect: HTMLSelectElement;
     forceInput: HTMLInputElement;
     forceModeSelect: HTMLSelectElement;
@@ -43,6 +47,8 @@ export function createAnalysisNewForm(options: AnalysisNewFormOptions): Analysis
   root.append(form);
 
   const nameInput = createInput({ placeholder: "Nombre del negocio" });
+  const googleMapsNameInput = createInput({ placeholder: "Nombre en Google Maps (opcional)" });
+  const tripadvisorNameInput = createInput({ placeholder: "Nombre en Tripadvisor (opcional)" });
   const strategySelect = createElement("select", "atom-input") as HTMLSelectElement;
   strategySelect.innerHTML = `<option value="scroll_copy" selected>scroll_copy</option><option value="interactive">interactive</option>`;
   const forceInput = createInput({ type: "checkbox" });
@@ -61,6 +67,8 @@ export function createAnalysisNewForm(options: AnalysisNewFormOptions): Analysis
   });
 
   appendLabeled(form, "Nombre", nameInput);
+  appendLabeled(form, "Nombre Google Maps (opcional)", googleMapsNameInput);
+  appendLabeled(form, "Nombre Tripadvisor (opcional)", tripadvisorNameInput);
   appendLabeled(form, "Strategy", strategySelect);
   appendLabeled(form, "Force", forceInput);
   appendLabeled(form, "Force mode", forceModeSelect);
@@ -80,6 +88,8 @@ export function createAnalysisNewForm(options: AnalysisNewFormOptions): Analysis
     event.preventDefault();
     options.onSubmit({
       name: nameInput.value.trim(),
+      googleMapsName: googleMapsNameInput.value.trim(),
+      tripadvisorName: tripadvisorNameInput.value.trim(),
       strategy: strategySelect.value,
       force: forceInput.checked,
       forceMode: forceModeSelect.value,
@@ -97,6 +107,8 @@ export function createAnalysisNewForm(options: AnalysisNewFormOptions): Analysis
     statusLabel,
     fields: {
       nameInput,
+      googleMapsNameInput,
+      tripadvisorNameInput,
       strategySelect,
       forceInput,
       forceModeSelect,

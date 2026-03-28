@@ -9,6 +9,7 @@ _STAGE_TO_STATUS: dict[str, AnalysisJobStatus] = {
     "queued": AnalysisJobStatus.QUEUED,
     "worker_started": AnalysisJobStatus.RUNNING,
     "running": AnalysisJobStatus.RUNNING,
+    "needs_human": AnalysisJobStatus.NEEDS_HUMAN,
     "done": AnalysisJobStatus.DONE,
     "failed": AnalysisJobStatus.FAILED,
     "retrying": AnalysisJobStatus.RETRYING,

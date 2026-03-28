@@ -27,6 +27,7 @@ class AnalyzeBusinessUseCase:
         normalize_scraped_review: Callable[[dict[str, Any]], dict[str, Any]],
         upsert_reviews: Callable[..., Awaitable[None]],
         sanitize_response_payload: Callable[[Any], Any],
+        build_advanced_report: Callable[..., Awaitable[dict[str, Any]] | dict[str, Any]] | None,
         businesses_collection_name: str,
         reviews_collection_name: str,
         analyses_collection_name: str,
@@ -42,6 +43,7 @@ class AnalyzeBusinessUseCase:
         self._normalize_scraped_review = normalize_scraped_review
         self._upsert_reviews = upsert_reviews
         self._sanitize_response_payload = sanitize_response_payload
+        self._build_advanced_report = build_advanced_report
         self._businesses_collection_name = businesses_collection_name
         self._reviews_collection_name = reviews_collection_name
         self._analyses_collection_name = analyses_collection_name
@@ -185,6 +187,43 @@ class AnalyzeBusinessUseCase:
         analysis_payload = analysis.model_dump(mode="python")
         analysis_payload["business_id"] = business_id
         analysis_payload["created_at"] = now
+
+        if self._build_advanced_report is not None:
+            await self._emit_progress(
+                progress_callback,
+                "report_build_started",
+                "Building advanced structured report.",
+                {"business_id": business_id},
+            )
+            try:
+                maybe_report = self._build_advanced_report(
+                    business_id=business_id,
+                    business_name=business_name,
+                    listing=listing_payload,
+                    stats=stats,
+                    reviews=processed_reviews,
+                    analysis_payload=analysis_payload,
+                )
+                advanced_report = (
+                    await maybe_report if hasattr(maybe_report, "__await__") else maybe_report
+                )
+                if isinstance(advanced_report, dict):
+                    analysis_payload["advanced_report"] = advanced_report
+                    await self._emit_progress(
+                        progress_callback,
+                        "report_build_completed",
+                        "Advanced structured report built.",
+                        {"sections": list((advanced_report.get("sections") or {}).keys())},
+                    )
+            except Exception as exc:  # noqa: BLE001
+                analysis_payload["advanced_report_error"] = str(exc)
+                await self._emit_progress(
+                    progress_callback,
+                    "report_build_failed",
+                    "Advanced report generation failed; keeping analysis core output.",
+                    {"error": str(exc)},
+                )
+
         inserted_analysis = await analyses.insert_one(analysis_payload)
 
         await businesses.update_one(
