@@ -283,13 +283,25 @@ class AdvancedBusinessReportBuilder:
         )
 
         voice_of_customer = self._build_voice_of_customer(review_metrics=review_metrics)
-        action_plan = self._build_action_plan(problem_clusters=problem_clusters, customer_clusters=customer_clusters)
+        action_plan = await self._build_action_plan(
+            problem_clusters=problem_clusters,
+            customer_clusters=customer_clusters,
+            business_name=business_name,
+            business_context=business_context,
+        )
         quick_wins = self._build_quick_wins(stats=stats, problem_clusters=problem_clusters, action_plan=action_plan)
         invisible_and_opportunities = self._build_invisible_and_opportunities(
             stats=stats,
             review_metrics=review_metrics,
             customer_clusters=customer_clusters,
             problem_clusters=problem_clusters,
+        )
+        full_data_annex = self._build_full_data_annex(
+            stats=stats,
+            review_metrics=review_metrics,
+            customer_clusters=customer_clusters,
+            problem_clusters=problem_clusters,
+            analysis_payload=analysis_payload,
         )
         llm_clustering_insights = await self._build_llm_clustering_insights(
             business_name=business_name,
@@ -306,13 +318,9 @@ class AdvancedBusinessReportBuilder:
             invisible_and_opportunities=invisible_and_opportunities,
             action_plan=action_plan,
             quick_wins=quick_wins,
-        )
-        full_data_annex = self._build_full_data_annex(
             stats=stats,
-            review_metrics=review_metrics,
-            customer_clusters=customer_clusters,
-            problem_clusters=problem_clusters,
-            analysis_payload=analysis_payload,
+            voice_of_customer=voice_of_customer,
+            full_data_annex=full_data_annex,
         )
 
         score_value = self._safe_float(score_and_evolution.get("reputation_score"))
@@ -341,6 +349,10 @@ class AdvancedBusinessReportBuilder:
                     str(item.get("quote", "") or "")
                     for item in (voice_of_customer.get("positive_quotes") or [])[:3]
                 ],
+                "aciertos_estructurados": self._build_structured_strengths(
+                    voice_of_customer=voice_of_customer,
+                    limit=3,
+                ),
             },
             "2_score_reputacion": {
                 "score_display": f"{round(score_value, 1)}/100",
@@ -355,6 +367,11 @@ class AdvancedBusinessReportBuilder:
                 "tipologias_cliente_top3": customer_clusters_top,
                 "preocupaciones_top3": problem_clusters_top,
                 "scatter_clientes": customer_clusters.get("scatter"),
+                "fortalezas_debilidades": self._build_strengths_weaknesses_payload(
+                    voice_of_customer=voice_of_customer,
+                    problem_clusters_top=problem_clusters_top,
+                    action_plan=action_plan,
+                ),
             },
             "4_plan_de_accion": {
                 "lectura_ejecutiva": llm_section_narratives["plan_accion"],
@@ -852,10 +869,15 @@ class AdvancedBusinessReportBuilder:
         for doc in reversed(analysis_docs):
             sentiment_value = str(doc.get("overall_sentiment", "") or "").strip().lower()
             sentiment_score = {"positive": 1.0, "mixed": 0.0, "negative": -1.0}.get(sentiment_value, 0.0)
+            created_at_value = doc.get("created_at")
+            created_at_text = (
+                created_at_value.isoformat()
+                if isinstance(created_at_value, datetime)
+                else str(created_at_value or "")
+            ).strip()
             history.append(
                 {
-                    "analysis_id": str(doc.get("_id")),
-                    "created_at": doc.get("created_at"),
+                    "created_at": created_at_text,
                     "overall_sentiment": sentiment_value or "mixed",
                     "sentiment_score": sentiment_score,
                 }
@@ -980,10 +1002,26 @@ class AdvancedBusinessReportBuilder:
             k = 2
 
         labels, centroids = self._kmeans(features=features, k=k, max_iter=30)
+
+        expectation_values = [float(customer["expectation_gap"]) for customer in customers]
+        satisfaction_values = [float(customer["satisfaction"]) for customer in customers]
+        min_expectation = min(expectation_values) if expectation_values else 0.0
+        max_expectation = max(expectation_values) if expectation_values else 1.0
+        min_satisfaction = min(satisfaction_values) if satisfaction_values else 0.0
+        max_satisfaction = max(satisfaction_values) if satisfaction_values else 1.0
+        expectation_range = max(max_expectation - min_expectation, 0.01)
+        satisfaction_range = max(max_satisfaction - min_satisfaction, 0.01)
+
         for index, customer in enumerate(customers):
             customer["cluster_id"] = int(labels[index])
-            customer["x"] = round(float(customer["expectation_gap"]) * 100.0, 3)
-            customer["y"] = round(float(customer["satisfaction"]) * 100.0, 3)
+            customer["x"] = round(
+                ((float(customer["expectation_gap"]) - min_expectation) / expectation_range) * 100.0,
+                3,
+            )
+            customer["y"] = round(
+                ((float(customer["satisfaction"]) - min_satisfaction) / satisfaction_range) * 100.0,
+                3,
+            )
             customer["size"] = max(1.0, float(customer["review_count"]))
 
         clusters_map: dict[int, dict[str, Any]] = {}
@@ -997,10 +1035,15 @@ class AdvancedBusinessReportBuilder:
 
         clusters = []
         circles = []
+        used_labels: set[str] = set()
         for cluster_id in sorted(clusters_map.keys()):
             customers_in_cluster = clusters_map[cluster_id]["customers"]
             centroid = centroids[cluster_id]
-            label, description = self._label_customer_cluster(centroid)
+            label, description = self._label_customer_cluster(
+                centroid,
+                cluster_id=cluster_id,
+                used_labels=used_labels,
+            )
             center_x = statistics.mean(float(item["x"]) for item in customers_in_cluster)
             center_y = statistics.mean(float(item["y"]) for item in customers_in_cluster)
             max_distance = 0.0
@@ -1056,8 +1099,10 @@ class AdvancedBusinessReportBuilder:
                 "axes": {
                     "x": "expectation_gap",
                     "x_label": "Brecha de expectativa",
+                    "x_note": "Escala relativa al rango real observado en las reseñas analizadas.",
                     "y": "satisfaction",
                     "y_label": "Satisfacción",
+                    "y_note": "Escala relativa al rango real observado en las reseñas analizadas.",
                     "size": "review_count",
                 },
                 "circles": circles,
@@ -1214,80 +1259,472 @@ class AdvancedBusinessReportBuilder:
             "owner_reply_examples": owner_replies[:5],
         }
 
-    def _build_action_plan(
+    def _build_structured_strengths(
+        self,
+        *,
+        voice_of_customer: dict[str, Any],
+        limit: int = 3,
+    ) -> list[dict[str, str]]:
+        positives = (
+            voice_of_customer.get("positive_quotes")
+            if isinstance(voice_of_customer, dict)
+            else []
+        )
+        if not isinstance(positives, list):
+            positives = []
+        strengths: list[dict[str, str]] = []
+        for item in positives[: max(0, int(limit))]:
+            if not isinstance(item, dict):
+                continue
+            quote = str(item.get("quote", "") or "").strip()
+            if not quote:
+                continue
+            concept = self._infer_strength_concept(quote)
+            strengths.append({"concepto": concept, "cita": quote[:240]})
+        return strengths
+
+    def _build_strengths_weaknesses_payload(
+        self,
+        *,
+        voice_of_customer: dict[str, Any],
+        problem_clusters_top: list[dict[str, Any]],
+        action_plan: dict[str, Any],
+    ) -> dict[str, list[dict[str, str]]]:
+        strengths_raw = self._build_structured_strengths(voice_of_customer=voice_of_customer, limit=4)
+        strengths: list[dict[str, str]] = []
+        for item in strengths_raw:
+            if not isinstance(item, dict):
+                continue
+            concepto = str(item.get("concepto", "") or "").strip()
+            cita = str(item.get("cita", "") or "").strip()
+            if not concepto:
+                continue
+            strengths.append(
+                {
+                    "titulo": concepto,
+                    "descripcion": "Hay evidencia directa en reseñas positivas recientes.",
+                    "como_mantener": "Mantén el estándar actual y réplica esta práctica en los momentos de mayor demanda.",
+                    "cita": cita,
+                }
+            )
+
+        weak_points: list[dict[str, str]] = []
+        for item in problem_clusters_top[:4]:
+            if not isinstance(item, dict):
+                continue
+            problem = self._human_label_problem(str(item.get("problema", "") or "experiencia general"))
+            weak_points.append(
+                {
+                    "titulo": problem,
+                    "descripcion": (
+                        f"Aparece en {self._safe_int(item.get('volumen'))} reseñas y con severidad "
+                        f"{round(self._safe_float(item.get('severidad')), 2)}."
+                    ),
+                    "tipo": self._infer_action_type(problem),
+                }
+            )
+
+        if not weak_points and isinstance(action_plan, dict):
+            for item in (action_plan.get("inmediato_0_30_dias") or [])[:3]:
+                if not isinstance(item, dict):
+                    continue
+                action = str(item.get("accion") or item.get("action") or "").strip()
+                if not action:
+                    continue
+                weak_points.append(
+                    {
+                        "titulo": self._human_label_problem(
+                            str(item.get("problema", "") or "experiencia operativa")
+                        ),
+                        "descripcion": action[:180],
+                        "tipo": self._infer_action_type(action),
+                    }
+                )
+
+        return {
+            "fortalezas": strengths[:4],
+            "debilidades": weak_points[:4],
+        }
+
+    def _infer_strength_concept(self, quote: str) -> str:
+        normalized = self._normalize_text(quote)
+        if any(token in normalized for token in ("lasa", "plato", "comida", "sabor", "cocina")):
+            return "Producto destacado que deja recuerdo"
+        if any(token in normalized for token in ("trato", "amable", "atencion", "servicio")):
+            return "Atención cercana y bien valorada"
+        if any(token in normalized for token in ("ambiente", "local", "terraza", "decoracion")):
+            return "Ambiente agradable y con personalidad"
+        if any(token in normalized for token in ("precio", "valor", "calidad precio")):
+            return "Percepción de buena relación calidad-precio"
+        return "Experiencia general positiva y consistente"
+
+    async def _build_action_plan(
         self,
         *,
         problem_clusters: dict[str, Any],
         customer_clusters: dict[str, Any],
+        business_name: str = "",
+        business_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         clusters = problem_clusters.get("clusters") if isinstance(problem_clusters, dict) else []
         clusters = clusters if isinstance(clusters, list) else []
-
         top_problems = clusters[:3]
-        immediate = []
-        medium = []
-        long_term = []
+
+        if self.client is not None and top_problems:
+            llm_actions = await self._build_llm_action_plan(
+                business_name=business_name,
+                business_context=business_context or {},
+                top_problems=top_problems,
+            )
+            if llm_actions:
+                cluster_count = self._safe_int(customer_clusters.get("cluster_count"))
+                return {
+                    "inmediato_0_30_dias": llm_actions.get("inmediato", [])[:5],
+                    "medio_30_90_dias": llm_actions.get("medio", [])[:5],
+                    "largo_90_mas_dias": llm_actions.get("largo", [])[:5],
+                    "notes": [
+                        f"Se detectaron {cluster_count} segmentos de clientes para personalizar acciones.",
+                        "Acciones priorizadas con base en patrones reales de reseñas del negocio.",
+                    ],
+                    "llm_generated": True,
+                }
+
+        return self._build_action_plan_fallback(
+            top_problems=top_problems,
+            customer_clusters=customer_clusters,
+        )
+
+    async def _build_llm_action_plan(
+        self,
+        *,
+        business_name: str,
+        business_context: dict[str, Any],
+        top_problems: list[dict[str, Any]],
+    ) -> dict[str, list[dict[str, Any]]] | None:
+        problems_payload: list[dict[str, Any]] = []
+        for problem in top_problems:
+            problem_label = self._friendly_problem_label(str(problem.get("problem", "") or ""))
+            sample_quotes: list[dict[str, Any]] = []
+            for quote_item in (problem.get("sample_quotes") or [])[:3]:
+                if not isinstance(quote_item, dict):
+                    continue
+                text = str(quote_item.get("quote", "") or "").strip()
+                if not text:
+                    continue
+                sample_quotes.append(
+                    {
+                        "rating": round(self._safe_float(quote_item.get("rating")), 1),
+                        "texto": text[:220],
+                    }
+                )
+            problems_payload.append(
+                {
+                    "problema": problem_label,
+                    "severidad": round(self._safe_float(problem.get("severity")), 2),
+                    "num_menciones": self._safe_int(problem.get("count")),
+                    "valoracion_media_afectados": round(self._safe_float(problem.get("avg_rating")), 2),
+                    "ejemplos_reales": sample_quotes,
+                }
+            )
+
+        tipo_negocio = str((business_context or {}).get("tipo_negocio", "negocio local") or "negocio local").strip()
+        cliente_espera = (business_context or {}).get("cliente_espera")
+        if not isinstance(cliente_espera, list):
+            cliente_espera = []
+        fricciones_habituales = (business_context or {}).get("fricciones_habituales")
+        if not isinstance(fricciones_habituales, list):
+            fricciones_habituales = []
+
+        prompt = (
+            "Eres consultor de operaciones para negocios locales en España. "
+            "Tu cliente es el dueño del negocio y necesita un plan útil, práctico y directo.\n\n"
+            f"Negocio: {business_name or 'negocio local'}\n"
+            f"Tipo de negocio: {tipo_negocio}\n"
+            f"Qué espera su cliente: {', '.join(str(item) for item in cliente_espera) or 'sin datos'}\n"
+            f"Fricciones habituales del sector: {', '.join(str(item) for item in fricciones_habituales) or 'sin datos'}\n\n"
+            "Problemas detectados en reseñas reales:\n"
+            f"{json.dumps(problems_payload, ensure_ascii=False, indent=2)}\n\n"
+            "Genera acciones MUY CONCRETAS y aplicables sin contratar personal nuevo. "
+            "No uses frases genéricas como 'mejorar el servicio'. Di exactamente qué hacer, quién lo hace y en qué plazo.\n"
+            "Escribe en español de España, sin anglicismos, sin jerga técnica, sin markdown.\n\n"
+            "Devuelve SOLO JSON válido con esta estructura exacta:\n"
+            "{\n"
+            '  "inmediato": [\n'
+            "    {\n"
+            '      "problema": "...",\n'
+            '      "accion": "...",\n'
+            '      "por_que": "...",\n'
+            '      "encargado": "...",\n'
+            '      "plazo_dias": 14,\n'
+            '      "indicador": "...",\n'
+            '      "tipo": "proceso|negocio|implementacion|tecnologico",\n'
+            '      "herramienta_si_aplica": ""\n'
+            "    }\n"
+            "  ],\n"
+            '  "medio": [\n'
+            "    {\n"
+            '      "problema": "...",\n'
+            '      "accion": "...",\n'
+            '      "por_que": "...",\n'
+            '      "encargado": "...",\n'
+            '      "plazo_dias": 60,\n'
+            '      "indicador": "...",\n'
+            '      "tipo": "proceso|negocio|implementacion|tecnologico",\n'
+            '      "herramienta_si_aplica": ""\n'
+            "    }\n"
+            "  ],\n"
+            '  "largo": [\n'
+            "    {\n"
+            '      "problema": "...",\n'
+            '      "accion": "...",\n'
+            '      "por_que": "...",\n'
+            '      "encargado": "...",\n'
+            '      "plazo_dias": 120,\n'
+            '      "indicador": "...",\n'
+            '      "tipo": "proceso|negocio|implementacion|tecnologico",\n'
+            '      "herramienta_si_aplica": ""\n'
+            "    }\n"
+            "  ]\n"
+            "}\n"
+        )
+
+        try:
+            raw_text, _model = await asyncio.to_thread(self._llm_generate_text, prompt)
+            extracted = self._extract_json_object(raw_text)
+            parsed = json.loads(extracted)
+        except Exception:
+            return None
+
+        if not isinstance(parsed, dict):
+            return None
+
+        defaults = {"inmediato": 14, "medio": 60, "largo": 120}
+        result: dict[str, list[dict[str, Any]]] = {"inmediato": [], "medio": [], "largo": []}
+
+        for horizon in ("inmediato", "medio", "largo"):
+            raw_actions = parsed.get(horizon)
+            if not isinstance(raw_actions, list):
+                continue
+            for item in raw_actions:
+                if not isinstance(item, dict):
+                    continue
+                problem_text = self._friendly_problem_label(str(item.get("problema", "") or "").strip())
+                action_text = self._sanitize_llm_text(
+                    self._plainify_business_text(str(item.get("accion", "") or "").strip())
+                )
+                reason_text = self._sanitize_llm_text(
+                    self._plainify_business_text(str(item.get("por_que", "") or "").strip())
+                )
+                owner_text = self._sanitize_llm_text(
+                    self._plainify_business_text(str(item.get("encargado", "") or "").strip())
+                )
+                indicator_text = self._sanitize_llm_text(
+                    self._plainify_business_text(str(item.get("indicador", "") or "").strip())
+                )
+                action_type = self._normalize_action_type(str(item.get("tipo", "") or "").strip())
+                if not action_type:
+                    action_type = self._infer_action_type(f"{problem_text} {action_text}")
+                action_tool = self._sanitize_llm_text(
+                    self._plainify_business_text(str(item.get("herramienta_si_aplica", "") or "").strip())
+                )
+                if not action_tool:
+                    action_tool = self._infer_action_tool(f"{problem_text} {action_text}")
+                deadline_days = self._safe_int(item.get("plazo_dias"), defaults[horizon])
+                if deadline_days <= 0:
+                    deadline_days = defaults[horizon]
+                if not action_text:
+                    continue
+                result[horizon].append(
+                    {
+                        "problema": problem_text or "experiencia general",
+                        "accion": action_text,
+                        "action": action_text,
+                        "por_que": reason_text,
+                        "encargado": owner_text,
+                        "owner": owner_text,
+                        "plazo_dias": deadline_days,
+                        "horizon_days": deadline_days,
+                        "indicador": indicator_text,
+                        "kpi": indicator_text,
+                        "objetivo": indicator_text,
+                        "impact": "alto" if horizon != "medio" else "medio",
+                        "tipo": action_type,
+                        "herramienta_si_aplica": action_tool,
+                    }
+                )
+
+        total_actions = sum(len(items) for items in result.values())
+        if total_actions == 0:
+            return None
+        return result
+
+    def _build_action_plan_fallback(
+        self,
+        *,
+        top_problems: list[dict[str, Any]],
+        customer_clusters: dict[str, Any],
+    ) -> dict[str, Any]:
+        immediate: list[dict[str, Any]] = []
+        medium: list[dict[str, Any]] = []
+        long_term: list[dict[str, Any]] = []
+
+        concrete_actions = {
+            "servicio": {
+                "inmediato": (
+                    "Asignar una persona de sala para revisar cada mesa cada 10-12 minutos en horas punta "
+                    "y actuar cuando una mesa lleve más de 10 minutos sin atención."
+                ),
+                "medio": (
+                    "Implantar un protocolo de atención por tiempos (saludo, toma de pedido, seguimiento) "
+                    "y repasarlo con el equipo en una formación breve semanal."
+                ),
+                "largo": (
+                    "Crear una revisión semanal de reseñas de servicio con incidencias repetidas "
+                    "y un registro de mejoras aplicadas."
+                ),
+            },
+            "tiempo de espera": {
+                "inmediato": (
+                    "Controlar el tiempo de salida del primer plato y avisar a sala si supera 18 minutos "
+                    "para informar al cliente antes de que se genere frustración."
+                ),
+                "medio": (
+                    "Separar en cocina los platos de preparación rápida y lenta para mejorar el flujo "
+                    "en horas de mayor demanda."
+                ),
+                "largo": (
+                    "Revisar mensualmente tiempos por franja horaria y ajustar turnos o carta en horas pico."
+                ),
+            },
+            "calidad de la comida": {
+                "inmediato": (
+                    "Validar temperatura y presentación antes de sacar cada plato en los servicios con más afluencia."
+                ),
+                "medio": (
+                    "Revisar recetas y puntos críticos de los platos más señalados en reseñas negativas "
+                    "con una cata interna del equipo."
+                ),
+                "largo": (
+                    "Definir fichas de referencia para los platos clave (presentación, tiempos y estándar mínimo)."
+                ),
+            },
+            "relación calidad-precio": {
+                "inmediato": (
+                    "Revisar tres platos con más quejas de precio y ajustar ración, presentación o comunicación del valor."
+                ),
+                "medio": (
+                    "Crear una propuesta de valor clara en carta para que el cliente entienda qué incluye y por qué cuesta eso."
+                ),
+                "largo": (
+                    "Comparar trimestralmente precios y percepción frente a la competencia local para mantener equilibrio."
+                ),
+            },
+        }
 
         for problem in top_problems:
             label_raw = str(problem.get("problem", self._GENERIC_COMMENT_PROBLEM) or self._GENERIC_COMMENT_PROBLEM)
             label = self._friendly_problem_label(label_raw)
             severity = self._safe_float(problem.get("severity"))
             impact = "alto" if severity >= 0.65 else "medio"
+            owner_short = "Encargado o responsable de turno"
+            owner_medium = "Gerencia y responsable del área"
+            owner_long = "Dirección del negocio"
+
+            key = ""
+            for candidate in concrete_actions.keys():
+                if candidate in label.lower():
+                    key = candidate
+                    break
+
+            if key:
+                immediate_action = concrete_actions[key]["inmediato"]
+                medium_action = concrete_actions[key]["medio"]
+                long_action = concrete_actions[key]["largo"]
+            else:
+                immediate_action = (
+                    f"Identificar los tres fallos más repetidos de '{label}' esta semana y aplicar una corrección "
+                    "simple antes del próximo fin de semana."
+                )
+                medium_action = (
+                    f"Ordenar el proceso interno de '{label}' en pasos claros y explicarlo al equipo en una sesión breve."
+                )
+                long_action = (
+                    f"Revisar cada mes las menciones de '{label}' y ajustar la operativa para evitar repeticiones."
+                )
+
             immediate.append(
                 {
-                    "action": f"Mejorar de inmediato el punto '{label}' en la operativa diaria.",
-                    "accion": f"Mejorar de inmediato el punto '{label}' en la operativa diaria.",
-                    "por_que": (
-                        "Este tema aparece de forma repetida en reseñas recientes y afecta "
-                        "a la satisfacción del cliente."
-                    ),
+                    "problema": label,
+                    "accion": immediate_action,
+                    "action": immediate_action,
+                    "por_que": "Es un foco recurrente en reseñas recientes y está dañando la experiencia.",
                     "impact": impact,
-                    "owner": "Responsable de operación",
-                    "encargado": "Encargado de operaciones del local",
+                    "encargado": owner_short,
+                    "owner": owner_short,
+                    "plazo_dias": 14,
                     "horizon_days": 14,
+                    "indicador": f"Reducir en un 25% las menciones negativas sobre {label}.",
                     "kpi": f"Reducir en un 25% las menciones negativas sobre {label}.",
                     "objetivo": f"Reducir en un 25% las menciones negativas sobre {label}.",
+                    "tipo": self._infer_action_type(f"{label} {immediate_action}"),
+                    "herramienta_si_aplica": self._infer_action_tool(immediate_action),
                 }
             )
             medium.append(
                 {
-                    "action": f"Ordenar y estandarizar el proceso para evitar fallos en '{label}'.",
-                    "accion": f"Ordenar y estandarizar el proceso para evitar fallos en '{label}'.",
-                    "por_que": "Cuando el proceso es claro y repetible, baja la variabilidad del servicio.",
+                    "problema": label,
+                    "accion": medium_action,
+                    "action": medium_action,
+                    "por_que": "Un proceso claro reduce errores repetidos y mejora consistencia.",
                     "impact": impact,
-                    "owner": "Gerencia + Calidad",
-                    "encargado": "Gerencia y persona responsable de calidad",
+                    "encargado": owner_medium,
+                    "owner": owner_medium,
+                    "plazo_dias": 60,
                     "horizon_days": 60,
-                    "kpi": f"Subir al menos 0.2 puntos la satisfacción asociada a {label}.",
-                    "objetivo": f"Subir al menos 0.2 puntos la satisfacción asociada a {label}.",
+                    "indicador": f"Subir al menos 0.2 puntos la satisfacción ligada a {label}.",
+                    "kpi": f"Subir al menos 0.2 puntos la satisfacción ligada a {label}.",
+                    "objetivo": f"Subir al menos 0.2 puntos la satisfacción ligada a {label}.",
+                    "tipo": self._infer_action_type(f"{label} {medium_action}"),
+                    "herramienta_si_aplica": self._infer_action_tool(medium_action),
                 }
             )
             long_term.append(
                 {
-                    "action": f"Crear un seguimiento continuo para detectar pronto fallos de '{label}'.",
-                    "accion": f"Crear un seguimiento continuo para detectar pronto fallos de '{label}'.",
-                    "por_que": "Permite anticiparse a quejas repetidas antes de que dañen la reputación.",
+                    "problema": label,
+                    "accion": long_action,
+                    "action": long_action,
+                    "por_que": "Convertirlo en hábito evita recaídas y protege la reputación a largo plazo.",
                     "impact": "alto",
-                    "owner": "Data/Producto",
-                    "encargado": "Dirección junto al responsable de mejora continua",
+                    "encargado": owner_long,
+                    "owner": owner_long,
+                    "plazo_dias": 120,
                     "horizon_days": 120,
-                    "kpi": "Tener alertas activas para detectar incidencias antes de que escalen.",
-                    "objetivo": "Tener alertas activas para detectar incidencias antes de que escalen.",
+                    "indicador": "Mantener un control activo que detecte incidencias antes de que escalen.",
+                    "kpi": "Mantener un control activo que detecte incidencias antes de que escalen.",
+                    "objetivo": "Mantener un control activo que detecte incidencias antes de que escalen.",
+                    "tipo": self._infer_action_type(f"{label} {long_action}"),
+                    "herramienta_si_aplica": self._infer_action_tool(long_action),
                 }
             )
 
         if not immediate:
+            default_action = "Revisar y responder reseñas críticas cada día en menos de 48 horas con respuesta personalizada."
             immediate.append(
                 {
-                    "action": "Establecer una rutina semanal para revisar reseñas y cerrar acciones de mejora.",
-                    "accion": "Establecer una rutina semanal para revisar reseñas y cerrar acciones de mejora.",
-                    "por_que": "Sin rutina de seguimiento, los problemas tienden a repetirse.",
+                    "problema": "gestión de reseñas",
+                    "accion": default_action,
+                    "action": default_action,
+                    "por_que": "Si no se responde rápido, el problema se hace más visible y se repite.",
                     "impact": "medio",
-                    "owner": "Gerencia",
                     "encargado": "Gerencia del negocio",
+                    "owner": "Gerencia del negocio",
+                    "plazo_dias": 14,
                     "horizon_days": 14,
-                    "kpi": "Revisar el 100% de reseñas críticas en un máximo de 72 horas.",
-                    "objetivo": "Revisar el 100% de reseñas críticas en un máximo de 72 horas.",
+                    "indicador": "Responder el 100% de reseñas críticas en menos de 48 horas.",
+                    "kpi": "Responder el 100% de reseñas críticas en menos de 48 horas.",
+                    "objetivo": "Responder el 100% de reseñas críticas en menos de 48 horas.",
+                    "tipo": "proceso",
+                    "herramienta_si_aplica": "Plantilla breve de respuesta y panel de reseñas",
                 }
             )
 
@@ -1299,6 +1736,7 @@ class AdvancedBusinessReportBuilder:
             "notes": [
                 f"Se detectaron {cluster_count} segmentos de clientes para personalizar acciones.",
             ],
+            "llm_generated": False,
         }
 
     def _build_quick_wins(
@@ -1782,27 +2220,18 @@ class AdvancedBusinessReportBuilder:
         *,
         business_name: str,
         business_context: dict[str, Any],
+        stats: dict[str, Any],
         score_and_evolution: dict[str, Any],
         customer_clusters: dict[str, Any],
         problem_clusters: dict[str, Any],
+        voice_of_customer: dict[str, Any],
         invisible_and_opportunities: dict[str, Any],
+        full_data_annex: dict[str, Any],
         action_plan: dict[str, Any],
         quick_wins: dict[str, Any],
     ) -> dict[str, str]:
         score_value = self._safe_float(score_and_evolution.get("reputation_score"))
         score_label = self._score_label(score_value)
-        customer_top = self._summarize_customer_clusters(customer_clusters=customer_clusters, limit=3)
-        problem_top = self._summarize_problem_clusters(problem_clusters=problem_clusters, limit=3)
-        quick_titles = [
-            str(item.get("title", "") or "").strip()
-            for item in (quick_wins.get("items") if isinstance(quick_wins, dict) else [])[:5]
-            if isinstance(item, dict)
-        ]
-        invisible_items = (
-            invisible_and_opportunities.get("invisible_problems")
-            if isinstance(invisible_and_opportunities, dict)
-            else []
-        )
         fallback = {
             "resumen_ejecutivo": (
                 f"Ahora mismo {business_name} está en {score_label} ({round(score_value, 1)}/100). "
@@ -1833,28 +2262,22 @@ class AdvancedBusinessReportBuilder:
         if self.client is None:
             return fallback
 
-        payload = {
-            "negocio": business_name,
-            "contexto_negocio": business_context,
-            "score": {
-                "valor": score_value,
-                "label": score_label,
-                "componentes": score_and_evolution.get("components"),
-                "evolucion": score_and_evolution.get("evolution"),
-            },
-            "segmentos_cliente_top3": customer_top,
-            "problemas_top3": problem_top,
-            "problemas_invisibles": invisible_items[:4] if isinstance(invisible_items, list) else [],
-            "acciones_corto": (action_plan.get("inmediato_0_30_dias") if isinstance(action_plan, dict) else [])[:4],
-            "acciones_medio": (action_plan.get("medio_30_90_dias") if isinstance(action_plan, dict) else [])[:4],
-            "acciones_largo": (action_plan.get("largo_90_mas_dias") if isinstance(action_plan, dict) else [])[:4],
-            "quick_wins": quick_titles,
-        }
+        payload = self._build_llm_user_prompt_payload(
+            business_name=business_name,
+            business_context=business_context,
+            stats=stats,
+            score_and_evolution=score_and_evolution,
+            customer_clusters=customer_clusters,
+            problem_clusters=problem_clusters,
+            voice_of_customer=voice_of_customer,
+            invisible_and_opportunities=invisible_and_opportunities,
+            full_data_annex=full_data_annex,
+        )
         prompt = (
             "Eres consultor de reputación para pymes. Escribe en español de España, cercano y fácil de entender, "
-            "como si se lo explicaras al dueño de un negocio local sin formación técnica. "
-            "Nada de jerga ni anglicismos. Evita palabras como cluster, KPI, owner, insight, benchmark.\n"
-            "Debes contextualizar el negocio: qué espera su cliente típico, qué fallos pesan más y cómo se siente la gente.\n"
+            "como si se lo explicaras al dueño de un negocio local sin formación técnica.\n"
+            "No uses jerga ni anglicismos. Evita palabras como cluster, KPI, owner, insight, benchmark.\n"
+            "Usa literalmente el bloque JSON del prompt de usuario como fuente de verdad para construir el diagnóstico.\n"
             "Devuelve SOLO JSON válido con claves exactas:\n"
             "{\n"
             '  "resumen_ejecutivo": "...",\n'
@@ -1863,7 +2286,9 @@ class AdvancedBusinessReportBuilder:
             '  "plan_accion": "..."\n'
             "}\n"
             "Cada valor: 4-7 frases cortas, directas, útiles para decidir.\n"
-            f"Datos: {payload}"
+            "PROMPT DE USUARIO — Template con datos del reporte\n"
+            "Analiza el siguiente negocio y genera el diagnóstico estructurado según tus instrucciones.\n"
+            f"json\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
         )
         try:
             text, _model_used = await asyncio.to_thread(self._llm_generate_text, prompt)
@@ -1874,10 +2299,158 @@ class AdvancedBusinessReportBuilder:
             merged: dict[str, str] = {}
             for key, fallback_text in fallback.items():
                 value = str(parsed.get(key, "") or "").strip()
-                merged[key] = self._plainify_business_text(value or fallback_text)
+                merged[key] = self._sanitize_llm_text(
+                    self._plainify_business_text(value or fallback_text)
+                )
             return merged
         except Exception:
             return fallback
+
+    def _build_llm_user_prompt_payload(
+        self,
+        *,
+        business_name: str,
+        business_context: dict[str, Any],
+        stats: dict[str, Any],
+        score_and_evolution: dict[str, Any],
+        customer_clusters: dict[str, Any],
+        problem_clusters: dict[str, Any],
+        voice_of_customer: dict[str, Any],
+        invisible_and_opportunities: dict[str, Any],
+        full_data_annex: dict[str, Any],
+    ) -> dict[str, Any]:
+        components = score_and_evolution.get("components") if isinstance(score_and_evolution, dict) else {}
+        if not isinstance(components, dict):
+            components = {}
+        evolution = score_and_evolution.get("evolution") if isinstance(score_and_evolution, dict) else {}
+        if not isinstance(evolution, dict):
+            evolution = {}
+        dataset_summary = full_data_annex.get("dataset_summary") if isinstance(full_data_annex, dict) else {}
+        if not isinstance(dataset_summary, dict):
+            dataset_summary = {}
+        by_problem = dataset_summary.get("by_problem")
+        if not isinstance(by_problem, dict):
+            by_problem = {}
+
+        score_value = round(self._safe_float(score_and_evolution.get("reputation_score")), 2)
+        score_label = self._score_label(score_value)
+        cluster_count = self._safe_int(customer_clusters.get("cluster_count"))
+        cluster_limit = max(1, cluster_count) if cluster_count > 0 else 4
+        summarized_segments = self._summarize_customer_clusters(
+            customer_clusters=customer_clusters,
+            limit=cluster_limit,
+        )
+        segments_payload: list[dict[str, Any]] = []
+        for segment in summarized_segments:
+            if not isinstance(segment, dict):
+                continue
+            segments_payload.append(
+                {
+                    "nombre": str(segment.get("label", "") or "").strip(),
+                    "descripcion": str(segment.get("descripcion_segmento", "") or "").strip(),
+                    "num_resenas": self._safe_int(segment.get("peso_reseñas")),
+                    "estado_emocional": str(segment.get("estado_emocional", "") or "").strip(),
+                    "intencion": str(segment.get("intencion_detectada", "") or "").strip(),
+                    "expectativas": str(segment.get("expectativas", "") or "").strip(),
+                }
+            )
+
+        problem_data = problem_clusters.get("clusters") if isinstance(problem_clusters, dict) else []
+        if not isinstance(problem_data, list):
+            problem_data = []
+        problems_payload: list[dict[str, Any]] = []
+        for item in problem_data[:8]:
+            if not isinstance(item, dict):
+                continue
+            sample_quotes = item.get("sample_quotes") if isinstance(item.get("sample_quotes"), list) else []
+            first_quote = sample_quotes[0] if sample_quotes else {}
+            problems_payload.append(
+                {
+                    "problema": self._friendly_problem_label(
+                        str(item.get("problem", "") or "").strip() or self._GENERIC_COMMENT_PROBLEM
+                    ),
+                    "num_menciones": self._safe_int(item.get("count")),
+                    "severidad": round(self._safe_float(item.get("severity")), 4),
+                    "valoracion_media_afectados": round(self._safe_float(item.get("avg_rating")), 2),
+                    "sentimiento_medio": round(self._safe_float(item.get("avg_sentiment")), 4),
+                    "ejemplo_literal": str(first_quote.get("quote", "") or "").strip()[:280],
+                }
+            )
+
+        positives = voice_of_customer.get("positive_quotes") if isinstance(voice_of_customer, dict) else []
+        negatives = voice_of_customer.get("negative_quotes") if isinstance(voice_of_customer, dict) else []
+        if not isinstance(positives, list):
+            positives = []
+        if not isinstance(negatives, list):
+            negatives = []
+
+        invisible_items = (
+            invisible_and_opportunities.get("invisible_problems")
+            if isinstance(invisible_and_opportunities, dict)
+            else []
+        )
+        if not isinstance(invisible_items, list):
+            invisible_items = []
+        alerts_payload: list[dict[str, Any]] = []
+        for item in invisible_items[:8]:
+            if not isinstance(item, dict):
+                continue
+            alerts_payload.append(
+                {
+                    "riesgo": str(item.get("risk", "") or "").strip(),
+                    "detalle": str(item.get("detail", "") or "").strip(),
+                    "metrica": round(self._safe_float(item.get("metric")), 4),
+                }
+            )
+
+        cliente_espera = business_context.get("cliente_espera") if isinstance(business_context, dict) else []
+        if not isinstance(cliente_espera, list):
+            cliente_espera = []
+        fricciones_habituales = (
+            business_context.get("fricciones_habituales") if isinstance(business_context, dict) else []
+        )
+        if not isinstance(fricciones_habituales, list):
+            fricciones_habituales = []
+
+        return {
+            "business_name": business_name,
+            "tipo_negocio": str(business_context.get("tipo_negocio", "") or "").strip() or "servicio local",
+            "metricas": {
+                "puntuacion_reputacion": score_value,
+                "nivel_reputacion": score_label,
+                "avg_rating": round(self._safe_float(components.get("avg_rating", stats.get("avg_rating"))), 3),
+                "response_rate": round(self._safe_float(components.get("response_rate", stats.get("response_rate"))), 4),
+                "negative_ratio": round(self._safe_float(components.get("negative_ratio")), 4),
+                "sentiment_avg": round(self._safe_float(components.get("sentiment_avg")), 4),
+                "tranquility_avg": round(self._safe_float(components.get("tranquility_avg")), 4),
+                "total_resenas_analizadas": self._safe_int(dataset_summary.get("total_reviews")),
+                "evolucion": str(evolution.get("trend", "estable") or "estable"),
+            },
+            "cliente_tipico": {
+                "lo_que_espera": [str(item or "").strip() for item in cliente_espera if str(item or "").strip()],
+                "motivacion_de_visita": str(business_context.get("motivacion_de_visita", "") or "").strip(),
+                "fricciones_habituales_del_sector": [
+                    str(item or "").strip() for item in fricciones_habituales if str(item or "").strip()
+                ],
+            },
+            "segmentos_cliente_detectados": segments_payload,
+            "problemas_detectados": problems_payload,
+            "citas_positivas_literales": [
+                str(item.get("quote", "") or "").strip()[:280]
+                for item in positives[:6]
+                if isinstance(item, dict) and str(item.get("quote", "") or "").strip()
+            ],
+            "citas_negativas_literales": [
+                str(item.get("quote", "") or "").strip()[:280]
+                for item in negatives[:6]
+                if isinstance(item, dict) and str(item.get("quote", "") or "").strip()
+            ],
+            "temas_mas_repetidos": by_problem,
+            "alertas_invisibles_detectadas": alerts_payload,
+            "instruccion_aciertos": (
+                "Extrae fortalezas como conceptos de negocio y deja la cita literal solo como evidencia."
+            ),
+        }
 
     def _extract_json_object(self, text: str) -> str:
         raw = str(text or "").strip()
@@ -1934,13 +2507,13 @@ class AdvancedBusinessReportBuilder:
             return {
                 "generated": True,
                 "model": model_used,
-                "text": self._plainify_business_text(clean_text),
+                "text": self._sanitize_llm_text(self._plainify_business_text(clean_text)),
             }
         except Exception:
             return {
                 "generated": False,
                 "model": None,
-                "text": self._plainify_business_text(fallback_text),
+                "text": self._sanitize_llm_text(self._plainify_business_text(fallback_text)),
                 "reason": "llm_failed",
             }
 
@@ -2004,6 +2577,72 @@ class AdvancedBusinessReportBuilder:
             f"Hay {len(wins) if isinstance(wins, list) else 0} acciones rápidas ya detectadas para mejorar en el corto plazo."
         )
 
+    def _sanitize_llm_text(self, text: str) -> str:
+        value = str(text or "").strip()
+        if not value:
+            return ""
+        output = value
+        output = output.replace("**", "")
+        output = re.sub(r"([A-Za-zÁÉÍÓÚÜÑáéíóúüñ])\1{3,}", r"\1\1", output)
+        output = re.sub(r"([aeiouáéíóúüAEIOUÁÉÍÓÚÜ])\1{2,}", r"\1", output)
+        output = re.sub(r"\.{2,}", ".", output)
+        output = re.sub(r"[ \t]{2,}", " ", output)
+        output = re.sub(r"\s+\n", "\n", output)
+        output = re.sub(r"\n{3,}", "\n\n", output)
+        output = re.sub(r"([a-záéíóúüñ])([A-ZÁÉÍÓÚÜÑ])", r"\1 \2", output)
+        return output.strip()
+
+    def _normalize_action_type(self, value: str) -> str:
+        normalized = self._normalize_text(value)
+        if not normalized:
+            return ""
+        mapping = {
+            "proceso": "proceso",
+            "process": "proceso",
+            "negocio": "negocio",
+            "business": "negocio",
+            "implementacion": "implementacion",
+            "implementación": "implementacion",
+            "implementation": "implementacion",
+            "tecnologico": "tecnologico",
+            "tecnológica": "tecnologico",
+            "tecnologico/a": "tecnologico",
+            "tecnologia": "tecnologico",
+            "technology": "tecnologico",
+        }
+        for key, item in mapping.items():
+            if key in normalized:
+                return item
+        return ""
+
+    def _infer_action_type(self, text: str) -> str:
+        normalized = self._normalize_text(text)
+        if any(token in normalized for token in ("crm", "software", "automat", "panel", "dashboard", "alerta")):
+            return "tecnologico"
+        if any(token in normalized for token in ("implementar", "desarrollar", "integrar", "despliegue", "prototipo")):
+            return "implementacion"
+        if any(token in normalized for token in ("precio", "menu", "margen", "tarifa", "promocion", "estrategia")):
+            return "negocio"
+        return "proceso"
+
+    def _infer_action_tool(self, text: str) -> str:
+        normalized = self._normalize_text(text)
+        if any(token in normalized for token in ("resena", "reseña", "responder", "review")):
+            return "Panel de reseñas y plantilla breve de respuesta"
+        if any(token in normalized for token in ("tiempo", "espera", "minuto", "comanda")):
+            return "Registro de tiempos por turno"
+        if any(token in normalized for token in ("formacion", "formación", "protocolo", "equipo")):
+            return "Guía operativa y sesión interna semanal"
+        if any(token in normalized for token in ("precio", "menu", "carta")):
+            return "Revisión de carta y tabla simple de costes"
+        return ""
+
+    def _human_label_problem(self, label: str) -> str:
+        value = str(label or "").strip()
+        if not value:
+            return "Experiencia general"
+        return self._plainify_business_text(value).replace("_", " ")
+
     def _plainify_business_text(self, text: str) -> str:
         value = str(text or "").strip()
         if not value:
@@ -2027,8 +2666,6 @@ class AdvancedBusinessReportBuilder:
             ("response rate", "tasa de respuesta a comentarios"),
             ("dataset", "conjunto de reseñas"),
             ("bucket", "tramo temporal"),
-            ("checklist", "lista de tareas a realizar"),
-            ("checklists", "listas de tareas a realizar"),
             ("<24h", "menos de 24 horas"),
             ("old", "antiguas"),
             ("medium", "intermedias"),
@@ -2079,27 +2716,65 @@ class AdvancedBusinessReportBuilder:
             values.append(self._safe_float(dims.get(key)))
         return statistics.mean(values) if values else 0.0
 
-    def _label_customer_cluster(self, centroid: list[float]) -> tuple[str, str]:
+    def _label_customer_cluster(
+        self,
+        centroid: list[float],
+        *,
+        cluster_id: int | None = None,
+        used_labels: set[str] | None = None,
+    ) -> tuple[str, str]:
         sentiment, expectation, satisfaction, tranquility, improvement, _ = centroid
+
+        candidates: list[tuple[str, str]] = []
+        if satisfaction >= 0.8 and sentiment >= 0.4 and tranquility >= 0.55 and expectation < 0.15:
+            candidates.append(
+                (
+                    "Promotores fieles",
+                    "Clientes muy satisfechos y con alta probabilidad de repetir y recomendar.",
+                )
+            )
         if satisfaction >= 0.68 and sentiment >= 0.25:
-            return (
-                "Promotores satisfechos",
-                "Valoran positivamente la experiencia y pueden convertirse en embajadores de marca.",
+            candidates.append(
+                (
+                    "Promotores satisfechos",
+                    "Valoran positivamente la experiencia y pueden convertirse en embajadores de marca.",
+                )
             )
         if sentiment <= -0.1 and tranquility < -0.05:
-            return (
-                "Críticos intensos",
-                "Clientes con fricción emocional alta que requieren recuperación prioritaria.",
+            candidates.append(
+                (
+                    "Críticos intensos",
+                    "Clientes con fricción emocional alta que requieren recuperación prioritaria.",
+                )
             )
         if expectation >= 0.38 and improvement >= 0.42:
-            return (
-                "Exigentes constructivos",
-                "Ven margen de mejora y aportan señales útiles para rediseñar servicio.",
+            candidates.append(
+                (
+                    "Exigentes constructivos",
+                    "Ven margen de mejora y aportan señales útiles para rediseñar servicio.",
+                )
             )
-        return (
-            "Neutrales pragmáticos",
-            "Segmento estable con satisfacción media y sensibilidad a mejoras operativas.",
+        candidates.append(
+            (
+                "Neutrales pragmáticos",
+                "Segmento estable con satisfacción media y sensibilidad a mejoras operativas.",
+            )
         )
+
+        labels_in_use = used_labels if isinstance(used_labels, set) else None
+        for label, description in candidates:
+            if labels_in_use is None or label not in labels_in_use:
+                if labels_in_use is not None:
+                    labels_in_use.add(label)
+                return label, description
+
+        base_label, base_description = candidates[0]
+        if cluster_id is None:
+            cluster_id = 0
+        unique_label = f"{base_label} ({cluster_id + 1})"
+        if labels_in_use is not None:
+            labels_in_use.add(unique_label)
+        return unique_label, base_description
 
     def _theme_scores(self, text_norm: str) -> dict[str, int]:
         if not text_norm:

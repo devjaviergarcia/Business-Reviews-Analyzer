@@ -14,12 +14,12 @@ class StructuredReportRenderer:
     """Render structured report data to JSON/HTML/PDF artifacts."""
 
     _PALETTE = (
-        "#DFF7E8",
-        "#71E2EB",
-        "#B1F58C",
-        "#71EBA1",
-        "#71EBCA",
-        "#71EB77",
+        "#0A7567",
+        "#12B08A",
+        "#D4F0E8",
+        "#D4950A",
+        "#C23B18",
+        "#64748B",
     )
 
     def __init__(self, *, artifacts_root: str | Path = "artifacts/reports") -> None:
@@ -240,16 +240,23 @@ class StructuredReportRenderer:
         )
 
         body_parts: list[str] = []
-        body_parts.append("<section class='intro'>")
-        body_parts.append("<h2>Introducción: de dónde salen estas reseñas</h2>")
+        generated_human = self._format_human_date(generated_at)
         intro_text = self._clean_narrative_text(str(intro_context_text or "").strip())
+        body_parts.append("<section class='intro context-banner'>")
+        body_parts.append("<div class='context-row'>")
+        body_parts.append(
+            f"<span class='context-item'>{self._icon_slot('reviews')}<strong>{total_reviews}</strong> opiniones analizadas</span>"
+        )
+        if fuentes_label:
+            body_parts.append(
+                f"<span class='context-item'>{self._icon_slot('sources')}Fuentes: <strong>{html.escape(fuentes_label)}</strong></span>"
+            )
+        body_parts.append(
+            f"<span class='context-item'>{self._icon_slot('updated')}Actualizado: <strong>{html.escape(generated_human)}</strong></span>"
+        )
+        body_parts.append("</div>")
         if intro_text:
-            body_parts.append(f"<p>{html.escape(intro_text)}</p>")
-        if total_reviews > 0:
-            summary_line = f"Este reporte se construye a partir de {total_reviews} reseñas analizadas."
-            if fuentes_label:
-                summary_line += f" Fuentes detectadas: {fuentes_label}."
-            body_parts.append(f"<p class='muted'>{html.escape(summary_line)}</p>")
+            body_parts.append(f"<p class='muted'>{html.escape(intro_text)}</p>")
         body_parts.append("</section>")
 
         for key in ordered_keys:
@@ -265,31 +272,31 @@ class StructuredReportRenderer:
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Reporte reputación - {html.escape(business_name)}</title>
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
+      @import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
       :root {{
-        --bg: #f6fffb;
-        --text: #10312a;
-        --muted: #4b6e67;
-        --panel: #ffffff;
-        --line: #c7efe3;
+        --bg: #F4F2EC;
+        --text: #161616;
+        --muted: #64748B;
+        --panel: #FFFFFF;
+        --line: rgba(0, 0, 0, 0.08);
         --accent-1: {self._PALETTE[0]};
         --accent-2: {self._PALETTE[1]};
         --accent-3: {self._PALETTE[2]};
         --accent-4: {self._PALETTE[3]};
         --accent-5: {self._PALETTE[4]};
         --accent-6: {self._PALETTE[5]};
-        --good: #1b9c5a;
-        --warn: #f08b1d;
-        --bad: #cf2f35;
+        --good: #12B08A;
+        --warn: #D4950A;
+        --bad: #C23B18;
+        --font-display: "Syne", sans-serif;
+        --font-body: "Plus Jakarta Sans", sans-serif;
       }}
       * {{ box-sizing: border-box; }}
       body {{
         margin: 0;
         color: var(--text);
-        background:
-          radial-gradient(circle at 5% 5%, #ffffff 0%, #f8fffc 45%, #f2fff8 100%),
-          linear-gradient(180deg, #f9fffd 0%, #f4fffb 100%);
-        font-family: "Poppins", "Segoe UI", sans-serif;
+        background: var(--bg);
+        font-family: var(--font-body);
         line-height: 1.45;
       }}
       .wrap {{
@@ -303,11 +310,12 @@ class StructuredReportRenderer:
         border-radius: 16px;
         padding: 18px 20px;
         margin-bottom: 14px;
-        box-shadow: 0 8px 24px rgba(47, 143, 123, 0.08);
       }}
       .header h1 {{
         margin: 0 0 6px 0;
         font-size: 26px;
+        font-family: var(--font-display);
+        font-weight: 700;
       }}
       .meta {{
         color: var(--muted);
@@ -319,15 +327,52 @@ class StructuredReportRenderer:
         border-radius: 16px;
         padding: 14px 16px;
         margin-bottom: 12px;
-        box-shadow: 0 6px 20px rgba(47, 143, 123, 0.06);
       }}
+      .context-banner {{
+        border-left: 3px solid var(--accent-1);
+        border-top-left-radius: 0;
+        border-bottom-left-radius: 0;
+      }}
+      .context-row {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 18px;
+        align-items: center;
+        margin-bottom: 4px;
+      }}
+      .context-item {{
+        font-size: 13px;
+        color: var(--muted);
+      }}
+      .icon-slot {{
+        display: inline-flex;
+        width: 14px;
+        height: 14px;
+        border-radius: 4px;
+        border: 1px solid rgba(10, 117, 103, 0.35);
+        background: rgba(212, 240, 232, 0.45);
+        margin-right: 6px;
+        vertical-align: -2px;
+      }}
+      .context-item strong {{
+        color: var(--text);
+      }}
+      .section--diagnostico {{ border-left: 3px solid var(--accent-1); border-top-left-radius: 0; border-bottom-left-radius: 0; }}
+      .section--puntuacion {{ border-left: 3px solid var(--accent-2); border-top-left-radius: 0; border-bottom-left-radius: 0; }}
+      .section--cliente {{ border-left: 3px solid var(--accent-3); border-top-left-radius: 0; border-bottom-left-radius: 0; }}
+      .section--accion {{ border-left: 3px solid var(--accent-5); border-top-left-radius: 0; border-bottom-left-radius: 0; }}
+      .section--anexo {{ border-left: 3px solid var(--accent-6); border-top-left-radius: 0; border-bottom-left-radius: 0; }}
       h2 {{
         margin: 0 0 10px 0;
         font-size: 18px;
+        font-family: var(--font-display);
+        font-weight: 700;
       }}
       h3 {{
         margin: 10px 0 6px 0;
         font-size: 15px;
+        font-family: var(--font-display);
+        font-weight: 700;
       }}
       p {{
         margin: 6px 0;
@@ -351,7 +396,7 @@ class StructuredReportRenderer:
         vertical-align: top;
       }}
       th {{
-        background: var(--accent-1);
+        background: var(--accent-3);
         text-align: left;
       }}
       .muted {{ color: var(--muted); }}
@@ -362,7 +407,7 @@ class StructuredReportRenderer:
         margin-top: 8px;
       }}
       .pill {{
-        background: linear-gradient(120deg, var(--accent-1) 0%, #fff 100%);
+        background: var(--panel);
         border: 1px solid var(--line);
         border-radius: 12px;
         padding: 8px 10px;
@@ -377,7 +422,10 @@ class StructuredReportRenderer:
         border: 1px solid var(--line);
         border-radius: 14px;
         padding: 14px;
-        background: linear-gradient(145deg, var(--accent-2) 0%, var(--accent-5) 100%);
+        background: var(--panel);
+        border-left: 3px solid var(--accent-2);
+        border-top-left-radius: 0;
+        border-bottom-left-radius: 0;
       }}
       .score-value {{
         font-size: 48px;
@@ -389,6 +437,44 @@ class StructuredReportRenderer:
         font-size: 13px;
         font-weight: 600;
       }}
+      .score-bar-wrap {{
+        margin-top: 12px;
+      }}
+      .score-bar-track {{
+        position: relative;
+        height: 8px;
+        border-radius: 4px;
+        border: 1px solid var(--line);
+      }}
+      .score-bar-zones {{
+        display: flex;
+        height: 100%;
+        border-radius: 4px;
+        overflow: hidden;
+      }}
+      .zone {{
+        flex: 1;
+      }}
+      .zone-red {{ background: var(--bad); flex: 0.55; }}
+      .zone-orange {{ background: var(--warn); flex: 0.15; }}
+      .zone-yellow {{ background: var(--accent-3); flex: 0.15; }}
+      .zone-green {{ background: var(--good); flex: 0.15; }}
+      .score-bar-marker {{
+        position: absolute;
+        top: -4px;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        border: 2px solid #fff;
+        transform: translateX(-50%);
+      }}
+      .score-bar-labels {{
+        display: flex;
+        justify-content: space-between;
+        font-size: 10px;
+        color: var(--muted);
+        margin-top: 4px;
+      }}
       .cluster-grid {{
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -399,7 +485,7 @@ class StructuredReportRenderer:
         border: 1px solid var(--line);
         border-radius: 12px;
         padding: 10px;
-        background: linear-gradient(120deg, #fff 0%, var(--accent-1) 100%);
+        background: var(--panel);
       }}
       .timeline {{
         display: grid;
@@ -416,12 +502,30 @@ class StructuredReportRenderer:
         margin: 0 0 6px 0;
         font-size: 13px;
       }}
+      .timeline-col:nth-child(1) .action-card {{ border-left: 3px solid var(--warn); }}
+      .timeline-col:nth-child(2) .action-card {{ border-left: 3px solid var(--accent-2); }}
+      .timeline-col:nth-child(3) .action-card {{ border-left: 3px solid var(--accent-6); }}
+      .timeline-col:nth-child(1) h4 {{ color: var(--warn); }}
+      .timeline-col:nth-child(2) h4 {{ color: var(--accent-2); }}
+      .timeline-col:nth-child(3) h4 {{ color: var(--accent-6); }}
       .scatter {{
         margin-top: 10px;
         border: 1px solid var(--line);
         border-radius: 12px;
-        background: linear-gradient(180deg, #f9fffd 0%, #f2fff8 100%);
+        background: var(--panel);
         padding: 6px;
+      }}
+      .scatter-note {{
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 4px;
+      }}
+      .bar-chart-wrap {{
+        margin-top: 8px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 8px;
+        background: var(--panel);
       }}
       .action-list {{
         list-style: none;
@@ -439,6 +543,116 @@ class StructuredReportRenderer:
       .action-card .title {{
         font-weight: 600;
         margin-bottom: 4px;
+      }}
+      .action-card-header {{
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 8px;
+        margin-bottom: 4px;
+      }}
+      .tipo-badge {{
+        display: inline-block;
+        font-size: 10px;
+        font-weight: 600;
+        border-radius: 999px;
+        border: 1px solid;
+        padding: 2px 8px;
+        white-space: nowrap;
+        flex-shrink: 0;
+      }}
+      .urgent-block {{
+        background: rgba(194, 59, 24, 0.08);
+        border: 1px solid rgba(194, 59, 24, 0.26);
+        border-left: 4px solid var(--warn);
+        border-radius: 0 12px 12px 0;
+        padding: 12px 14px;
+        margin: 12px 0;
+      }}
+      .urgent-title {{
+        color: var(--bad);
+        font-size: 14px;
+        margin: 0 0 8px 0;
+      }}
+      .fw-grid {{
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin-top: 10px;
+      }}
+      .fw-col-title {{
+        font-size: 14px;
+        font-weight: 700;
+        margin: 0 0 10px 0;
+        padding-bottom: 6px;
+        border-bottom: 2px solid currentColor;
+      }}
+      .fw-col-strong {{ color: var(--good); }}
+      .fw-col-weak {{ color: var(--warn); }}
+      .fw-card {{
+        display: flex;
+        gap: 10px;
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin-bottom: 8px;
+      }}
+      .fw-strong {{
+        background: rgba(18, 176, 138, 0.10);
+        border: 1px solid rgba(18, 176, 138, 0.28);
+      }}
+      .fw-weak {{
+        background: rgba(212, 149, 10, 0.12);
+        border: 1px solid rgba(212, 149, 10, 0.28);
+      }}
+      .fw-icon {{
+        display: inline-flex;
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+        margin-top: 2px;
+      }}
+      .fw-strong .fw-icon {{ color: var(--good); }}
+      .fw-weak .fw-icon {{ color: var(--warn); }}
+      .fw-title {{
+        font-weight: 600;
+        font-size: 13px;
+        margin-bottom: 3px;
+      }}
+      .fw-desc {{
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }}
+      .fw-action {{
+        font-size: 12px;
+      }}
+      .fw-tipo-badge {{
+        display: inline-block;
+        font-size: 11px;
+        background: rgba(212, 149, 10, 0.14);
+        color: #8a6209;
+        border: 1px solid rgba(212, 149, 10, 0.30);
+        border-radius: 999px;
+        padding: 2px 8px;
+      }}
+      .annex-details {{
+        cursor: pointer;
+      }}
+      .annex-summary {{
+        font-weight: 600;
+        font-size: 14px;
+        color: var(--muted);
+        list-style: none;
+      }}
+      .annex-summary::-webkit-details-marker {{ display: none; }}
+      .annex-hint {{
+        font-weight: 400;
+        font-size: 12px;
+      }}
+      .annex-body {{
+        border-top: 1px solid var(--line);
+        padding-top: 12px;
+        margin-top: 10px;
       }}
       .meta-line {{
         color: var(--muted);
@@ -495,7 +709,7 @@ class StructuredReportRenderer:
         border: 1px solid transparent;
       }}
       .badge.good {{ background: #e7fbef; color: var(--good); border-color: #c5f1d7; }}
-      .badge.warn {{ background: #fff3e4; color: #aa5f0e; border-color: #ffd9af; }}
+      .badge.warn {{ background: rgba(212, 149, 10, 0.12); color: #8a6209; border-color: rgba(212, 149, 10, 0.30); }}
       .badge.bad {{ background: #ffe8e8; color: #ab2329; border-color: #ffc9cb; }}
       .footer {{
         color: var(--muted);
@@ -506,6 +720,7 @@ class StructuredReportRenderer:
       @media (max-width: 820px) {{
         .score-hero {{ grid-template-columns: 1fr; }}
         .timeline {{ grid-template-columns: 1fr; }}
+        .fw-grid {{ grid-template-columns: 1fr; }}
       }}
     </style>
   </head>
@@ -513,10 +728,10 @@ class StructuredReportRenderer:
     <main class="wrap">
       <header class="header">
         <h1>Reporte de reputación de {html.escape(business_name)}</h1>
-        <div class="meta">Generado: {html.escape(generated_at)}</div>
+        <div class="meta">Generado: {html.escape(generated_human)}</div>
       </header>
       {''.join(body_parts)}
-      <div class="footer">Reporte generado automáticamente por Business Review Analyzer.</div>
+      <div class="footer">Análisis elaborado por Repiq · {html.escape(generated_human)}</div>
     </main>
   </body>
 </html>
@@ -573,24 +788,26 @@ class StructuredReportRenderer:
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Preview de reputación - {html.escape(business_name)}</title>
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
+      @import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
       :root {{
-        --bg: #f8fffc;
-        --panel: #ffffff;
-        --line: #c7efe3;
-        --text: #12362f;
-        --muted: #4c726a;
+        --bg: #F4F2EC;
+        --panel: #FFFFFF;
+        --line: rgba(0, 0, 0, 0.08);
+        --text: #161616;
+        --muted: #64748B;
         --a1: {self._PALETTE[0]};
         --a2: {self._PALETTE[1]};
         --a3: {self._PALETTE[2]};
         --a4: {self._PALETTE[3]};
+        --font-display: "Syne", sans-serif;
+        --font-body: "Plus Jakarta Sans", sans-serif;
       }}
       * {{ box-sizing: border-box; }}
       body {{
         margin: 0;
-        background: linear-gradient(180deg, #fbfffd 0%, #f2fff9 100%);
+        background: var(--bg);
         color: var(--text);
-        font-family: "Poppins", "Segoe UI", sans-serif;
+        font-family: var(--font-body);
       }}
       .wrap {{ max-width: 940px; margin: 0 auto; padding: 20px; }}
       .header, .section {{
@@ -600,7 +817,8 @@ class StructuredReportRenderer:
         padding: 14px 16px;
         margin-bottom: 12px;
       }}
-      .header h1 {{ margin: 0 0 4px 0; font-size: 24px; }}
+      .header h1 {{ margin: 0 0 4px 0; font-size: 24px; font-family: var(--font-display); font-weight: 700; }}
+      h2, h3 {{ font-family: var(--font-display); font-weight: 700; }}
       .meta {{ color: var(--muted); font-size: 12px; }}
       h2 {{ margin: 0 0 10px 0; font-size: 18px; }}
       h3 {{ margin: 0 0 6px 0; font-size: 14px; }}
@@ -623,7 +841,7 @@ class StructuredReportRenderer:
         border: 1px solid var(--line);
         border-radius: 12px;
         padding: 10px;
-        background: linear-gradient(120deg, #fff 0%, var(--a1) 100%);
+        background: var(--panel);
       }}
       .quote {{
         margin-top: 8px;
@@ -634,7 +852,7 @@ class StructuredReportRenderer:
       .quote-text {{ font-size: 12px; }}
       .quote-why {{ color: var(--muted); font-size: 11px; margin-top: 4px; }}
       .cta {{
-        background: linear-gradient(120deg, var(--a3) 0%, var(--a4) 100%);
+        background: rgba(212, 149, 10, 0.12);
         border-radius: 12px;
         padding: 12px;
         border: 1px solid var(--line);
@@ -749,21 +967,23 @@ class StructuredReportRenderer:
     <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Anexos del reporte - {html.escape(business_name)}</title>
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+      @import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
       :root {{
-        --bg: #fbfffd;
-        --text: #1a3a34;
-        --muted: #50706a;
-        --line: #c7efe3;
-        --panel: #ffffff;
-        --accent: {self._PALETTE[0]};
+        --bg: #F4F2EC;
+        --text: #161616;
+        --muted: #64748B;
+        --line: rgba(0, 0, 0, 0.08);
+        --panel: #FFFFFF;
+        --accent: {self._PALETTE[2]};
+        --font-display: "Syne", sans-serif;
+        --font-body: "Plus Jakarta Sans", sans-serif;
       }}
       * {{ box-sizing: border-box; }}
       body {{
         margin: 0;
         background: var(--bg);
         color: var(--text);
-        font-family: "Poppins", "Segoe UI", sans-serif;
+        font-family: var(--font-body);
         line-height: 1.4;
       }}
       .wrap {{ max-width: 1120px; margin: 0 auto; padding: 18px; }}
@@ -781,8 +1001,8 @@ class StructuredReportRenderer:
         margin-bottom: 10px;
         background: var(--panel);
       }}
-      h1 {{ margin: 0; font-size: 22px; }}
-      h2 {{ margin: 0 0 8px 0; font-size: 16px; }}
+      h1 {{ margin: 0; font-size: 22px; font-family: var(--font-display); font-weight: 700; }}
+      h2 {{ margin: 0 0 8px 0; font-size: 16px; font-family: var(--font-display); font-weight: 700; }}
       table {{
         width: 100%;
         border-collapse: collapse;
@@ -848,11 +1068,19 @@ class StructuredReportRenderer:
 
     def _render_section_by_key(self, *, section_key: str, section_payload: Any) -> str:
         title = self._humanize_section_key(section_key)
+        section_class_map = {
+            "1_resumen_ejecutivo": "section section--diagnostico",
+            "2_score_reputacion": "section section--puntuacion",
+            "3_quien_es_tu_cliente_y_que_le_preocupa": "section section--cliente",
+            "4_plan_de_accion": "section section--accion",
+            "5_anexos_resumen": "section section--anexo",
+        }
+        section_class = section_class_map.get(section_key, "section")
         if not isinstance(section_payload, dict):
             content = self._render_payload(section_payload)
             if not content.strip():
                 return ""
-            return "<section class='section'>" f"<h2>{html.escape(title)}</h2>{content}</section>"
+            return f"<section class='{section_class}'><h2>{html.escape(title)}</h2>{content}</section>"
 
         if section_key == "1_resumen_ejecutivo":
             content = self._render_section_resumen(section_payload)
@@ -869,12 +1097,17 @@ class StructuredReportRenderer:
 
         if not content.strip():
             return ""
-        return f"<section class='section'><h2>{html.escape(title)}</h2>{content}</section>"
+        return f"<section class='{section_class}'><h2>{html.escape(title)}</h2>{content}</section>"
 
     def _render_section_resumen(self, payload: dict[str, Any]) -> str:
         diagnostico = self._clean_narrative_text(str(payload.get("diagnostico", "") or "").strip())
         estado = payload.get("estado_actual") if isinstance(payload.get("estado_actual"), dict) else {}
         aciertos = payload.get("aciertos_notorios") if isinstance(payload.get("aciertos_notorios"), list) else []
+        aciertos_estructurados = (
+            payload.get("aciertos_estructurados")
+            if isinstance(payload.get("aciertos_estructurados"), list)
+            else []
+        )
         score = self._safe_float(estado.get("score_reputacion"))
         score_badge = self._score_badge(score)
         pills = [
@@ -888,25 +1121,75 @@ class StructuredReportRenderer:
             f"<p>{score_badge}</p>",
             f"<div class='pill-grid'>{''.join(pills)}</div>",
         ]
-        aciertos_items = [str(item or "").strip() for item in aciertos[:3] if str(item or "").strip()]
-        if aciertos_items:
-            aciertos_html = "<ul>" + "".join(f"<li>{html.escape(item)}</li>" for item in aciertos_items) + "</ul>"
-            parts.extend(["<h3>Aciertos que más valoran tus clientes satisfechos</h3>", aciertos_html])
+        if aciertos_estructurados:
+            cards: list[str] = []
+            for item in aciertos_estructurados[:3]:
+                if not isinstance(item, dict):
+                    continue
+                concepto = str(item.get("concepto", "") or "").strip()
+                cita = str(item.get("cita", "") or "").strip()
+                if not concepto:
+                    continue
+                cards.append(
+                    "<article class='fw-card fw-strong'>"
+                    f"<div class='fw-icon'>{self._icon_slot('strength')}</div>"
+                    "<div>"
+                    + f"<div class='fw-title'>{html.escape(concepto)}</div>"
+                    + (f"<div class='fw-desc'>“{html.escape(cita)}”</div>" if cita else "")
+                    + "</div>"
+                    + "</article>"
+                )
+            if cards:
+                parts.extend(
+                    [
+                        "<h3>Aciertos que más valoran tus clientes satisfechos</h3>",
+                        f"<div class='cluster-grid'>{''.join(cards)}</div>",
+                    ]
+                )
+        else:
+            aciertos_items = [str(item or "").strip() for item in aciertos[:3] if str(item or "").strip()]
+            if aciertos_items:
+                aciertos_html = "<ul>" + "".join(f"<li>{html.escape(item)}</li>" for item in aciertos_items) + "</ul>"
+                parts.extend(["<h3>Aciertos que más valoran tus clientes satisfechos</h3>", aciertos_html])
         return "".join(parts)
 
     def _render_section_score(self, payload: dict[str, Any]) -> str:
         display = str(payload.get("score_display", "") or "").strip() or "0/100"
+        score_value = self._safe_float(payload.get("score_value"))
         label = str(payload.get("nivel_reputacion", "") or "").strip()
         explicacion = self._clean_narrative_text(str(payload.get("explicacion", "") or "").strip())
         componentes = payload.get("componentes_numericos")
         evolucion = payload.get("evolucion")
         components_html = self._render_score_components(componentes)
         evolucion_html = self._render_payload(evolucion) if not self._is_empty_payload(evolucion) else ""
+        marker_color = "#C23B18"
+        if score_value >= 85.0:
+            marker_color = "#12B08A"
+        elif score_value >= 70.0:
+            marker_color = "#0A7567"
+        elif score_value >= 55.0:
+            marker_color = "#D4950A"
+        marker_pos = max(0.0, min(100.0, score_value))
+        score_scale_html = (
+            "<div class='score-bar-wrap'>"
+            "<div class='score-bar-track'>"
+            "<div class='score-bar-zones'>"
+            "<div class='zone zone-red'></div>"
+            "<div class='zone zone-orange'></div>"
+            "<div class='zone zone-yellow'></div>"
+            "<div class='zone zone-green'></div>"
+            "</div>"
+            f"<div class='score-bar-marker' style='left:{marker_pos:.1f}%;background:{marker_color}'></div>"
+            "</div>"
+            "<div class='score-bar-labels'><span>0</span><span>55</span><span>70</span><span>85</span><span>100</span></div>"
+            "</div>"
+        )
         return (
             "<div class='score-hero'>"
             "<div class='score-card'>"
             f"<div class='score-value'>{html.escape(display)}</div>"
             f"<div class='score-label'>{html.escape(label)}</div>"
+            f"{score_scale_html}"
             "</div>"
             "<div>"
             f"<p>{html.escape(explicacion)}</p>"
@@ -925,6 +1208,13 @@ class StructuredReportRenderer:
         if not isinstance(preocupaciones, list):
             preocupaciones = []
         scatter = payload.get("scatter_clientes")
+        fortalezas_debilidades = (
+            payload.get("fortalezas_debilidades")
+            if isinstance(payload.get("fortalezas_debilidades"), dict)
+            else {}
+        )
+        strengths_weaknesses_html = self._render_strengths_weaknesses_section(fortalezas_debilidades)
+        bar_chart_html = self._render_customer_bar_chart(scatter if isinstance(scatter, dict) else {})
 
         customer_cards: list[str] = []
         for item in clientes[:3]:
@@ -956,6 +1246,8 @@ class StructuredReportRenderer:
             )
 
         parts = [f"<p>{html.escape(lectura)}</p>" if lectura else ""]
+        if strengths_weaknesses_html:
+            parts.append(strengths_weaknesses_html)
         if customer_cards:
             parts.extend(
                 [
@@ -970,10 +1262,117 @@ class StructuredReportRenderer:
                     f"<div class='cluster-grid'>{''.join(problem_cards)}</div>",
                 ]
             )
+        if bar_chart_html:
+            parts.extend(["<h3>Peso de cada tipo de cliente</h3>", bar_chart_html])
         scatter_html = self._render_payload(scatter) if not self._is_empty_payload(scatter) else ""
         if scatter_html:
             parts.extend(["<h3>Visualización de tipos de clientes</h3>", scatter_html])
         return "".join(parts)
+
+    def _render_strengths_weaknesses_section(self, payload: dict[str, Any]) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        strengths = payload.get("fortalezas") if isinstance(payload.get("fortalezas"), list) else []
+        weaknesses = payload.get("debilidades") if isinstance(payload.get("debilidades"), list) else []
+        if not strengths and not weaknesses:
+            return ""
+
+        strong_cards: list[str] = []
+        for item in strengths[:4]:
+            if not isinstance(item, dict):
+                continue
+            title = self._clean_narrative_text(str(item.get("titulo", "") or "").strip())
+            description = self._clean_narrative_text(str(item.get("descripcion", "") or "").strip())
+            keep = self._clean_narrative_text(str(item.get("como_mantener", "") or "").strip())
+            if not title:
+                continue
+            strong_cards.append(
+                "<article class='fw-card fw-strong'>"
+                f"<div class='fw-icon'>{self._icon_slot('strength')}</div>"
+                "<div>"
+                f"<div class='fw-title'>{html.escape(title)}</div>"
+                + (f"<div class='fw-desc'>{html.escape(description)}</div>" if description else "")
+                + (f"<div class='fw-action'><strong>Cómo mantenerlo:</strong> {html.escape(keep)}</div>" if keep else "")
+                + "</div>"
+                "</article>"
+            )
+
+        weak_cards: list[str] = []
+        for item in weaknesses[:4]:
+            if not isinstance(item, dict):
+                continue
+            title = self._clean_narrative_text(str(item.get("titulo", "") or "").strip())
+            description = self._clean_narrative_text(str(item.get("descripcion", "") or "").strip())
+            w_type = str(item.get("tipo", "") or "").strip().lower() or "proceso"
+            if not title:
+                continue
+            weak_cards.append(
+                "<article class='fw-card fw-weak'>"
+                f"<div class='fw-icon'>{self._icon_slot('improvement')}</div>"
+                "<div>"
+                f"<div class='fw-title'>{html.escape(title)}</div>"
+                + (f"<div class='fw-desc'>{html.escape(description)}</div>" if description else "")
+                + f"<div><span class='fw-tipo-badge'>{html.escape(self._humanize_action_type_label(w_type))}</span></div>"
+                + "</div>"
+                "</article>"
+            )
+
+        if not strong_cards and not weak_cards:
+            return ""
+        strong_html = "".join(strong_cards) if strong_cards else "<p class='muted'>Sin fortalezas destacadas en esta muestra.</p>"
+        weak_html = "".join(weak_cards) if weak_cards else "<p class='muted'>Sin debilidades críticas en esta muestra.</p>"
+        return (
+            "<h3>Qué funciona bien y qué hay que mejorar</h3>"
+            "<div class='fw-grid'>"
+            "<div class='fw-col'>"
+            f"<h4 class='fw-col-title fw-col-strong'>{self._icon_slot('strength')}Puntos fuertes</h4>"
+            f"{strong_html}"
+            "</div>"
+            "<div class='fw-col'>"
+            f"<h4 class='fw-col-title fw-col-weak'>{self._icon_slot('improvement')}Puntos a mejorar</h4>"
+            f"{weak_html}"
+            "</div>"
+            "</div>"
+        )
+
+    def _render_customer_bar_chart(self, scatter_payload: dict[str, Any]) -> str:
+        circles = scatter_payload.get("circles") if isinstance(scatter_payload, dict) else []
+        if not isinstance(circles, list) or not circles:
+            return ""
+        total = sum(self._safe_int(item.get("count")) for item in circles if isinstance(item, dict))
+        if total <= 0:
+            return ""
+
+        width = 640
+        label_width = 180
+        bar_max = width - label_width - 90
+        row_h = 32
+        gap = 10
+        colors = ["#0A7567", "#12B08A", "#D4F0E8", "#D4950A", "#C23B18"]
+        rows: list[str] = []
+        visible = circles[:5]
+        for idx, item in enumerate(visible):
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label", "") or f"Segmento {idx + 1}").strip()[:30]
+            count = self._safe_int(item.get("count"))
+            pct = count / max(1, total)
+            bar_w = max(1, int(round(pct * bar_max)))
+            y = idx * (row_h + gap)
+            color = colors[idx % len(colors)]
+            rows.append(
+                f"<text x='0' y='{y + 20}' fill='#161616' font-size='12' font-family='Plus Jakarta Sans,sans-serif'>{html.escape(label)}</text>"
+                f"<rect x='{label_width}' y='{y}' width='{bar_w}' height='{row_h}' rx='6' fill='{color}' opacity='0.85'/>"
+                f"<text x='{label_width + bar_w + 6}' y='{y + 20}' fill='#64748B' font-size='11' font-family='Plus Jakarta Sans,sans-serif'>{int(round(pct * 100))}% ({count})</text>"
+            )
+        total_h = max(44, len(visible) * (row_h + gap))
+        return (
+            "<div class='bar-chart-wrap'>"
+            f"<svg viewBox='0 0 {width} {total_h}' width='100%' height='{total_h}'>"
+            f"{''.join(rows)}"
+            "</svg>"
+            "</div>"
+        )
 
     def _render_section_plan(self, payload: dict[str, Any]) -> str:
         lectura = self._clean_narrative_text(str(payload.get("lectura_ejecutiva", "") or "").strip())
@@ -993,6 +1392,11 @@ class StructuredReportRenderer:
         if not isinstance(quick_wins, list):
             quick_wins = []
 
+        quick_wins_filtered = self._dedupe_quick_wins_against_plan(
+            quick_wins=quick_wins,
+            plan_actions=[*corto, *medio, *largo],
+        )
+
         invisible_items = "".join(
             "<li>"
             f"<strong>{html.escape(str(item.get('risk', '') or 'Riesgo detectado'))}:</strong> "
@@ -1004,9 +1408,18 @@ class StructuredReportRenderer:
         corto_html = self._render_action_items(corto)
         medio_html = self._render_action_items(medio)
         largo_html = self._render_action_items(largo)
-        quick_html = self._render_action_items(quick_wins, is_quick_wins=True)
+        quick_html = self._render_action_items(quick_wins_filtered, is_quick_wins=True)
 
         parts = [f"<p>{html.escape(lectura)}</p>" if lectura else ""]
+        if quick_html:
+            parts.extend(
+                [
+                    "<div class='urgent-block'>",
+                    f"<h3 class='urgent-title'>{self._icon_slot('urgent')}Esta semana — acciones de impacto inmediato</h3>",
+                    quick_html,
+                    "</div>",
+                ]
+            )
         if invisible_items:
             parts.extend(["<h3>Problemas invisibles (antes de que escalen)</h3>", f"<ul>{invisible_items}</ul>"])
 
@@ -1022,9 +1435,41 @@ class StructuredReportRenderer:
                     "<p class='muted'>En el anexo tienes el detalle completo de cada medida para llevarla a la práctica.</p>",
                 ]
             )
-        if quick_html:
-            parts.extend(["<h3>Acciones rápidas que ya puedes poner en marcha esta semana</h3>", quick_html])
         return "".join(parts)
+
+    def _dedupe_quick_wins_against_plan(
+        self,
+        *,
+        quick_wins: list[dict[str, Any]],
+        plan_actions: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not quick_wins:
+            return []
+        action_keys: set[str] = set()
+        for item in plan_actions:
+            if not isinstance(item, dict):
+                continue
+            action_text = str(item.get("accion") or item.get("action") or "").strip()
+            if not action_text:
+                continue
+            action_keys.add(self._normalize_text(action_text))
+
+        filtered: list[dict[str, Any]] = []
+        seen_titles: set[str] = set()
+        for item in quick_wins:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title", "") or "").strip()
+            if not title:
+                continue
+            normalized_title = self._normalize_text(title)
+            if not normalized_title or normalized_title in seen_titles:
+                continue
+            if any(normalized_title in key or key in normalized_title for key in action_keys if key):
+                continue
+            seen_titles.add(normalized_title)
+            filtered.append(item)
+        return filtered
 
     def _render_section_anexos(self, payload: dict[str, Any]) -> str:
         note = str(payload.get("nota", "") or "").strip()
@@ -1041,7 +1486,15 @@ class StructuredReportRenderer:
             parts.extend(["<h3>Resumen frente a competidores</h3>", benchmark_html])
         if voces_html:
             parts.extend(["<h3>Voz literal del cliente (muestra anonimizada)</h3>", voces_html])
-        return "".join(parts)
+        if not parts:
+            return ""
+        return (
+            "<details class='annex-details'>"
+            f"<summary class='annex-summary'>{self._icon_slot('annex')}Datos técnicos del análisis "
+            "<span class='annex-hint'>(despliega para ver)</span></summary>"
+            f"<div class='annex-body'>{''.join(parts)}</div>"
+            "</details>"
+        )
 
     def _render_review_rows_table(self, payload: Any) -> str:
         if not isinstance(payload, list) or not payload:
@@ -1136,15 +1589,29 @@ class StructuredReportRenderer:
 
             scalar_rows = []
             nested_rows = []
+            hidden_keys = {"analysis_id", "dataset_id"}
             for key, value in payload.items():
+                if str(key).strip().lower() in hidden_keys:
+                    continue
                 key_label = html.escape(self._labelize_key_spanish(str(key)))
                 if isinstance(value, (str, int, float, bool)) or value is None:
                     if isinstance(value, bool):
                         rendered_value = "Sí" if value else "No"
                     elif value is None:
-                        rendered_value = ""
+                        rendered_value = "—"
                     else:
-                        rendered_value = html.escape(self._clean_narrative_text(str(value)))
+                        rendered_raw = str(value)
+                        lower_key = str(key).strip().lower()
+                        if lower_key in {"created_at", "generated_at", "report_generated_at", "preview_report_generated_at"}:
+                            rendered_raw = self._format_human_date(rendered_raw)
+                        elif lower_key == "target_reputation_score":
+                            try:
+                                rendered_raw = f"{float(rendered_raw):.1f}/100"
+                            except (TypeError, ValueError):
+                                rendered_raw = "—"
+                        rendered_value = html.escape(self._clean_narrative_text(rendered_raw))
+                        if not rendered_value:
+                            rendered_value = "—"
                     scalar_rows.append(
                         f"<tr><th>{key_label}</th><td>{rendered_value}</td></tr>"
                     )
@@ -1174,12 +1641,12 @@ class StructuredReportRenderer:
         if not isinstance(circles, list):
             return None
 
-        width = 860.0
-        height = 380.0
-        pad_left = 84.0
-        pad_right = 42.0
+        width = 920.0
+        height = 400.0
+        pad_left = 96.0
+        pad_right = 46.0
         pad_top = 48.0
-        pad_bottom = 72.0
+        pad_bottom = 80.0
         inner_w = width - (pad_left + pad_right)
         inner_h = height - (pad_top + pad_bottom)
 
@@ -1206,12 +1673,12 @@ class StructuredReportRenderer:
                 f"<line x1='{x}' y1='{height - pad_bottom}' x2='{x}' y2='{height - pad_bottom + 6}' stroke='#8fd6c5' stroke-width='1'/>"
             )
             svg_parts.append(
-                f"<text x='{x - 9}' y='{height - pad_bottom + 22}' fill='#4b6e67' font-size='11'>{tick}</text>"
+                f"<text x='{x - 9}' y='{height - pad_bottom + 22}' fill='#64748B' font-size='11'>{tick}</text>"
             )
             svg_parts.append(
                 f"<line x1='{pad_left - 6}' y1='{y}' x2='{pad_left}' y2='{y}' stroke='#8fd6c5' stroke-width='1'/>"
             )
-            svg_parts.append(f"<text x='26' y='{y + 4}' fill='#4b6e67' font-size='11'>{tick}</text>")
+            svg_parts.append(f"<text x='26' y='{y + 4}' fill='#64748B' font-size='11'>{tick}</text>")
 
         palette = list(self._PALETTE)
         for index, circle in enumerate(circles):
@@ -1242,16 +1709,27 @@ class StructuredReportRenderer:
 
         x_label = html.escape(str(axes.get("x_label", axes.get("x", "X"))))
         y_label = html.escape(str(axes.get("y_label", axes.get("y", "Y"))))
+        x_note = str(axes.get("x_note", "") or "").strip()
+        y_note = str(axes.get("y_note", "") or "").strip()
         svg_parts.append(
-            f"<text x='{(pad_left + inner_w / 2) - 120}' y='{height - 16}' fill='#4b6e67' font-size='13'>{x_label}</text>"
+            f"<text x='{(pad_left + inner_w / 2) - 120}' y='{height - 16}' fill='#64748B' font-size='13'>{x_label}</text>"
         )
         svg_parts.append(
-            f"<text x='18' y='{(pad_top + inner_h / 2)}' transform='rotate(-90, 24, {pad_top + inner_h / 2})' fill='#4b6e67' font-size='13'>{y_label}</text>"
+            f"<text x='18' y='{(pad_top + inner_h / 2)}' transform='rotate(-90, 24, {pad_top + inner_h / 2})' fill='#64748B' font-size='13'>{y_label}</text>"
         )
+        notes: list[str] = []
+        if x_note:
+            notes.append(f"Eje X: {x_note}")
+        if y_note:
+            notes.append(f"Eje Y: {y_note}")
+        note_html = ""
+        if notes:
+            note_html = f"<div class='scatter-note'>{html.escape(' · '.join(notes))}</div>"
 
         return (
             "<div class='scatter'>"
             f"<svg viewBox='0 0 {width} {height}' width='100%' height='{height}'>{''.join(svg_parts)}</svg>"
+            f"{note_html}"
             "</div>"
         )
 
@@ -1337,10 +1815,19 @@ class StructuredReportRenderer:
             por_que = str(item.get("por_que") or item.get("why") or "").strip()
             encargado = str(item.get("encargado") or item.get("owner") or "").strip()
             objetivo = str(item.get("objetivo") or item.get("kpi") or "").strip()
+            action_type = str(item.get("tipo", "") or "").strip().lower()
+            tool = str(item.get("herramienta_si_aplica", "") or "").strip()
+            if not action_type:
+                action_type = self._infer_action_type_from_text(
+                    f"{item.get('problema', '')} {accion}"
+                )
+            if not tool:
+                tool = self._infer_action_tool_from_text(f"{item.get('problema', '')} {accion}")
             accion_h = self._humanize_action_text(accion)
             por_que_h = self._humanize_action_text(por_que)
             encargado_h = self._humanize_role(encargado)
             objetivo_h = self._humanize_action_text(objetivo)
+            tool_h = self._humanize_action_text(tool)
             plazo = item.get("horizon_days") or item.get("horizonte_dias")
             plazo_text = ""
             if plazo is not None:
@@ -1349,9 +1836,17 @@ class StructuredReportRenderer:
                 except (TypeError, ValueError):
                     plazo_text = str(plazo)
 
+            badge_cfg = self._action_type_badge(action_type)
+            badge_html = (
+                f"<span class='tipo-badge' style='background:{badge_cfg['bg']};"
+                f"color:{badge_cfg['text']};border-color:{badge_cfg['border']}'>{html.escape(badge_cfg['label'])}</span>"
+            )
             cards.append(
                 "<li class='action-card'>"
+                "<div class='action-card-header'>"
                 f"<div class='title'>{html.escape(self._clean_narrative_text(accion_h))}</div>"
+                f"{badge_html}"
+                "</div>"
                 + (f"<div>{html.escape(self._clean_narrative_text(por_que_h))}</div>" if por_que_h else "")
                 + (
                     f"<div class='meta-line'>Encargado de resolverlo: {html.escape(encargado_h)}</div>"
@@ -1360,6 +1855,7 @@ class StructuredReportRenderer:
                 )
                 + (f"<div class='meta-line'>Plazo objetivo: {html.escape(plazo_text)}</div>" if plazo_text else "")
                 + (f"<div class='meta-line'>Indicador de seguimiento: {html.escape(self._clean_narrative_text(objetivo_h))}</div>" if objetivo_h else "")
+                + (f"<div class='meta-line'>Herramienta: {html.escape(self._clean_narrative_text(tool_h))}</div>" if tool_h else "")
                 + "</li>"
             )
         if not cards:
@@ -1532,6 +2028,10 @@ class StructuredReportRenderer:
             return mapping[normalized]
         return normalized.replace("_", " ")
 
+    def _icon_slot(self, icon_name: str) -> str:
+        safe_name = html.escape(str(icon_name or "").strip().lower(), quote=True)
+        return f"<span class='icon-slot' data-icon='{safe_name}' aria-hidden='true'></span>"
+
     def _labelize_key_spanish(self, key: str) -> str:
         normalized = str(key or "").strip()
         if not normalized:
@@ -1677,6 +2177,102 @@ class StructuredReportRenderer:
         if not value:
             return ""
         return self._humanize_action_text(value)
+
+    def _humanize_action_type_label(self, action_type: str) -> str:
+        value = str(action_type or "").strip().lower()
+        mapping = {
+            "proceso": "Proceso interno",
+            "negocio": "Decisión de negocio",
+            "implementacion": "Implementación",
+            "tecnologico": "Solución tecnológica",
+        }
+        return mapping.get(value, "Proceso interno")
+
+    def _action_type_badge(self, action_type: str) -> dict[str, str]:
+        value = str(action_type or "").strip().lower()
+        mapping = {
+            "proceso": {
+                "label": "Proceso interno",
+                "bg": "#e3f0ff",
+                "text": "#1a5fa8",
+                "border": "#b3d1f5",
+            },
+            "negocio": {
+                "label": "Decisión de negocio",
+                "bg": "#fdf0e3",
+                "text": "#a85f1a",
+                "border": "#f5d1b3",
+            },
+            "implementacion": {
+                "label": "Implementación",
+                "bg": "#f3e3ff",
+                "text": "#7a1aa8",
+                "border": "#d9b3f5",
+            },
+            "tecnologico": {
+                "label": "Solución tecnológica",
+                "bg": "#e3fff0",
+                "text": "#1aa85f",
+                "border": "#b3f5d1",
+            },
+        }
+        return mapping.get(value, mapping["proceso"])
+
+    def _normalize_text(self, value: str) -> str:
+        raw = str(value or "").strip().lower()
+        if not raw:
+            return ""
+        normalized = re.sub(r"\s+", " ", raw)
+        normalized = normalized.replace("_", " ")
+        normalized = re.sub(r"[^a-z0-9áéíóúüñ ]+", " ", normalized)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        return normalized
+
+    def _format_human_date(self, value: str) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return "fecha no disponible"
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except Exception:
+            return raw[:10] if len(raw) >= 10 else raw
+        months = [
+            "enero",
+            "febrero",
+            "marzo",
+            "abril",
+            "mayo",
+            "junio",
+            "julio",
+            "agosto",
+            "septiembre",
+            "octubre",
+            "noviembre",
+            "diciembre",
+        ]
+        return f"{dt.day} de {months[dt.month - 1]} de {dt.year}"
+
+    def _infer_action_type_from_text(self, text: str) -> str:
+        normalized = self._normalize_text(text)
+        if any(token in normalized for token in ("crm", "software", "automat", "dashboard", "alerta")):
+            return "tecnologico"
+        if any(token in normalized for token in ("implementar", "integrar", "desarrollar")):
+            return "implementacion"
+        if any(token in normalized for token in ("precio", "margen", "carta", "menu", "estrategia")):
+            return "negocio"
+        return "proceso"
+
+    def _infer_action_tool_from_text(self, text: str) -> str:
+        normalized = self._normalize_text(text)
+        if any(token in normalized for token in ("resena", "reseña", "responder")):
+            return "Panel de reseñas y plantilla de respuesta"
+        if any(token in normalized for token in ("tiempo", "espera", "comanda")):
+            return "Registro de tiempos por turno"
+        if any(token in normalized for token in ("formacion", "formación", "protocolo", "equipo")):
+            return "Guía operativa y sesión interna"
+        if any(token in normalized for token in ("precio", "menu", "carta")):
+            return "Revisión de carta y costes"
+        return ""
 
     def _score_badge(self, score: float) -> str:
         if score >= 85.0:

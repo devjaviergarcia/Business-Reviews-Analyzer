@@ -229,15 +229,10 @@ class ReportWorker(QueuedJobWorkerBase):
         analysis_doc: dict[str, Any],
         review_docs: list[dict[str, Any]],
     ) -> str:
-        dataset_id = str(analysis_doc.get("dataset_id") or "").strip()
         source_counter: dict[str, int] = {}
-        timestamps: list[datetime] = []
         for review in review_docs:
             source = str(review.get("source", "unknown") or "unknown").strip().lower() or "unknown"
             source_counter[source] = int(source_counter.get(source, 0)) + 1
-            scraped_at = review.get("scraped_at")
-            if isinstance(scraped_at, datetime):
-                timestamps.append(scraped_at)
         source_label_map = {
             "google_maps": "Google Maps",
             "tripadvisor": "Tripadvisor",
@@ -253,28 +248,42 @@ class ReportWorker(QueuedJobWorkerBase):
         if not sources_summary:
             sources_summary = "sin fuente identificada"
 
-        time_window = "sin ventana temporal disponible"
-        if timestamps:
-            min_ts = min(timestamps)
-            max_ts = max(timestamps)
-            time_window = f"{min_ts.isoformat()} -> {max_ts.isoformat()}"
-
         analysis_created_at = analysis_doc.get("created_at")
-        analysis_created_at_text = (
-            analysis_created_at.isoformat() if isinstance(analysis_created_at, datetime) else str(analysis_created_at or "")
-        ) or "desconocido"
-
-        dataset_piece = (
-            f"conjunto de reseñas con identificador {dataset_id}"
-            if dataset_id
-            else "conjunto activo de reseñas sin identificador explícito"
-        )
+        analysis_created_at_text = self._format_date_human(analysis_created_at)
         return (
-            f"Este reporte de '{business_name or 'negocio'}' se construye a partir de {len(review_docs)} reseñas "
-            f"capturadas en {sources_summary}, pertenecientes al {dataset_piece}. "
-            f"Ventana temporal observada: {time_window}. "
-            f"Análisis base generado en {analysis_created_at_text}."
+            f"Este reporte de '{business_name or 'negocio'}' resume {len(review_docs)} opiniones reales "
+            f"recogidas en {sources_summary}. "
+            f"Última actualización del análisis: {analysis_created_at_text}."
         )
+
+    def _format_date_human(self, value: Any) -> str:
+        months = [
+            "enero",
+            "febrero",
+            "marzo",
+            "abril",
+            "mayo",
+            "junio",
+            "julio",
+            "agosto",
+            "septiembre",
+            "octubre",
+            "noviembre",
+            "diciembre",
+        ]
+        dt: datetime | None = None
+        if isinstance(value, datetime):
+            dt = value
+        else:
+            raw = str(value or "").strip()
+            if raw:
+                try:
+                    dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                except Exception:
+                    dt = None
+        if dt is None:
+            return "fecha no disponible"
+        return f"{dt.day} de {months[dt.month - 1]} de {dt.year}"
 
 
 async def _main() -> None:

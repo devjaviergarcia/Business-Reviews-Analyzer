@@ -27,7 +27,7 @@ export type SidebarMenuHandle = {
 export function createSidebarMenu(options: SidebarMenuOptions): SidebarMenuHandle {
   const root = createElement("aside", "sidebar");
   const brand = createElement("div", "sidebar__brand");
-  brand.innerHTML = `<span class="sidebar__dot"></span><span class="sidebar__title">Review Manager</span>`;
+  brand.innerHTML = `<span class="sidebar__dot"></span><span class="sidebar__title">Repiq Manager</span>`;
   root.append(brand);
 
   const nav = createElement("nav", "sidebar__nav");

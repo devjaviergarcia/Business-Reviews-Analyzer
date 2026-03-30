@@ -1,30 +1,30 @@
-@import url("https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap");
 
 :root {
   /* Global design tokens (single source of truth) */
-  --color-bg-main: #0b0f14;
-  --color-bg-soft: #10161f;
-  --color-surface-1: #121821;
-  --color-surface-2: #1a2330;
-  --color-surface-3: #202a38;
-  --color-border: #2a3647;
-  --color-border-strong: #3b485c;
-  --color-text-primary: #e6edf5;
-  --color-text-secondary: #9fb0c3;
-  --color-accent: #2f6feb;
-  --color-accent-2: #5e93ff;
+  --color-bg-main: #f4f2ec;
+  --color-bg-soft: #ede9df;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #ffffff;
+  --color-surface-3: #d4f0e8;
+  --color-border: rgba(0, 0, 0, 0.08);
+  --color-border-strong: rgba(10, 117, 103, 0.28);
+  --color-text-primary: #161616;
+  --color-text-secondary: #64748b;
+  --color-accent: #0a7567;
+  --color-accent-2: #12b08a;
 
-  --state-success: #2ea043;
-  --state-waiting: #d29922;
-  --state-failed: #f85149;
-  --state-human: #2f6feb;
+  --state-success: #12b08a;
+  --state-waiting: #d4950a;
+  --state-failed: #c23b18;
+  --state-human: #0a7567;
 
-  --radius-sm: 8px;
+  --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
 
-  --shadow-soft: 0 12px 26px rgba(0, 0, 0, 0.28);
-  --shadow-hover: 0 16px 34px rgba(0, 0, 0, 0.36);
+  --shadow-soft: none;
+  --shadow-hover: none;
 
   /* Component tokens */
   --cmp-worker-radius: var(--radius-md);
@@ -33,7 +33,7 @@
   --cmp-worker-text: var(--color-text-primary);
   --cmp-worker-border-width: 1px;
   --cmp-rope-thickness: 6px;
-  --cmp-rope-idle: #3a4658;
+  --cmp-rope-idle: #8fa3a0;
   --cmp-form-radius: var(--radius-md);
   --cmp-form-border: var(--color-border);
   --cmp-form-bg: var(--color-surface-2);
@@ -46,11 +46,11 @@
   --turquoise-900: var(--color-text-primary);
   --turquoise-700: var(--color-accent);
   --turquoise-500: var(--color-accent-2);
-  --turquoise-300: #7ea7ff;
+  --turquoise-300: #8ccfbe;
   --orange-700: var(--state-waiting);
-  --orange-500: #e3ad3b;
-  --orange-300: #f0c96f;
-  --white: var(--color-surface-1);
+  --orange-500: #d4950a;
+  --orange-300: #e7be59;
+  --white: #ffffff;
   --border: var(--color-border);
 }
 
@@ -63,9 +63,9 @@ body {
   margin: 0;
   padding: 0;
   min-height: 100%;
-  font-family: "Roboto", sans-serif;
+  font-family: "Plus Jakarta Sans", sans-serif;
   color: var(--text-main);
-  background: radial-gradient(circle at 12% 8%, #162132 0%, #0b0f14 44%, #090d13 100%);
+  background: var(--color-bg-main);
 }
 
 body::before,
@@ -74,8 +74,7 @@ body::after {
   position: fixed;
   z-index: -1;
   pointer-events: none;
-  border-radius: 50%;
-  filter: blur(8px);
+  display: none;
 }
 
 body::before {
@@ -83,7 +82,7 @@ body::before {
   height: 45vw;
   top: -16vw;
   left: -10vw;
-  background: linear-gradient(40deg, rgba(47, 111, 235, 0.18), rgba(255, 255, 255, 0.03));
+  background: transparent;
   transform: rotate(14deg);
 }
 
@@ -92,7 +91,7 @@ body::after {
   height: 38vw;
   bottom: -14vw;
   right: -9vw;
-  background: linear-gradient(210deg, rgba(42, 54, 71, 0.4), rgba(255, 255, 255, 0.02));
+  background: transparent;
   transform: rotate(-16deg);
 }
 
@@ -113,7 +112,7 @@ body::after {
 .app-shell__sidebar {
   padding: 18px;
   border-right: 1px solid var(--color-border);
-  background: linear-gradient(190deg, #121a24 0%, #0f141d 68%);
+  background: var(--color-bg-soft);
 }
 
 .app-shell__content {
@@ -134,9 +133,8 @@ body::after {
   gap: 10px;
   padding: 12px 14px;
   border-radius: var(--radius-lg);
-  background: linear-gradient(135deg, #264884, #2f6feb);
+  background: var(--color-accent);
   color: var(--white);
-  box-shadow: var(--shadow-soft);
 }
 
 .sidebar__dot {
@@ -147,8 +145,16 @@ body::after {
 }
 
 .sidebar__title {
+  font-family: "Syne", sans-serif;
   font-weight: 700;
   letter-spacing: 0.2px;
+}
+
+.jobs-list-item__title,
+.jobs-worker-title,
+.jobs6-node-title,
+.jobs6-drawer-title {
+  font-family: "Syne", sans-serif;
 }
 
 .sidebar__nav {
@@ -162,7 +168,7 @@ body::after {
 
 .sidebar__item {
   border: 1px solid var(--color-border);
-  background: #1a2230;
+  background: var(--color-surface-1);
   color: var(--color-text-primary);
   padding: 10px 12px;
   border-radius: var(--radius-md);
@@ -172,7 +178,7 @@ body::after {
 }
 
 .sidebar__item--active {
-  background: linear-gradient(135deg, #264884, #2f6feb);
+  background: var(--color-accent);
   color: var(--white);
   border-color: transparent;
 }
@@ -180,7 +186,7 @@ body::after {
 .sidebar__active-job {
   width: 100%;
   border: 1px solid var(--color-border);
-  background: #1a2230;
+  background: var(--color-surface-1);
   border-radius: var(--radius-md);
   padding: 10px;
   display: flex;
@@ -195,7 +201,7 @@ body::after {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  border: 2px solid rgba(159, 176, 195, 0.24);
+  border: 2px solid rgba(100, 116, 139, 0.24);
   border-top-color: var(--color-accent);
   animation: spin 1s linear infinite;
   flex: 0 0 auto;
@@ -238,8 +244,7 @@ body::after {
 .panel {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  background: rgba(18, 24, 33, 0.95);
-  box-shadow: var(--shadow-soft);
+  background: var(--color-surface-1);
   padding: 14px;
 }
 
@@ -247,12 +252,15 @@ body::after {
   margin: 0 0 10px;
   font-size: 20px;
   font-weight: 800;
+  font-family: "Syne", sans-serif;
   color: var(--turquoise-900);
 }
 
 .panel__subtitle {
   margin: 12px 0 8px;
   font-size: 16px;
+  font-family: "Syne", sans-serif;
+  font-weight: 700;
   color: var(--text-main);
 }
 
@@ -288,7 +296,7 @@ body::after {
 .atom-button,
 .atom-input,
 select.atom-input {
-  font-family: "Roboto", sans-serif;
+  font-family: "Plus Jakarta Sans", sans-serif;
   font-size: 14px;
   border-radius: var(--cmp-form-radius);
 }
@@ -320,23 +328,23 @@ select.atom-input {
 }
 
 .atom-button--turquoise {
-  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-2));
+  background: var(--color-accent);
   color: var(--white);
 }
 
 .atom-button--orange {
-  background: linear-gradient(135deg, var(--state-waiting), #e3ad3b);
+  background: var(--state-waiting);
   color: var(--white);
 }
 
 .atom-button--white {
-  background: #1a2330;
+  background: var(--color-surface-1);
   color: var(--color-text-primary);
   border-color: var(--color-border);
 }
 
 .atom-button.is-selected {
-  outline: 2px solid rgba(47, 111, 235, 0.4);
+  outline: 2px solid rgba(10, 117, 103, 0.4);
 }
 
 .atom-box {
@@ -346,12 +354,12 @@ select.atom-input {
 }
 
 .atom-box--turquoise {
-  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-2));
+  background: var(--color-accent);
   color: var(--white);
 }
 
 .atom-box--orange {
-  background: linear-gradient(135deg, var(--state-waiting), #e3ad3b);
+  background: var(--state-waiting);
   color: var(--white);
 }
 
@@ -379,8 +387,8 @@ select.atom-input {
   overflow: auto;
   border-radius: var(--radius-md);
   padding: 10px;
-  background: #06090d;
-  color: #dce8f8;
+  background: #0e1a16;
+  color: #edeae3;
   font-size: 12px;
   line-height: 1.4;
 }
@@ -415,7 +423,7 @@ select.atom-input {
 .table-link {
   background: transparent;
   border: 0;
-  color: #89adff;
+  color: var(--color-accent);
   text-decoration: underline;
   cursor: pointer;
   font-weight: 600;
@@ -454,7 +462,7 @@ select.atom-input {
 }
 
 .review-card__rating {
-  color: #dc6f13;
+  color: var(--state-waiting);
   font-weight: 700;
 }
 
@@ -483,7 +491,7 @@ select.atom-input {
 .business6-card {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: linear-gradient(170deg, rgba(32, 42, 56, 0.92) 0%, rgba(22, 29, 40, 0.92) 100%);
+  background: var(--color-surface-1);
   padding: 10px 12px;
   display: grid;
   gap: 6px;
@@ -563,7 +571,7 @@ select.atom-input {
 .business6-source-card {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: linear-gradient(180deg, rgba(18, 24, 33, 0.98), rgba(11, 15, 20, 0.98));
+  background: var(--color-surface-1);
   padding: 10px;
   display: grid;
   gap: 8px;
@@ -619,7 +627,7 @@ select.atom-input {
 .business6-preview-item {
   border: 1px solid rgba(159, 176, 195, 0.18);
   border-radius: var(--radius-sm);
-  background: rgba(32, 42, 56, 0.36);
+  background: rgba(10, 117, 103, 0.06);
   padding: 7px 8px;
   display: grid;
   gap: 4px;
@@ -694,8 +702,8 @@ select.atom-input {
 
 .business6-review-owner-reply {
   margin-top: 8px;
-  border: 1px solid rgba(47, 111, 235, 0.28);
-  background: rgba(47, 111, 235, 0.08);
+  border: 1px solid rgba(10, 117, 103, 0.28);
+  background: rgba(10, 117, 103, 0.08);
   border-radius: 8px;
   padding: 8px 10px;
 }
@@ -712,15 +720,15 @@ select.atom-input {
 }
 
 .business6-source--google {
-  background: rgba(47, 111, 235, 0.18);
-  border-color: rgba(47, 111, 235, 0.48);
-  color: #9fc0ff;
+  background: rgba(10, 117, 103, 0.18);
+  border-color: rgba(10, 117, 103, 0.48);
+  color: var(--color-accent);
 }
 
 .business6-source--tripadvisor {
-  background: rgba(46, 160, 67, 0.2);
-  border-color: rgba(46, 160, 67, 0.52);
-  color: #8fd8a1;
+  background: rgba(18, 176, 138, 0.2);
+  border-color: rgba(18, 176, 138, 0.52);
+  color: var(--state-success);
 }
 
 .business6-source--unknown {
@@ -738,19 +746,19 @@ select.atom-input {
 .progress-track {
   height: 10px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(10, 117, 103, 0.14);
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
   width: 0%;
-  background: linear-gradient(90deg, var(--color-accent), var(--color-accent-2));
+  background: var(--color-accent);
   transition: width 180ms linear;
 }
 
 .progress-fill-alt {
-  background: linear-gradient(90deg, var(--state-waiting), #e3ad3b);
+  background: var(--state-waiting);
 }
 
 .jobs-layout {
@@ -785,7 +793,7 @@ select.atom-input {
 
 .jobs-list-item--active {
   border-color: var(--color-accent);
-  background: linear-gradient(140deg, rgba(47, 111, 235, 0.25), rgba(26, 35, 48, 0.95));
+  background: rgba(10, 117, 103, 0.12);
   color: var(--cmp-worker-text);
 }
 
@@ -832,22 +840,22 @@ select.atom-input {
 }
 
 .jobs-status--running {
-  background: rgba(47, 111, 235, 0.22);
+  background: rgba(10, 117, 103, 0.22);
   color: var(--color-accent-2);
 }
 
 .jobs-status--done {
-  background: rgba(46, 160, 67, 0.24);
+  background: rgba(18, 176, 138, 0.24);
   color: var(--state-success);
 }
 
 .jobs-status--failed {
-  background: rgba(248, 81, 73, 0.24);
+  background: rgba(194, 59, 24, 0.24);
   color: var(--state-failed);
 }
 
 .jobs-status--needs-human {
-  background: rgba(47, 111, 235, 0.2);
+  background: rgba(10, 117, 103, 0.2);
   color: var(--state-human);
 }
 
@@ -950,8 +958,7 @@ select.atom-input {
 
 .jobs6-view .panel {
   border-color: var(--jobs6-border-subtle);
-  background: linear-gradient(180deg, rgba(18, 24, 33, 0.96) 0%, rgba(11, 15, 20, 0.96) 100%);
-  box-shadow: var(--jobs6-shadow);
+  background: var(--color-surface-1);
 }
 
 .jobs6-view .panel__title,
@@ -964,14 +971,14 @@ select.atom-input {
 }
 
 .jobs6-view .atom-button--white {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(10, 117, 103, 0.06);
   color: var(--jobs6-text-primary);
   border-color: var(--jobs6-border-subtle);
 }
 
 .jobs6-view .atom-button--turquoise {
-  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-2));
-  color: #f8fbff;
+  background: var(--color-accent);
+  color: #ffffff;
 }
 
 .jobs6-header-panel {
@@ -989,7 +996,7 @@ select.atom-input {
 .jobs6-badge,
 .jobs6-kv {
   border: 1px solid var(--jobs6-border-subtle);
-  background: rgba(26, 35, 48, 0.9);
+  background: rgba(10, 117, 103, 0.06);
   color: var(--jobs6-text-primary);
   border-radius: 999px;
   font-size: 12px;
@@ -1010,23 +1017,23 @@ select.atom-input {
 }
 
 .jobs6-badge--running {
-  border-color: rgba(47, 111, 235, 0.45);
+  border-color: rgba(10, 117, 103, 0.45);
   color: var(--color-accent-2);
 }
 
 .jobs6-badge--done {
-  border-color: rgba(46, 160, 67, 0.5);
+  border-color: rgba(18, 176, 138, 0.5);
   color: var(--state-success);
 }
 
 .jobs6-badge--failed {
-  border-color: rgba(248, 81, 73, 0.5);
+  border-color: rgba(194, 59, 24, 0.5);
   color: var(--state-failed);
 }
 
 .jobs6-badge--human,
 .jobs6-badge--needs-human {
-  border-color: rgba(47, 111, 235, 0.45);
+  border-color: rgba(10, 117, 103, 0.45);
   color: var(--state-human);
 }
 
@@ -1053,7 +1060,7 @@ select.atom-input {
 .jobs6-source-filter {
   min-width: 0;
   color: var(--jobs6-text-primary);
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(10, 117, 103, 0.06);
   border-color: var(--jobs6-border-subtle);
 }
 
@@ -1088,8 +1095,8 @@ select.atom-input {
 }
 
 .jobs6-list-item--active {
-  border-color: rgba(47, 111, 235, 0.7);
-  background: linear-gradient(140deg, rgba(47, 111, 235, 0.2), rgba(26, 35, 48, 0.92));
+  border-color: rgba(10, 117, 103, 0.7);
+  background: rgba(10, 117, 103, 0.12);
 }
 
 .jobs6-list-item-delete {
@@ -1183,7 +1190,7 @@ select.atom-input {
   border: var(--cmp-worker-border-width) solid var(--jobs6-border-subtle);
   border-radius: var(--radius-lg);
   padding: 12px;
-  background: radial-gradient(circle at 20% 20%, rgba(47, 111, 235, 0.08), rgba(11, 15, 20, 0.95) 58%);
+  background: rgba(10, 117, 103, 0.06);
 }
 
 .jobs6-sources-stack,
@@ -1208,7 +1215,6 @@ select.atom-input {
       rgba(0, 0, 0, 0.22) 4px 8px
     ),
     var(--rope-color);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.28);
   position: relative;
 }
 
@@ -1222,7 +1228,6 @@ select.atom-input {
   border-radius: 50%;
   transform: translateY(-50%);
   background: var(--rope-color);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.3);
 }
 
 .jobs6-connector--inline {
@@ -1333,22 +1338,22 @@ select.atom-input {
 }
 
 .jobs6-flag--running {
-  border-color: rgba(47, 111, 235, 0.5);
+  border-color: rgba(10, 117, 103, 0.5);
   color: var(--color-accent-2);
 }
 
 .jobs6-flag--done {
-  border-color: rgba(46, 160, 67, 0.5);
+  border-color: rgba(18, 176, 138, 0.5);
   color: var(--state-success);
 }
 
 .jobs6-flag--failed {
-  border-color: rgba(248, 81, 73, 0.5);
+  border-color: rgba(194, 59, 24, 0.5);
   color: var(--state-failed);
 }
 
 .jobs6-flag--needs-human {
-  border-color: rgba(47, 111, 235, 0.5);
+  border-color: rgba(10, 117, 103, 0.5);
   color: var(--state-human);
 }
 
@@ -1402,7 +1407,7 @@ select.atom-input {
 .jobs6-node-progress-fill {
   height: 100%;
   width: 0%;
-  background: linear-gradient(90deg, var(--color-accent), var(--color-accent-2));
+  background: var(--color-accent);
   transition: width 180ms linear;
 }
 
@@ -1428,8 +1433,8 @@ select.atom-input {
 .jobs6-log-block {
   min-height: 220px;
   max-height: 38vh;
-  background: #06090d;
-  color: #dce8f8;
+  background: #0e1a16;
+  color: #edeae3;
   border: 1px solid var(--jobs6-border-subtle);
 }
 
@@ -1437,8 +1442,7 @@ select.atom-input {
   position: absolute;
   z-index: 25;
   border: 1px solid var(--jobs6-border-subtle);
-  background: linear-gradient(180deg, rgba(18, 24, 33, 0.98), rgba(11, 15, 20, 0.98));
-  box-shadow: var(--jobs6-shadow);
+  background: var(--color-surface-1);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   opacity: 0;
@@ -1510,7 +1514,7 @@ select.atom-input {
 
 .jobs6-drawer-block {
   border: 1px solid var(--jobs6-border-subtle);
-  background: rgba(26, 35, 48, 0.66);
+  background: rgba(10, 117, 103, 0.06);
   border-radius: var(--cmp-form-radius);
   padding: 8px;
   color: var(--jobs6-text-secondary);
@@ -1528,7 +1532,7 @@ select.atom-input {
   max-height: 260px;
   margin: 0;
   border: 1px solid var(--jobs6-border-subtle);
-  background: #06090d;
+  background: #0e1a16;
 }
 
 @keyframes spin {
@@ -1557,13 +1561,11 @@ select.atom-input {
 .anim-hover {
   transition:
     transform var(--anim-hover-ms, 120ms) ease,
-    box-shadow var(--anim-hover-ms, 120ms) ease,
     filter var(--anim-hover-ms, 120ms) ease;
 }
 
 .anim-hover:hover {
   transform: translateY(var(--anim-hover-translate-y, -2px)) scale(var(--anim-hover-scale, 1.01));
-  box-shadow: var(--shadow-hover);
 }
 
 @media (max-width: 1080px) {

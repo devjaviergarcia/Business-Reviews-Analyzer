@@ -183,6 +183,15 @@ def test_advanced_report_builder_builds_5_sections_redesigned() -> None:
     assert isinstance(action_plan.get("corto_plazo_0_30_dias"), list)
     assert isinstance(action_plan.get("medio_plazo_30_90_dias"), list)
     assert isinstance(action_plan.get("largo_plazo_90_mas_dias"), list)
+    if action_plan.get("corto_plazo_0_30_dias"):
+        first_action = action_plan["corto_plazo_0_30_dias"][0]
+        assert isinstance(first_action.get("tipo"), str)
+        assert "herramienta_si_aplica" in first_action
+
+    resumen = sections["1_resumen_ejecutivo"]
+    assert isinstance(resumen.get("aciertos_estructurados"), list)
+    clientes = sections["3_quien_es_tu_cliente_y_que_le_preocupa"]
+    assert isinstance(clientes.get("fortalezas_debilidades"), dict)
 
     annexes = report.get("annexes")
     assert isinstance(annexes, dict)
@@ -190,6 +199,11 @@ def test_advanced_report_builder_builds_5_sections_redesigned() -> None:
     assert isinstance(full_data, dict)
     assert isinstance(full_data.get("dataset_summary"), dict)
     assert isinstance(full_data.get("review_rows"), list)
+
+    evolution = sections["2_score_reputacion"].get("evolucion") or {}
+    history = evolution.get("analyses_history") if isinstance(evolution, dict) else []
+    if isinstance(history, list) and history:
+        assert "analysis_id" not in history[0]
 
 
 def test_advanced_report_builder_handles_empty_reviews() -> None:
@@ -307,3 +321,12 @@ def test_dominant_problem_is_always_categorized_without_sin_categoria() -> None:
         dominant_problem = str(scored.get("dominant_problem", "") or "").strip().lower()
         assert dominant_problem not in forbidden
         assert scored.get("dominant_problem") == row["expected"]
+
+
+def test_sanitize_llm_text_reduces_generation_artifacts() -> None:
+    builder = AdvancedBusinessReportBuilder()
+    raw = "El serviiicio tiene impactoooo directo..  **Texto** conEspacios"
+    cleaned = builder._sanitize_llm_text(raw)
+    assert "impactoooo" not in cleaned
+    assert "**" not in cleaned
+    assert ".." not in cleaned
