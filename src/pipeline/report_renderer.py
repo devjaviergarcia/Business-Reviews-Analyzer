@@ -1208,13 +1208,18 @@ class StructuredReportRenderer:
         if not isinstance(preocupaciones, list):
             preocupaciones = []
         scatter = payload.get("scatter_clientes")
+        bar_chart = payload.get("bar_chart_clientes")
         fortalezas_debilidades = (
             payload.get("fortalezas_debilidades")
             if isinstance(payload.get("fortalezas_debilidades"), dict)
             else {}
         )
         strengths_weaknesses_html = self._render_strengths_weaknesses_section(fortalezas_debilidades)
-        bar_chart_html = self._render_customer_bar_chart(scatter if isinstance(scatter, dict) else {})
+        bar_chart_html = ""
+        if isinstance(bar_chart, dict):
+            bar_chart_html = self._render_bar_chart_vista_c(bar_chart)
+        if not bar_chart_html and isinstance(scatter, dict):
+            bar_chart_html = self._render_customer_bar_chart(scatter)
 
         customer_cards: list[str] = []
         for item in clientes[:3]:
@@ -1235,11 +1240,13 @@ class StructuredReportRenderer:
             if not isinstance(item, dict):
                 continue
             problema = self._humanize_action_text(str(item.get("problema", "") or "Tema"))
+            severity_value = self._safe_float(item.get("severidad"))
+            severity_label = self._severity_band(severity_value)
             problem_cards.append(
                 "<article class='cluster-card'>"
                 f"<h3>{html.escape(problema)}</h3>"
                 f"<p><strong>Volumen:</strong> {self._safe_int(item.get('volumen'))}</p>"
-                f"<p><strong>Severidad:</strong> {round(self._safe_float(item.get('severidad')), 3)}</p>"
+                f"<p><strong>Severidad:</strong> {html.escape(severity_label)} ({severity_value:.3f})</p>"
                 f"<p><strong>Valoración asociada:</strong> {round(self._safe_float(item.get('rating_medio_asociado')), 2)}</p>"
                 f"<p><strong>Ejemplo:</strong> {html.escape(str(item.get('ejemplo_literal', '') or ''))}</p>"
                 "</article>"
@@ -1264,7 +1271,11 @@ class StructuredReportRenderer:
             )
         if bar_chart_html:
             parts.extend(["<h3>Peso de cada tipo de cliente</h3>", bar_chart_html])
-        scatter_html = self._render_payload(scatter) if not self._is_empty_payload(scatter) else ""
+        scatter_html = ""
+        if isinstance(scatter, dict):
+            scatter_html = self._render_scatter_vista_d(scatter)
+            if not scatter_html:
+                scatter_html = self._render_payload(scatter) if not self._is_empty_payload(scatter) else ""
         if scatter_html:
             parts.extend(["<h3>Visualización de tipos de clientes</h3>", scatter_html])
         return "".join(parts)
@@ -1278,14 +1289,17 @@ class StructuredReportRenderer:
             return ""
 
         strong_cards: list[str] = []
+        seen_strength_titles: set[str] = set()
         for item in strengths[:4]:
             if not isinstance(item, dict):
                 continue
             title = self._clean_narrative_text(str(item.get("titulo", "") or "").strip())
             description = self._clean_narrative_text(str(item.get("descripcion", "") or "").strip())
             keep = self._clean_narrative_text(str(item.get("como_mantener", "") or "").strip())
-            if not title:
+            normalized_title = self._normalize_text(title)
+            if not title or not normalized_title or normalized_title in seen_strength_titles:
                 continue
+            seen_strength_titles.add(normalized_title)
             strong_cards.append(
                 "<article class='fw-card fw-strong'>"
                 f"<div class='fw-icon'>{self._icon_slot('strength')}</div>"
@@ -1298,14 +1312,17 @@ class StructuredReportRenderer:
             )
 
         weak_cards: list[str] = []
+        seen_weak_titles: set[str] = set()
         for item in weaknesses[:4]:
             if not isinstance(item, dict):
                 continue
             title = self._clean_narrative_text(str(item.get("titulo", "") or "").strip())
             description = self._clean_narrative_text(str(item.get("descripcion", "") or "").strip())
             w_type = str(item.get("tipo", "") or "").strip().lower() or "proceso"
-            if not title:
+            normalized_title = self._normalize_text(title)
+            if not title or not normalized_title or normalized_title in seen_weak_titles:
                 continue
+            seen_weak_titles.add(normalized_title)
             weak_cards.append(
                 "<article class='fw-card fw-weak'>"
                 f"<div class='fw-icon'>{self._icon_slot('improvement')}</div>"
@@ -1334,6 +1351,96 @@ class StructuredReportRenderer:
             "</div>"
             "</div>"
         )
+
+    def _render_bar_chart_vista_c(self, bar_chart_data: dict[str, Any]) -> str:
+        """
+        Vista C — SVG de barras horizontales por tipo de cliente.
+        """
+        rows = bar_chart_data.get("rows") if isinstance(bar_chart_data, dict) else []
+        if not isinstance(rows, list) or not rows:
+            return ""
+
+        svg_w = 860
+        row_h = 52
+        header_h = 28
+        pad_l = 10
+        bar_max_w = 440
+        col_sat = 560
+        col_sent = 680
+        col_pct = 780
+        total_h = header_h + len(rows) * row_h + 10
+        font = "Plus Jakarta Sans, sans-serif"
+
+        svg_parts: list[str] = [
+            f'<svg viewBox="0 0 {svg_w} {total_h}" width="100%" style="display:block;">',
+            f'<text x="{pad_l}" y="20" font-family="{font}" font-size="11" font-weight="600" fill="#64748B">Segmento de cliente</text>',
+            f'<text x="{col_sat}" y="20" text-anchor="middle" font-family="{font}" font-size="11" font-weight="600" fill="#64748B">Satisfacción</text>',
+            f'<text x="{col_sent}" y="20" text-anchor="middle" font-family="{font}" font-size="11" font-weight="600" fill="#64748B">Sentimiento</text>',
+            f'<text x="{col_pct}" y="20" text-anchor="middle" font-family="{font}" font-size="11" font-weight="600" fill="#64748B">Peso</text>',
+            f'<line x1="{pad_l}" y1="25" x2="{svg_w - 10}" y2="25" stroke="#E2DFD6" stroke-width="0.8"/>',
+        ]
+
+        for idx, row in enumerate(rows):
+            if not isinstance(row, dict):
+                continue
+            y_base = header_h + idx * row_h
+            color = str(row.get("color", "#0A7567") or "#0A7567")
+            label = html.escape(str(row.get("label", "") or "Segmento"))
+            count = self._safe_int(row.get("count_reviews"))
+            weight_pct = self._safe_float(row.get("weight_pct"))
+            bar_w = max(4, round((weight_pct / 100.0) * bar_max_w))
+            sat_label = html.escape(str(row.get("satisfaction_label", "") or ""))
+            sat_pct = self._safe_float(row.get("satisfaction_pct"))
+            sent_label = html.escape(str(row.get("sentiment_label", "") or ""))
+            sentiment = self._safe_float(row.get("sentiment"))
+            sent_sign = "+" if sentiment >= 0 else ""
+
+            if idx > 0:
+                svg_parts.append(
+                    f'<line x1="{pad_l}" y1="{y_base}" x2="{svg_w - 10}" y2="{y_base}" stroke="#E2DFD6" stroke-width="0.5"/>'
+                )
+
+            svg_parts.append(
+                f'<text x="{pad_l}" y="{y_base + 18}" font-family="{font}" font-size="13" font-weight="700" fill="{color}">{label}</text>'
+            )
+            svg_parts.append(
+                f'<text x="{pad_l}" y="{y_base + 33}" font-family="{font}" font-size="11" fill="#64748B">{count} reseñas</text>'
+            )
+            svg_parts.append(
+                f'<rect x="{pad_l}" y="{y_base + 37}" width="{bar_w}" height="10" rx="5" fill="{color}" fill-opacity="0.85"/>'
+            )
+            svg_parts.append(
+                f'<text x="{pad_l + bar_w + 6}" y="{y_base + 47}" font-family="{font}" font-size="10" fill="{color}" font-weight="600">{weight_pct:.1f}%</text>'
+            )
+
+            svg_parts.append(
+                f'<circle cx="{col_sat}" cy="{y_base + 25}" r="21" fill="{color}" fill-opacity="0.12" stroke="{color}" stroke-width="1.5"/>'
+            )
+            svg_parts.append(
+                f'<text x="{col_sat}" y="{y_base + 22}" text-anchor="middle" font-family="{font}" font-size="10" font-weight="700" fill="{color}">{sat_pct:.1f}%</text>'
+            )
+            svg_parts.append(
+                f'<text x="{col_sat}" y="{y_base + 33}" text-anchor="middle" font-family="{font}" font-size="9" fill="{color}" opacity="0.8">{sat_label}</text>'
+            )
+
+            svg_parts.append(
+                f'<text x="{col_sent}" y="{y_base + 23}" text-anchor="middle" font-family="{font}" font-size="14" font-weight="700" fill="{color}">{sent_sign}{sentiment:.2f}</text>'
+            )
+            svg_parts.append(
+                f'<text x="{col_sent}" y="{y_base + 36}" text-anchor="middle" font-family="{font}" font-size="10" fill="{color}" opacity="0.8">{sent_label}</text>'
+            )
+
+            bubble_r = max(4, round(4 + (weight_pct / 100.0) * 22))
+            svg_parts.append(
+                f'<circle cx="{col_pct}" cy="{y_base + 25}" r="{bubble_r}" fill="{color}" fill-opacity="0.85"/>'
+            )
+            if weight_pct >= 5:
+                svg_parts.append(
+                    f'<text x="{col_pct}" y="{y_base + 29}" text-anchor="middle" font-family="{font}" font-size="9" fill="#FFFFFF" font-weight="700">{weight_pct:.1f}%</text>'
+                )
+
+        svg_parts.append("</svg>")
+        return "<div class='bar-chart-wrap'>" + "\n".join(svg_parts) + "</div>"
 
     def _render_customer_bar_chart(self, scatter_payload: dict[str, Any]) -> str:
         circles = scatter_payload.get("circles") if isinstance(scatter_payload, dict) else []
@@ -1587,10 +1694,23 @@ class StructuredReportRenderer:
             if scatter_html:
                 return scatter_html
 
+            payload_to_render = dict(payload)
+            rank_value = self._safe_int(payload_to_render.get("target_rank"))
+            competitors_compared = self._safe_int(payload_to_render.get("total_competitors_compared"))
+            total_businesses_compared = self._safe_int(payload_to_render.get("total_businesses_compared"))
+            if rank_value > 0 and competitors_compared > 0 and total_businesses_compared <= 0:
+                total_businesses_compared = competitors_compared + 1
+            if rank_value > 0 and total_businesses_compared > 0:
+                payload_to_render["target_rank"] = (
+                    f"{rank_value} de {total_businesses_compared} negocios similares analizados"
+                )
+                payload_to_render.pop("total_competitors_compared", None)
+                payload_to_render.pop("total_businesses_compared", None)
+
             scalar_rows = []
             nested_rows = []
-            hidden_keys = {"analysis_id", "dataset_id"}
-            for key, value in payload.items():
+            hidden_keys = {"analysis_id", "dataset_id", "trend_slope", "sentiment_score"}
+            for key, value in payload_to_render.items():
                 if str(key).strip().lower() in hidden_keys:
                     continue
                 key_label = html.escape(self._labelize_key_spanish(str(key)))
@@ -1609,6 +1729,10 @@ class StructuredReportRenderer:
                                 rendered_raw = f"{float(rendered_raw):.1f}/100"
                             except (TypeError, ValueError):
                                 rendered_raw = "—"
+                        elif lower_key == "overall_sentiment":
+                            rendered_raw = self._humanize_sentiment_value(rendered_raw)
+                        elif lower_key == "trend":
+                            rendered_raw = self._humanize_trend_value(rendered_raw)
                         rendered_value = html.escape(self._clean_narrative_text(rendered_raw))
                         if not rendered_value:
                             rendered_value = "—"
@@ -1632,7 +1756,200 @@ class StructuredReportRenderer:
         text = self._clean_narrative_text(str(payload))
         return f"<p>{html.escape(text)}</p>" if text else ""
 
+    def _render_scatter_vista_d(self, scatter_data: dict[str, Any]) -> str:
+        """
+        Vista D — SVG por zonas semánticas (layout fijo).
+        No usa coordenadas reales de scatter: cada burbuja ocupa una celda lógica.
+        """
+        bubbles = scatter_data.get("bubbles") if isinstance(scatter_data, dict) else []
+        if not isinstance(bubbles, list) or not bubbles:
+            return ""
+
+        svg_w, svg_h = 900, 390
+        pad_l, pad_r, pad_t, pad_b = 72, 40, 28, 64
+        plot_w = svg_w - pad_l - pad_r
+        plot_h = svg_h - pad_t - pad_b
+        half_w = plot_w / 2.0
+        half_h = plot_h / 2.0
+        x_mid = pad_l + half_w
+        y_mid = pad_t + half_h
+        font = "Plus Jakarta Sans, sans-serif"
+        axes = scatter_data.get("axes") if isinstance(scatter_data.get("axes"), dict) else {}
+        quadrant_labels = (
+            scatter_data.get("quadrant_labels")
+            if isinstance(scatter_data.get("quadrant_labels"), dict)
+            else {}
+        )
+
+        zone_rects: dict[str, dict[str, float]] = {
+            "top_left": {"x": pad_l, "y": pad_t, "w": half_w, "h": half_h},
+            "top_right": {"x": x_mid, "y": pad_t, "w": half_w, "h": half_h},
+            "bottom_left": {"x": pad_l, "y": y_mid, "w": half_w, "h": half_h},
+            "bottom_right": {"x": x_mid, "y": y_mid, "w": half_w, "h": half_h},
+        }
+        zone_bg: dict[str, str] = {
+            "top_left": "#0A7567",
+            "top_right": "#D4950A",
+            "bottom_left": "#8B95A5",
+            "bottom_right": "#C23B18",
+        }
+        zone_order = ["top_left", "top_right", "bottom_left", "bottom_right"]
+
+        def _fallback_zone_from_xy(item: dict[str, Any]) -> str:
+            x = self._safe_float(item.get("x"))
+            y = self._safe_float(item.get("y"))
+            if y >= 50.0 and x < 50.0:
+                return "top_left"
+            if y >= 50.0 and x >= 50.0:
+                return "top_right"
+            if y < 50.0 and x < 50.0:
+                return "bottom_left"
+            return "bottom_right"
+
+        grouped: dict[str, list[dict[str, Any]]] = {zone: [] for zone in zone_order}
+        for item in bubbles:
+            if not isinstance(item, dict):
+                continue
+            zone = str(item.get("zone", "") or "").strip().lower()
+            if zone not in grouped:
+                zone = _fallback_zone_from_xy(item)
+            grouped[zone].append(item)
+
+        for zone in zone_order:
+            grouped[zone] = sorted(
+                grouped[zone],
+                key=lambda bubble: self._safe_int(bubble.get("count_reviews")),
+                reverse=True,
+            )
+
+        def _layout_zone(
+            zone_rect: dict[str, float],
+            zone_bubbles: list[dict[str, Any]],
+        ) -> list[tuple[dict[str, Any], float, float, float]]:
+            n = len(zone_bubbles)
+            if n <= 0:
+                return []
+            x0 = zone_rect["x"]
+            y0 = zone_rect["y"]
+            w = zone_rect["w"]
+            h = zone_rect["h"]
+            cx_center = x0 + (w / 2.0)
+            cy_center = y0 + (h / 2.0)
+            placements: list[tuple[dict[str, Any], float, float, float]] = []
+
+            if n == 1:
+                diameter = min(w, h) * 0.80
+                placements.append((zone_bubbles[0], cx_center, cy_center, diameter / 2.0))
+                return placements
+
+            if n == 2:
+                diameter = min(w * 0.42, h * 0.78)
+                left_x = x0 + (w * 0.30)
+                right_x = x0 + (w * 0.70)
+                placements.append((zone_bubbles[0], left_x, cy_center, diameter / 2.0))
+                placements.append((zone_bubbles[1], right_x, cy_center, diameter / 2.0))
+                return placements
+
+            diameter = min(w * 0.38, h * 0.38)
+            grid_positions = [
+                (0.30, 0.33),
+                (0.70, 0.33),
+                (0.30, 0.72),
+                (0.70, 0.72),
+            ]
+            for idx, bubble in enumerate(zone_bubbles[:4]):
+                rel_x, rel_y = grid_positions[idx]
+                bubble_cx = x0 + (w * rel_x)
+                bubble_cy = y0 + (h * rel_y)
+                placements.append((bubble, bubble_cx, bubble_cy, diameter / 2.0))
+            return placements
+
+        placed_bubbles: list[tuple[dict[str, Any], float, float, float]] = []
+        for zone in zone_order:
+            placed_bubbles.extend(_layout_zone(zone_rects[zone], grouped[zone]))
+
+        svg_parts: list[str] = [
+            f'<svg viewBox="0 0 {svg_w} {svg_h}" width="100%" style="display:block;">',
+        ]
+
+        for zone in zone_order:
+            rect = zone_rects[zone]
+            bg_color = zone_bg.get(zone, "#64748B")
+            svg_parts.append(
+                f'<rect x="{rect["x"]}" y="{rect["y"]}" width="{rect["w"]}" height="{rect["h"]}" fill="{bg_color}" fill-opacity="0.045"/>'
+            )
+            label_text = str(quadrant_labels.get(zone, "") or "").strip()
+            if label_text:
+                label_center_x = rect["x"] + (rect["w"] / 2.0)
+                label_y = rect["y"] + 14.0
+                svg_parts.append(
+                    f'<text x="{label_center_x}" y="{label_y}" text-anchor="middle" font-family="{font}" font-size="10" font-weight="600" fill="{bg_color}" opacity="0.85">{html.escape(label_text)}</text>'
+                )
+
+        svg_parts.extend(
+            [
+                f'<line x1="{x_mid}" y1="{pad_t}" x2="{x_mid}" y2="{pad_t + plot_h}" stroke="#D9D5CA" stroke-width="1.2"/>',
+                f'<line x1="{pad_l}" y1="{y_mid}" x2="{pad_l + plot_w}" y2="{y_mid}" stroke="#D9D5CA" stroke-width="1.2"/>',
+            ]
+        )
+
+        for bubble, cx_raw, cy_raw, radius_raw in placed_bubbles:
+            color = str(bubble.get("color", "#0A7567") or "#0A7567")
+            label_value = str(bubble.get("label", "") or "Segmento").strip()
+            label_text = html.escape(label_value[:22] + "..." if len(label_value) > 22 else label_value)
+            count = self._safe_int(bubble.get("count_reviews"))
+            weight_pct = self._safe_float(bubble.get("weight_pct"))
+            cx = round(cx_raw, 1)
+            cy = round(cy_raw, 1)
+            r = round(max(16.0, min(76.0, radius_raw)), 1)
+
+            if r >= 56:
+                label_font = 12
+                meta_font = 11
+                line1_y = cy - 8
+                line2_y = cy + 10
+            elif r >= 44:
+                label_font = 11
+                meta_font = 10
+                line1_y = cy - 6
+                line2_y = cy + 8
+            else:
+                label_font = 10
+                meta_font = 9
+                line1_y = cy - 5
+                line2_y = cy + 7
+
+            svg_parts.append(
+                f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="{color}" fill-opacity="0.14" stroke="{color}" stroke-width="2"/>'
+            )
+            svg_parts.append(
+                f'<text x="{cx}" y="{line1_y}" text-anchor="middle" font-family="{font}" font-size="{label_font}" font-weight="700" fill="{color}">{label_text}</text>'
+            )
+            svg_parts.append(
+                f'<text x="{cx}" y="{line2_y}" text-anchor="middle" font-family="{font}" font-size="{meta_font}" fill="{color}" opacity="0.9">{count} · {weight_pct:.1f}%</text>'
+            )
+
+        svg_parts.extend(
+            [
+                f'<line x1="{pad_l}" y1="{pad_t + plot_h}" x2="{pad_l + plot_w}" y2="{pad_t + plot_h}" stroke="#C5C1B8" stroke-width="0.8"/>',
+                f'<line x1="{pad_l}" y1="{pad_t}" x2="{pad_l}" y2="{pad_t + plot_h}" stroke="#C5C1B8" stroke-width="0.8"/>',
+                f'<text x="{pad_l + (plot_w / 2.0)}" y="{svg_h - 8}" text-anchor="middle" font-family="{font}" font-size="12" fill="#64748B">{html.escape(str(axes.get("x_label", "Brecha de expectativa")))}</text>',
+                f'<text x="18" y="{pad_t + (plot_h / 2.0)}" text-anchor="middle" font-family="{font}" font-size="12" fill="#64748B" transform="rotate(-90,18,{pad_t + (plot_h / 2.0)})">{html.escape(str(axes.get("y_label", "Satisfacción")))}</text>',
+                f'<text x="{pad_l + 4}" y="{pad_t + plot_h + 15}" font-family="{font}" font-size="10" fill="#8A928E">{html.escape(str(axes.get("x_low", "Expectativas cumplidas")))}</text>',
+                f'<text x="{pad_l + plot_w - 4}" y="{pad_t + plot_h + 15}" text-anchor="end" font-family="{font}" font-size="10" fill="#8A928E">{html.escape(str(axes.get("x_high", "Expectativas no cumplidas")))}</text>',
+                f'<text x="{pad_l - 8}" y="{pad_t + plot_h}" text-anchor="end" font-family="{font}" font-size="10" fill="#8A928E">{html.escape(str(axes.get("y_low", "Baja satisfacción")))}</text>',
+                f'<text x="{pad_l - 8}" y="{pad_t + 8}" text-anchor="end" font-family="{font}" font-size="10" fill="#8A928E">{html.escape(str(axes.get("y_high", "Alta satisfacción")))}</text>',
+                "</svg>",
+            ]
+        )
+        return "<div class='scatter'>" + "\n".join(svg_parts) + "</div>"
+
     def _maybe_render_scatter_svg(self, payload: dict[str, Any]) -> str | None:
+        if payload.get("type") == "scatter_d" or isinstance(payload.get("bubbles"), list):
+            rendered = self._render_scatter_vista_d(payload)
+            if rendered:
+                return rendered
+
         axes = payload.get("axes")
         circles = payload.get("circles")
         points = payload.get("points")
@@ -1709,27 +2026,16 @@ class StructuredReportRenderer:
 
         x_label = html.escape(str(axes.get("x_label", axes.get("x", "X"))))
         y_label = html.escape(str(axes.get("y_label", axes.get("y", "Y"))))
-        x_note = str(axes.get("x_note", "") or "").strip()
-        y_note = str(axes.get("y_note", "") or "").strip()
         svg_parts.append(
             f"<text x='{(pad_left + inner_w / 2) - 120}' y='{height - 16}' fill='#64748B' font-size='13'>{x_label}</text>"
         )
         svg_parts.append(
             f"<text x='18' y='{(pad_top + inner_h / 2)}' transform='rotate(-90, 24, {pad_top + inner_h / 2})' fill='#64748B' font-size='13'>{y_label}</text>"
         )
-        notes: list[str] = []
-        if x_note:
-            notes.append(f"Eje X: {x_note}")
-        if y_note:
-            notes.append(f"Eje Y: {y_note}")
-        note_html = ""
-        if notes:
-            note_html = f"<div class='scatter-note'>{html.escape(' · '.join(notes))}</div>"
 
         return (
             "<div class='scatter'>"
             f"<svg viewBox='0 0 {width} {height}' width='100%' height='{height}'>{''.join(svg_parts)}</svg>"
-            f"{note_html}"
             "</div>"
         )
 
@@ -1773,10 +2079,15 @@ class StructuredReportRenderer:
             if key not in components:
                 continue
             raw = components.get(key)
+            value_num = self._safe_float(raw)
+            context_label = self._metric_context_label(key, value_num)
+            display_value = formatter(raw)
+            if context_label:
+                display_value = f"{display_value} · {context_label}"
             cards.append(
                 "<article class='metric-card'>"
                 f"<div class='metric-title'>{html.escape(title)}</div>"
-                f"<div class='metric-value'>{html.escape(formatter(raw))}</div>"
+                f"<div class='metric-value'>{html.escape(display_value)}</div>"
                 f"<div class='metric-explain'>{html.escape(explain)}</div>"
                 "</article>"
             )
@@ -1948,10 +2259,14 @@ class StructuredReportRenderer:
             if key not in dims:
                 continue
             value = self._safe_float(dims.get(key))
+            context_label = self._metric_context_label(key, value)
+            display_value = f"{value:.2f}"
+            if context_label:
+                display_value = f"{display_value} · {context_label}"
             rows.append(
                 "<article class='metric-card'>"
                 f"<div class='metric-title'>{html.escape(title)}</div>"
-                f"<div class='metric-value'>{value:.2f}</div>"
+                f"<div class='metric-value'>{html.escape(display_value)}</div>"
                 f"<div class='metric-explain'>{html.escape(meaning)}</div>"
                 f"<div class='metric-explain'>{html.escape(reading)}</div>"
                 "</article>"
@@ -1991,6 +2306,12 @@ class StructuredReportRenderer:
             return ""
         text = text.replace("**", "")
         text = self._humanize_action_text(text)
+        text = re.sub(r"\bimpactoo\b", "impacto", text, flags=re.IGNORECASE)
+        text = re.sub(
+            r"\b([A-Za-zÁÉÍÓÚÜÑáéíóúüñ]{4,})([aeiouáéíóúüAEIOUÁÉÍÓÚÜ])\2\b",
+            r"\1\2",
+            text,
+        )
         text = re.sub(r"\s+", " ", text).strip()
         return text
 
@@ -2050,13 +2371,14 @@ class StructuredReportRenderer:
             "score_scale": "Escala de puntuación",
             "target_rank": "Posición del negocio",
             "total_competitors_compared": "Competidores comparados",
+            "total_businesses_compared": "Negocios analizados en la comparativa",
             "target_reputation_score": "Puntuación del negocio",
             "top_competitors": "Competidores destacados",
             "total_reviews": "Reseñas totales",
             "by_source": "Distribución por fuente",
             "by_problem": "Distribución por tema",
             "dimension_averages": "Promedio de dimensiones",
-            "overall_sentiment": "Sentimiento global",
+            "overall_sentiment": "Sentimiento del periodo",
             "review_count": "Número de reseñas",
             "cluster_count": "Número de tipos de cliente",
             "cluster_id": "Tipo de cliente",
@@ -2104,7 +2426,7 @@ class StructuredReportRenderer:
         )
         output = re.sub(
             r"^corregir incidencias de ['\"]?([^'\"]+)['\"]? con checklist operativo diario\.?$",
-            r"Mejorar de inmediato '\1' con una lista de tareas a realizar cada día.",
+            r"Mejorar de inmediato '\1' con una rutina diaria de revisión.",
             output,
             flags=re.IGNORECASE,
         )
@@ -2127,9 +2449,9 @@ class StructuredReportRenderer:
             flags=re.IGNORECASE,
         )
         replacements = (
-            ("checklist operativo diario", "lista de tareas a realizar cada día"),
-            ("checklist", "lista de tareas a realizar"),
-            ("checklists", "listas de tareas a realizar"),
+            ("checklist operativo diario", "rutina diaria de revisión"),
+            ("checklist", "guía de tareas"),
+            ("checklists", "guías de tareas"),
             ("micro-acción", "acción rápida"),
             ("quick wins", "acciones rápidas"),
             ("Data/Producto", "Dirección y mejora de procesos"),
@@ -2161,6 +2483,96 @@ class StructuredReportRenderer:
         output = re.sub(r"\bcalidad de la comida en reseñas negativas un 25%\b", "las menciones negativas sobre la calidad de la comida en un 25%", output, flags=re.IGNORECASE)
         output = re.sub(r"\brelación calidad-precio en reseñas negativas un 25%\b", "las menciones negativas sobre la relación calidad-precio en un 25%", output, flags=re.IGNORECASE)
         return output
+
+    def _humanize_sentiment_value(self, value: str) -> str:
+        normalized = self._normalize_text(value)
+        mapping = {
+            "positive": "Positivo",
+            "mixed": "Mixto",
+            "negative": "Negativo",
+            "positivo": "Positivo",
+            "mixto": "Mixto",
+            "negativo": "Negativo",
+        }
+        return mapping.get(normalized, value)
+
+    def _humanize_trend_value(self, value: str) -> str:
+        normalized = self._normalize_text(value)
+        mapping = {
+            "al alza": "Al alza",
+            "al_alza": "Al alza",
+            "a la baja": "A la baja",
+            "a_la_baja": "A la baja",
+            "estable": "Estable",
+        }
+        return mapping.get(normalized, value)
+
+    def _metric_context_label(self, key: str, value: float) -> str:
+        normalized = self._normalize_text(key)
+        if normalized in {"sentiment avg", "sentiment", "overall sentiment"}:
+            if value >= 0.6:
+                return "Tono positivo"
+            if value >= 0.2:
+                return "Tono favorable"
+            if value > -0.2:
+                return "Tono mixto"
+            return "Tono negativo"
+        if normalized in {"tranquility avg", "tranquility aggressiveness"}:
+            if value >= 0.85:
+                return "Muy tranquilo"
+            if value >= 0.65:
+                return "Tranquilo"
+            if value >= 0.45:
+                return "Con algo de tensión"
+            return "Tenso"
+        if normalized == "satisfaction":
+            if value >= 0.8:
+                return "Alta"
+            if value >= 0.6:
+                return "Media"
+            return "Baja"
+        if normalized == "expectation gap":
+            if value <= 0.12:
+                return "Expectativas bien gestionadas"
+            if value <= 0.3:
+                return "Hay margen de ajuste"
+            return "Brecha relevante"
+        if normalized == "improvement intent":
+            if value <= 0.15:
+                return "Baja - clientes satisfechos"
+            if value <= 0.35:
+                return "Moderada"
+            return "Alta — piden cambios"
+        if normalized == "negative ratio":
+            if value <= 0.08:
+                return "Bajo"
+            if value <= 0.18:
+                return "Medio"
+            return "Alto"
+        if normalized == "avg rating":
+            if value >= 4.5:
+                return "Excelente"
+            if value >= 4.0:
+                return "Buena"
+            if value >= 3.5:
+                return "Aceptable"
+            return "Mejorable"
+        if normalized == "response rate":
+            if value >= 0.7:
+                return "Muy activa"
+            if value >= 0.4:
+                return "Aceptable"
+            if value > 0.0:
+                return "Baja"
+            return "Sin respuestas"
+        return ""
+
+    def _severity_band(self, value: float) -> str:
+        if value >= 0.7:
+            return "Alta"
+        if value >= 0.4:
+            return "Media"
+        return "Baja"
 
     def _humanize_effort(self, *, effort: str) -> str:
         value = str(effort or "").strip().lower()

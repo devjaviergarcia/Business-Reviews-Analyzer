@@ -327,11 +327,18 @@ class AdvancedBusinessReportBuilder:
         score_label = self._score_label(score_value)
         customer_clusters_top = self._summarize_customer_clusters(customer_clusters=customer_clusters, limit=3)
         problem_clusters_top = self._summarize_problem_clusters(problem_clusters=problem_clusters, limit=3)
+        target_benchmark_payload = benchmarking.get("target") if isinstance(benchmarking, dict) else {}
+        total_competitors_compared = self._safe_int(benchmarking.get("total_competitors_compared"))
         benchmarking_summary = {
             "target_rank": benchmarking.get("target_rank"),
-            "total_competitors_compared": benchmarking.get("total_competitors_compared"),
-            "target_reputation_score": benchmarking.get("reputation_score"),
-            "top_competitors": (benchmarking.get("ranking") or [])[:3],
+            "total_competitors_compared": total_competitors_compared,
+            "total_businesses_compared": (total_competitors_compared + 1) if total_competitors_compared > 0 else 0,
+            "target_reputation_score": (
+                target_benchmark_payload.get("reputation_score")
+                if isinstance(target_benchmark_payload, dict)
+                else None
+            ),
+            "top_competitors": (benchmarking.get("top_competitors") or [])[:3],
         }
 
         sections = {
@@ -367,6 +374,7 @@ class AdvancedBusinessReportBuilder:
                 "tipologias_cliente_top3": customer_clusters_top,
                 "preocupaciones_top3": problem_clusters_top,
                 "scatter_clientes": customer_clusters.get("scatter"),
+                "bar_chart_clientes": customer_clusters.get("bar_chart"),
                 "fortalezas_debilidades": self._build_strengths_weaknesses_payload(
                     voice_of_customer=voice_of_customer,
                     problem_clusters_top=problem_clusters_top,
@@ -831,6 +839,7 @@ class AdvancedBusinessReportBuilder:
             "target": target_record,
             "target_rank": target_rank,
             "total_competitors_compared": len(competitors),
+            "total_businesses_compared": len(competitors) + 1,
             "top_competitors": top_competitors,
             "nearest_by_rating": nearest_competitors,
             "comparison_note": (
@@ -869,6 +878,10 @@ class AdvancedBusinessReportBuilder:
         for doc in reversed(analysis_docs):
             sentiment_value = str(doc.get("overall_sentiment", "") or "").strip().lower()
             sentiment_score = {"positive": 1.0, "mixed": 0.0, "negative": -1.0}.get(sentiment_value, 0.0)
+            sentiment_label = {"positive": "positivo", "mixed": "mixto", "negative": "negativo"}.get(
+                sentiment_value,
+                "mixto",
+            )
             created_at_value = doc.get("created_at")
             created_at_text = (
                 created_at_value.isoformat()
@@ -878,7 +891,7 @@ class AdvancedBusinessReportBuilder:
             history.append(
                 {
                     "created_at": created_at_text,
-                    "overall_sentiment": sentiment_value or "mixed",
+                    "overall_sentiment": sentiment_label,
                     "sentiment_score": sentiment_score,
                 }
             )
@@ -976,7 +989,9 @@ class AdvancedBusinessReportBuilder:
             return {
                 "cluster_count": 0,
                 "clusters": [],
-                "scatter": {"axes": {"x": "expectation_gap", "y": "satisfaction"}, "circles": [], "points": []},
+                "scatter": {"type": "scatter_d", "axes": {}, "bubbles": [], "circles": [], "points": []},
+                "bar_chart": {"type": "bar_chart_c", "rows": []},
+                "scatter_points_annex": [],
             }
 
         features = []
@@ -1034,7 +1049,6 @@ class AdvancedBusinessReportBuilder:
             cluster["customers"].append(customer)
 
         clusters = []
-        circles = []
         used_labels: set[str] = set()
         for cluster_id in sorted(clusters_map.keys()):
             customers_in_cluster = clusters_map[cluster_id]["customers"]
@@ -1044,25 +1058,6 @@ class AdvancedBusinessReportBuilder:
                 cluster_id=cluster_id,
                 used_labels=used_labels,
             )
-            center_x = statistics.mean(float(item["x"]) for item in customers_in_cluster)
-            center_y = statistics.mean(float(item["y"]) for item in customers_in_cluster)
-            max_distance = 0.0
-            for item in customers_in_cluster:
-                distance = math.dist((center_x, center_y), (float(item["x"]), float(item["y"])))
-                if distance > max_distance:
-                    max_distance = distance
-
-            radius = round(max_distance + 4.0, 3)
-            circles.append(
-                {
-                    "cluster_id": cluster_id,
-                    "label": label,
-                    "center": {"x": round(center_x, 3), "y": round(center_y, 3)},
-                    "radius": radius,
-                    "count": len(customers_in_cluster),
-                }
-            )
-
             clusters.append(
                 {
                     "cluster_id": cluster_id,
@@ -1095,31 +1090,172 @@ class AdvancedBusinessReportBuilder:
         return {
             "cluster_count": len(clusters),
             "clusters": clusters,
-            "scatter": {
-                "axes": {
-                    "x": "expectation_gap",
-                    "x_label": "Brecha de expectativa",
-                    "x_note": "Escala relativa al rango real observado en las reseñas analizadas.",
-                    "y": "satisfaction",
-                    "y_label": "Satisfacción",
-                    "y_note": "Escala relativa al rango real observado en las reseñas analizadas.",
-                    "size": "review_count",
-                },
-                "circles": circles,
-                "points": [
-                    {
-                        "customer_id": item["customer_id"],
-                        "display_name": item["display_name"],
-                        "cluster_id": item["cluster_id"],
-                        "x": item["x"],
-                        "y": item["y"],
-                        "size": item["size"],
-                        "review_count": item["review_count"],
-                        "avg_rating": item["avg_rating"],
-                    }
-                    for item in customers
-                ],
+            "scatter": self._build_scatter_vista_d(clusters=clusters),
+            "bar_chart": self._build_bar_chart_vista_c(clusters=clusters),
+            "scatter_points_annex": [
+                {
+                    "customer_id": item["customer_id"],
+                    "cluster_id": item["cluster_id"],
+                    "x": item["x"],
+                    "y": item["y"],
+                    "review_count": item["review_count"],
+                    "avg_rating": item["avg_rating"],
+                }
+                for item in customers
+            ],
+        }
+
+    def _build_scatter_vista_d(
+        self,
+        *,
+        clusters: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """
+        Vista D — Cuadrante posicional.
+        Una burbuja por cluster. Tamaño = peso de reseñas.
+        Posición = centroide normalizado al rango observado.
+        """
+        if not clusters:
+            return {"type": "scatter_d", "bubbles": [], "axes": {}, "circles": [], "points": []}
+
+        colors = ["#0A7567", "#12B08A", "#D4950A", "#C23B18", "#64748B"]
+        ranked = sorted(clusters, key=lambda c: self._safe_int(c.get("count_reviews")), reverse=True)
+        total_reviews = max(sum(self._safe_int(c.get("count_reviews")) for c in ranked), 1)
+
+        bubbles: list[dict[str, Any]] = []
+        circles_compat: list[dict[str, Any]] = []
+        for idx, cluster in enumerate(ranked):
+            centroid = cluster.get("centroid") or {}
+            count = self._safe_int(cluster.get("count_reviews"))
+            weight = count / total_reviews
+            gap_raw = self._safe_float(centroid.get("expectation_gap"))
+            sat_raw = self._safe_float(centroid.get("satisfaction"))
+            zone = self._assign_scatter_zone(expectation_gap=gap_raw, satisfaction=sat_raw)
+            color = colors[idx % len(colors)]
+            sentiment = self._safe_float(centroid.get("sentiment"))
+            satisfaction_pct = round(sat_raw * 100.0, 1)
+
+            bubbles.append(
+                {
+                    "cluster_id": cluster.get("cluster_id"),
+                    "label": cluster.get("label", ""),
+                    # Coordinates are no longer positional source of truth in layout mode.
+                    "x": 0.0,
+                    "y": 0.0,
+                    "radius": 0.0,
+                    "color": color,
+                    "count_reviews": count,
+                    "weight_pct": round(weight * 100.0, 1),
+                    "satisfaction_pct": satisfaction_pct,
+                    "sentiment": round(sentiment, 2),
+                    "expectation_gap": round(gap_raw, 3),
+                    "satisfaction": round(sat_raw, 3),
+                    "zone": zone,
+                }
+            )
+            circles_compat.append(
+                {
+                    "cluster_id": cluster.get("cluster_id"),
+                    "label": cluster.get("label", ""),
+                    "center": {"x": 0.0, "y": 0.0},
+                    "radius": 0.0,
+                    "count": count,
+                }
+            )
+
+        return {
+            "type": "scatter_d",
+            "axes": {
+                "x_label": "Brecha de expectativa",
+                "y_label": "Satisfacción",
+                "x_low": "Expectativas cumplidas",
+                "x_high": "Expectativas no cumplidas",
+                "y_low": "Baja satisfacción",
+                "y_high": "Alta satisfacción",
             },
+            "quadrant_labels": {
+                "top_left": "Satisfechos · Expectativas cumplidas",
+                "top_right": "Satisfechos · Expectativas no cumplidas",
+                "bottom_left": "Insatisfechos · Expectativas cumplidas",
+                "bottom_right": "Insatisfechos · Expectativas no cumplidas",
+            },
+            "bubbles": bubbles,
+            # Compatibilidad hacia atrás con consumidores existentes.
+            "circles": circles_compat,
+            "points": [],
+        }
+
+    def _assign_scatter_zone(self, *, expectation_gap: float, satisfaction: float) -> str:
+        sat_high = satisfaction >= 0.55
+        gap_low = expectation_gap <= 0.20
+        if sat_high and gap_low:
+            return "top_left"
+        if sat_high and not gap_low:
+            return "top_right"
+        if not sat_high and gap_low:
+            return "bottom_left"
+        return "bottom_right"
+
+    def _build_bar_chart_vista_c(
+        self,
+        *,
+        clusters: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """
+        Vista C — Barras horizontales de peso con métricas por segmento.
+        """
+        if not clusters:
+            return {"type": "bar_chart_c", "rows": []}
+
+        colors = ["#0A7567", "#12B08A", "#D4950A", "#C23B18", "#64748B"]
+        ranked = sorted(clusters, key=lambda c: self._safe_int(c.get("count_reviews")), reverse=True)
+        total_reviews = max(sum(self._safe_int(c.get("count_reviews")) for c in ranked), 1)
+
+        rows: list[dict[str, Any]] = []
+        for idx, cluster in enumerate(ranked):
+            centroid = cluster.get("centroid") or {}
+            count = self._safe_int(cluster.get("count_reviews"))
+            weight = count / total_reviews
+            sentiment = self._safe_float(centroid.get("sentiment"))
+            satisfaction = self._safe_float(centroid.get("satisfaction"))
+
+            if sentiment >= 0.4:
+                sentiment_label = "Muy positivo"
+            elif sentiment >= 0.1:
+                sentiment_label = "Positivo"
+            elif sentiment >= -0.1:
+                sentiment_label = "Neutro"
+            elif sentiment >= -0.4:
+                sentiment_label = "Negativo"
+            else:
+                sentiment_label = "Muy negativo"
+
+            if satisfaction >= 0.75:
+                satisfaction_label = "Alta"
+            elif satisfaction >= 0.5:
+                satisfaction_label = "Media"
+            else:
+                satisfaction_label = "Baja"
+
+            rows.append(
+                {
+                    "cluster_id": cluster.get("cluster_id"),
+                    "label": cluster.get("label", ""),
+                    "color": colors[idx % len(colors)],
+                    "count_reviews": count,
+                    "weight_pct": round(weight * 100.0, 1),
+                    "bar_width_pct": round(weight * 100.0, 1),
+                    "sentiment": round(sentiment, 2),
+                    "sentiment_label": sentiment_label,
+                    "satisfaction_pct": round(satisfaction * 100.0, 1),
+                    "satisfaction_label": satisfaction_label,
+                }
+            )
+
+        return {
+            "type": "bar_chart_c",
+            "rows": rows,
+            "columns": ["Segmento", "Peso", "Satisfacción", "Sentimiento"],
         }
 
     def _build_problem_clusters(self, *, review_metrics: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1273,14 +1409,27 @@ class AdvancedBusinessReportBuilder:
         if not isinstance(positives, list):
             positives = []
         strengths: list[dict[str, str]] = []
-        for item in positives[: max(0, int(limit))]:
+        max_items = max(0, int(limit))
+        seen_concepts: set[str] = set()
+        seen_quotes: set[str] = set()
+        for item in positives:
             if not isinstance(item, dict):
                 continue
             quote = str(item.get("quote", "") or "").strip()
             if not quote:
                 continue
+            quote_key = self._normalize_text(quote)
+            if not quote_key or quote_key in seen_quotes:
+                continue
             concept = self._infer_strength_concept(quote)
+            concept_key = self._normalize_text(concept)
+            if not concept_key or concept_key in seen_concepts:
+                continue
             strengths.append({"concepto": concept, "cita": quote[:240]})
+            seen_quotes.add(quote_key)
+            seen_concepts.add(concept_key)
+            if len(strengths) >= max_items:
+                break
         return strengths
 
     def _build_strengths_weaknesses_payload(
@@ -1313,12 +1462,14 @@ class AdvancedBusinessReportBuilder:
             if not isinstance(item, dict):
                 continue
             problem = self._human_label_problem(str(item.get("problema", "") or "experiencia general"))
+            severity_value = self._safe_float(item.get("severidad"))
+            severity_label = self._severity_label(severity_value)
             weak_points.append(
                 {
                     "titulo": problem,
                     "descripcion": (
                         f"Aparece en {self._safe_int(item.get('volumen'))} reseñas y con severidad "
-                        f"{round(self._safe_float(item.get('severidad')), 2)}."
+                        f"{severity_label}."
                     ),
                     "tipo": self._infer_action_type(problem),
                 }
@@ -2583,8 +2734,14 @@ class AdvancedBusinessReportBuilder:
             return ""
         output = value
         output = output.replace("**", "")
+        output = re.sub(r"\bimpactoo\b", "impacto", output, flags=re.IGNORECASE)
         output = re.sub(r"([A-Za-zÁÉÍÓÚÜÑáéíóúüñ])\1{3,}", r"\1\1", output)
         output = re.sub(r"([aeiouáéíóúüAEIOUÁÉÍÓÚÜ])\1{2,}", r"\1", output)
+        output = re.sub(
+            r"\b([A-Za-zÁÉÍÓÚÜÑáéíóúüñ]{4,})([aeiouáéíóúüAEIOUÁÉÍÓÚÜ])\2\b",
+            r"\1\2",
+            output,
+        )
         output = re.sub(r"\.{2,}", ".", output)
         output = re.sub(r"[ \t]{2,}", " ", output)
         output = re.sub(r"\s+\n", "\n", output)
@@ -2642,6 +2799,13 @@ class AdvancedBusinessReportBuilder:
         if not value:
             return "Experiencia general"
         return self._plainify_business_text(value).replace("_", " ")
+
+    def _severity_label(self, value: float) -> str:
+        if value >= 0.7:
+            return "alta"
+        if value >= 0.4:
+            return "media"
+        return "baja"
 
     def _plainify_business_text(self, text: str) -> str:
         value = str(text or "").strip()
