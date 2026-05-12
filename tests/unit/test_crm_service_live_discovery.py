@@ -18,9 +18,21 @@ class _Dummy:
 class _FakePage:
     def __init__(self) -> None:
         self.url = "https://www.google.com/maps/search/restaurantes+cordoba"
+        self.keyboard = _FakeKeyboard()
 
     async def wait_for_timeout(self, _ms: int) -> None:
         return None
+
+    async def evaluate(self, _script: str) -> dict[str, Any]:
+        return {"found": True, "items": []}
+
+
+class _FakeKeyboard:
+    def __init__(self) -> None:
+        self.pressed: list[str] = []
+
+    async def press(self, key: str) -> None:
+        self.pressed.append(str(key))
 
 
 class _FakeScraper:
@@ -123,7 +135,10 @@ class _FakeDatabase:
 
 
 def _service() -> CRMService:
-    return CRMService(job_service=_Dummy(), business_service=_Dummy())
+    service = CRMService(job_service=_Dummy(), business_service=_Dummy())
+    service._use_repo_v2 = False
+    service._use_discovery_v2 = False
+    return service
 
 
 def test_live_google_maps_discovery_auto_scroll_collects_candidates(monkeypatch: Any) -> None:
@@ -188,6 +203,79 @@ def test_live_google_maps_discovery_auto_scroll_collects_candidates(monkeypatch:
     assert enrich_calls["count"] == 1
     assert all(str(item.get("source")) == "google_maps_live_discovery" for item in candidates)
     assert all(bool((item.get("source_ref") or {}).get("listing_enriched")) for item in candidates)
+
+
+def test_search_google_maps_query_runs_maps_home_and_consent_first() -> None:
+    service = _service()
+    call_order: list[str] = []
+
+    class _LocalScraper:
+        def __init__(self) -> None:
+            self.page = _FakePage()
+
+        async def _go_to_maps_home(self) -> None:
+            call_order.append("go_to_maps_home")
+
+        async def _dismiss_google_consent_if_present(self) -> None:
+            call_order.append("dismiss_consent")
+
+        async def _human_click(self, _locator: Any) -> None:
+            call_order.append("human_click")
+
+        async def _human_type(self, _locator: Any, _text: str) -> None:
+            call_order.append("human_type")
+
+    scraper = _LocalScraper()
+
+    async def _fake_first_visible_from_patterns(
+        *,
+        scraper: Any,
+        key: str,
+        timeout_ms: int = 0,
+    ) -> Any:
+        _ = scraper, timeout_ms
+        if key == "SEARCH_INPUT":
+            return object()
+        if key == "SEARCH_BUTTON":
+            return object()
+        return None
+
+    service._first_visible_from_patterns = _fake_first_visible_from_patterns  # type: ignore[method-assign]
+
+    asyncio.run(service._search_google_maps_query(scraper=scraper, query="restaurantes sevilla"))
+    assert call_order[:2] == ["go_to_maps_home", "dismiss_consent"]
+    assert "human_type" in call_order
+    assert "Control+A" in scraper.page.keyboard.pressed
+    assert "Backspace" in scraper.page.keyboard.pressed
+
+
+def test_collect_visible_google_maps_results_parses_rating_and_reviews() -> None:
+    service = _service()
+
+    class _EvalPage(_FakePage):
+        async def evaluate(self, _script: str) -> dict[str, Any]:
+            return {
+                "found": True,
+                "items": [
+                    {
+                        "name": "Restaurante Demo",
+                        "maps_url": "https://www.google.com/maps/place/demo",
+                        "source_card_label": "Restaurante Demo",
+                        "rating_label": "4,6 estrellas 7518 reseñas",
+                        "reviews_label": "(7518)",
+                    }
+                ],
+            }
+
+    class _EvalScraper:
+        def __init__(self) -> None:
+            self.page = _EvalPage()
+
+    items = asyncio.run(service._collect_visible_google_maps_results(scraper=_EvalScraper()))  # type: ignore[arg-type]
+    assert len(items) == 1
+    assert items[0]["name"] == "Restaurante Demo"
+    assert items[0]["rating"] == 4.6
+    assert items[0]["review_count"] == 7518
 
 
 def test_live_google_maps_candidate_enrichment_merges_listing_data() -> None:
@@ -289,3 +377,41 @@ def test_process_discovery_task_auto_live_persists_into_crm_leads(monkeypatch: A
     assert int(result["inserted"]) == 2
     assert len(fake_leads.docs) == 2
     assert all(str(doc.get("source")) == "google_maps_live_discovery" for doc in fake_leads.docs)
+    assert all(isinstance(doc.get("rating"), (int, float)) for doc in fake_leads.docs)
+    assert all(isinstance(doc.get("review_count"), int) for doc in fake_leads.docs)
+
+
+def test_discover_candidates_auto_alias_uses_live_flow(monkeypatch: Any) -> None:
+    service = _service()
+    calls = {"live": 0, "stored": 0}
+
+    async def _fake_live(**_kwargs: Any) -> list[dict[str, Any]]:
+        calls["live"] += 1
+        return [
+            {
+                "business_name": "Cafe Demo",
+                "source": "google_maps_live_discovery",
+                "source_ref": {"listing_enriched": True},
+            }
+        ]
+
+    async def _fake_stored(**_kwargs: Any) -> list[dict[str, Any]]:
+        calls["stored"] += 1
+        return []
+
+    service._discover_candidates_live_google_maps = _fake_live  # type: ignore[method-assign]
+    service._discover_candidates_from_stored_sources = _fake_stored  # type: ignore[method-assign]
+
+    payload = CRMLeadDiscoveryTaskPayload(
+        query="cafeterias madrid",
+        city=None,
+        category=None,
+        limit=1,
+        source="auto",
+    )
+    result = asyncio.run(service._discover_candidates(task_payload=payload))
+
+    assert calls["live"] == 1
+    assert calls["stored"] == 0
+    assert len(result) == 1
+    assert result[0]["business_name"] == "Cafe Demo"

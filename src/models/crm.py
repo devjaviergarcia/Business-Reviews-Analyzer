@@ -47,6 +47,14 @@ class CRMMessageStatus(str, Enum):
     SKIPPED = "skipped"
 
 
+class CRMDiscoveryRunStatus(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    PARTIAL = "partial"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class CRMConsentProof(BaseModel):
     granted_at: datetime
     source: str
@@ -90,6 +98,8 @@ class CRMLead(BaseModel):
     address: str | None = None
     source: str = "unknown"
     source_ref: dict[str, Any] = Field(default_factory=dict)
+    rating: float | None = None
+    review_count: int | None = None
     status: CRMLeadStatus = CRMLeadStatus.NEW
     score: float = 0.0
     legal: CRMLeadLegalBlock = Field(default_factory=CRMLeadLegalBlock)
@@ -206,3 +216,23 @@ class CRMSuppression(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     model_config = ConfigDict(extra="forbid")
+
+
+class CRMDiscoveryRun(BaseModel):
+    id: str | None = None
+    job_id: str | None = None
+    query: str
+    city: str | None = None
+    category: str | None = None
+    source: str = "auto_live_google_maps"
+    limit: int = 100
+    status: CRMDiscoveryRunStatus = CRMDiscoveryRunStatus.QUEUED
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    steps: list[dict[str, Any]] = Field(default_factory=list)
+    failure_reason: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+    model_config = ConfigDict(extra="forbid", use_enum_values=True)

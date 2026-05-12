@@ -293,6 +293,7 @@ class CRMLeadDiscoveryTaskPayload(BaseModel):
     category: str | None = None
     limit: int = 100
     source: str = "auto_live_google_maps"
+    discovery_run_id: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -304,7 +305,7 @@ class CRMLeadDiscoveryTaskPayload(BaseModel):
             raise ValueError("query cannot be empty.")
         return cleaned
 
-    @field_validator("city", "category", mode="before")
+    @field_validator("city", "category", "discovery_run_id", mode="before")
     @classmethod
     def normalize_optional_text(cls, value: object) -> object:
         if value is None:
@@ -388,7 +389,7 @@ class CRMCampaignDispatchTaskPayload(BaseModel):
 
 
 class CRMLeadDiscoveryJobEnvelope(BaseModel):
-    queue_name: Literal["crm"] = "crm"
+    queue_name: Literal["crm", "scrape_google_maps"] = "crm"
     job_type: Literal["crm_lead_discovery"] = "crm_lead_discovery"
     payload: CRMLeadDiscoveryTaskPayload
 
@@ -627,11 +628,13 @@ def build_worker_job_envelope(
             payload=task_payload,
         )
 
-    if normalized_queue == "crm" and normalized_job_type == "crm_lead_discovery":
+    if normalized_queue in {"crm", "scrape_google_maps"} and normalized_job_type == "crm_lead_discovery":
         if not isinstance(task_payload, CRMLeadDiscoveryTaskPayload):
-            raise TypeError("Expected CRMLeadDiscoveryTaskPayload for crm/crm_lead_discovery.")
+            raise TypeError(
+                "Expected CRMLeadDiscoveryTaskPayload for crm|scrape_google_maps/crm_lead_discovery."
+            )
         return CRMLeadDiscoveryJobEnvelope(
-            queue_name="crm",
+            queue_name=normalized_queue,
             job_type="crm_lead_discovery",
             payload=task_payload,
         )

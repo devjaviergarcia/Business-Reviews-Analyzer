@@ -23,6 +23,24 @@ def test_parse_crm_lead_discovery_payload_legacy_defaults() -> None:
     assert payload.query == "restaurante sevilla"
     assert payload.limit == 100
     assert payload.source == "auto_live_google_maps"
+    assert payload.discovery_run_id is None
+
+
+def test_parse_crm_lead_discovery_payload_from_scrape_google_maps_queue() -> None:
+    payload = parse_crm_lead_discovery_payload(
+        {
+            "queue_name": "scrape_google_maps",
+            "job_type": "crm_lead_discovery",
+            "payload": {
+                "query": "merienda cordoba",
+                "limit": 100,
+                "source": "auto_live_google_maps",
+            },
+        }
+    )
+    assert payload.query == "merienda cordoba"
+    assert payload.limit == 100
+    assert payload.source == "auto_live_google_maps"
 
 
 def test_parse_crm_lead_pipeline_payload_sources_normalized() -> None:
@@ -65,6 +83,14 @@ def test_build_worker_job_envelope_crm_types() -> None:
     )
     assert discovery_env.queue_name == "crm"
     assert discovery_env.job_type == "crm_lead_discovery"
+
+    discovery_scrape_env = build_worker_job_envelope(
+        queue_name="scrape_google_maps",
+        job_type="crm_lead_discovery",
+        task_payload=CRMLeadDiscoveryTaskPayload(query="hotel cordoba"),
+    )
+    assert discovery_scrape_env.queue_name == "scrape_google_maps"
+    assert discovery_scrape_env.job_type == "crm_lead_discovery"
 
     pipeline_env = build_worker_job_envelope(
         queue_name="crm",

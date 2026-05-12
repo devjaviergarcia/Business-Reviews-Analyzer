@@ -12,16 +12,22 @@ from typing import Any
 
 from src.config import settings
 from src.database import close_mongo_connection, connect_to_mongo
-from src.dependencies import create_business_service, create_worker_job_broker
+from src.dependencies import create_business_service, create_crm_service, create_worker_job_broker
 from src.services.business_service import (
     BusinessService,
     ScrapeBotDetectedError,
     ScrapeNeedsHumanInterventionError,
 )
+from src.services.crm_service import CRMService
 from src.services.tripadvisor_session_service import TripadvisorSessionService
 from src.workers.base_queue_worker import QueuedJobWorkerBase
 from src.workers.broker import WorkerJobBroker
-from src.workers.contracts import AnalysisGenerateTaskPayload, AnalysisJobStatus, parse_analyze_business_payload
+from src.workers.contracts import (
+    AnalysisGenerateTaskPayload,
+    AnalysisJobStatus,
+    parse_analyze_business_payload,
+    parse_crm_lead_discovery_payload,
+)
 
 LOGGER = logging.getLogger("scraper_worker")
 logging.basicConfig(
@@ -40,9 +46,11 @@ class ScraperWorker(QueuedJobWorkerBase):
         self,
         service: BusinessService | None = None,
         job_broker: WorkerJobBroker | None = None,
+        crm_service: CRMService | None = None,
     ) -> None:
         super().__init__(job_broker=job_broker or create_worker_job_broker())
         self._service = service or create_business_service()
+        self._crm_service = crm_service or create_crm_service()
         self._tripadvisor_session_service = TripadvisorSessionService()
         self.queue_name = self._resolve_queue_name(settings.worker_scrape_queue)
         self._scrape_source = self._resolve_scrape_source(settings.worker_scrape_source)
@@ -335,6 +343,22 @@ class ScraperWorker(QueuedJobWorkerBase):
         return summary
 
     async def _process_job(self, job: dict) -> None:
+        job_type = str(job.get("job_type") or "").strip().lower() or "unknown"
+        if job_type == "crm_lead_discovery":
+            await self._process_crm_discovery_job(job)
+            return
+        if job_type != "business_analyze":
+            job_id = job.get("_id")
+            error = f"Unsupported scrape job type '{job_type}'."
+            await self._job_broker.mark_failed(job_id=job_id, error=error)
+            LOGGER.error(
+                "Unsupported scrape job id=%s queue=%s job_type=%s",
+                job_id,
+                self.queue_name,
+                job_type,
+            )
+            return
+
         job_id = job.get("_id")
         started_at = time.monotonic()
         stage_counts: Counter[str] = Counter()
@@ -711,6 +735,42 @@ class ScraperWorker(QueuedJobWorkerBase):
                         job_id,
                         job_outcome,
                     )
+
+    async def _process_crm_discovery_job(self, job: dict[str, Any]) -> None:
+        job_id = job.get("_id")
+        try:
+            await self._job_broker.append_event(
+                job_id=job_id,
+                stage="crm_discovery_worker_started",
+                message="CRM discovery started on scrape_google_maps worker.",
+                status=AnalysisJobStatus.RUNNING,
+                data={
+                    "queue_name": self.queue_name,
+                    "job_type": "crm_lead_discovery",
+                },
+            )
+            payload = parse_crm_lead_discovery_payload(job)
+            result = await self._crm_service.process_discovery_task(task_payload=payload, job_id=job_id)
+            await self._job_broker.append_event(
+                job_id=job_id,
+                stage="crm_discovery_worker_completed",
+                message="CRM discovery completed on scrape_google_maps worker.",
+                status=AnalysisJobStatus.RUNNING,
+                data={
+                    "queue_name": self.queue_name,
+                    "job_type": "crm_lead_discovery",
+                    "result": result,
+                },
+            )
+            await self._job_broker.mark_done(job_id=job_id, result=result)
+        except Exception as exc:  # noqa: BLE001
+            await self._job_broker.mark_failed(job_id=job_id, error=str(exc))
+            LOGGER.exception(
+                "CRM discovery job failed on scrape worker id=%s queue=%s error=%s",
+                job_id,
+                self.queue_name,
+                exc,
+            )
 
 
 async def _main() -> None:

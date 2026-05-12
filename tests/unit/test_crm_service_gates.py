@@ -12,7 +12,10 @@ class _Dummy:
 
 
 def _service() -> CRMService:
-    return CRMService(job_service=_Dummy(), business_service=_Dummy())
+    service = CRMService(job_service=_Dummy(), business_service=_Dummy())
+    service._use_repo_v2 = False
+    service._use_discovery_v2 = False
+    return service
 
 
 def test_can_send_requires_consent_granted() -> None:

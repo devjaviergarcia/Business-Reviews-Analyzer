@@ -497,7 +497,7 @@ cmd_up() {
 
   cd "$REPO_ROOT"
   start_bridge_detached
-  docker compose --profile worker up -d $build_arg mongodb app scraper-google-worker analysis-worker report-worker
+  docker compose --profile worker up -d $build_arg mongodb app scraper-google-worker analysis-worker report-worker crm-worker
   start_local_worker_detached
   cmd_status
 }
@@ -525,7 +525,7 @@ cmd_down() {
   stop_local_worker
   stop_bridge
   cd "$REPO_ROOT"
-  docker compose --profile worker stop app scraper-google-worker analysis-worker report-worker >/dev/null 2>&1 || true
+  docker compose --profile worker stop app scraper-google-worker analysis-worker report-worker crm-worker >/dev/null 2>&1 || true
   if [[ "$with_mongo" == "true" ]]; then
     docker compose --profile worker stop mongodb >/dev/null 2>&1 || true
   fi
@@ -539,7 +539,7 @@ cmd_status() {
   cd "$REPO_ROOT"
 
   echo "== Docker services =="
-  docker compose --profile worker ps mongodb app scraper-google-worker analysis-worker report-worker || true
+  docker compose --profile worker ps mongodb app scraper-google-worker analysis-worker report-worker crm-worker || true
 
   echo
   echo "== Local TripAdvisor worker =="

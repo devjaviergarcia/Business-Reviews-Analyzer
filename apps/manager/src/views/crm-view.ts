@@ -11,7 +11,7 @@ type CRMViewDeps = {
 };
 
 type LeadSourceScope = "all" | "google_maps" | "tripadvisor";
-type LeadSortField = "updated_at" | "business_name" | "score";
+type LeadSortField = "updated_at" | "business_name" | "score" | "status" | "consent_status" | "source";
 type LeadSortDir = "asc" | "desc";
 
 type LeadsQueryFilters = {
@@ -44,6 +44,17 @@ export function createCRMView(deps: CRMViewDeps): ViewModule {
   discoveryForm.append(discoveryActions);
   discoveryPanel.append(discoveryForm);
 
+  const discoveryRunsPanel = createElement("section", "panel form-panel");
+  discoveryRunsPanel.append(createElement("h2", "panel__title", "Discovery Runs"));
+  const discoveryRunsActions = createElement("div", "form-actions");
+  const discoveryRunsRefreshButton = createButton({ label: "Actualizar runs", tone: "turquoise" });
+  const discoveryRunsStatus = createElement("span", "muted", "");
+  discoveryRunsActions.append(discoveryRunsRefreshButton, discoveryRunsStatus);
+  const discoveryRunsTableWrap = createElement("div", "scroll-table");
+  const discoveryRunsTable = createElement("table", "data-table");
+  discoveryRunsTableWrap.append(discoveryRunsTable);
+  discoveryRunsPanel.append(discoveryRunsActions, discoveryRunsTableWrap);
+
   const leadsPanel = createElement("section", "panel form-panel");
   leadsPanel.append(createElement("h2", "panel__title", "Negocios CRM (discovery)"));
   const leadsControls = createElement("div", "form-grid");
@@ -72,8 +83,8 @@ export function createCRMView(deps: CRMViewDeps): ViewModule {
   ].join("");
   const leadsSourceFilter = createElement("select", "atom-input") as HTMLSelectElement;
   leadsSourceFilter.innerHTML = [
-    '<option value="google_maps_live_discovery" selected>Solo discovery live</option>',
-    '<option value="">Todas las fuentes</option>',
+    '<option value="" selected>Todas las fuentes</option>',
+    '<option value="google_maps_live_discovery">Solo discovery live</option>',
     '<option value="google_maps">google_maps</option>',
     '<option value="tripadvisor">tripadvisor</option>',
     '<option value="research_google_maps">research_google_maps</option>',
@@ -90,6 +101,9 @@ export function createCRMView(deps: CRMViewDeps): ViewModule {
     '<option value="updated_at" selected>Orden: última actualización</option>',
     '<option value="business_name">Orden: nombre</option>',
     '<option value="score">Orden: score</option>',
+    '<option value="status">Orden: estado</option>',
+    '<option value="consent_status">Orden: consentimiento</option>',
+    '<option value="source">Orden: fuente</option>',
   ].join("");
   const leadsSortDir = createElement("select", "atom-input") as HTMLSelectElement;
   leadsSortDir.innerHTML = [
@@ -190,7 +204,7 @@ export function createCRMView(deps: CRMViewDeps): ViewModule {
   eventsTableWrap.append(eventsTable);
   activityPanel.append(activityActions, eventsTableWrap);
 
-  root.append(discoveryPanel, leadsPanel, campaignsPanel, activityPanel);
+  root.append(discoveryPanel, discoveryRunsPanel, leadsPanel, campaignsPanel, activityPanel);
 
   let leadsCache: CRMLeadItem[] = [];
   let leadsPage = 1;
@@ -250,6 +264,15 @@ export function createCRMView(deps: CRMViewDeps): ViewModule {
     leadsPageLabel.textContent = `Página ${currentPage} / ${totalPages}`;
     leadsPrevPageButton.disabled = !leadsHasPrev;
     leadsNextPageButton.disabled = !leadsHasNext;
+  }
+
+  function toggleLeadSort(field: LeadSortField): void {
+    const currentField = (leadsSortBy.value.trim() || "updated_at") as LeadSortField;
+    const currentDir = (leadsSortDir.value.trim() || "desc") as LeadSortDir;
+    const nextDir: LeadSortDir = currentField === field ? (currentDir === "desc" ? "asc" : "desc") : "desc";
+    leadsSortBy.value = field;
+    leadsSortDir.value = nextDir;
+    void refreshLeads({ resetPage: true });
   }
 
   async function refreshLeads(options?: { resetPage?: boolean; resetSelection?: boolean }): Promise<void> {
@@ -334,9 +357,33 @@ export function createCRMView(deps: CRMViewDeps): ViewModule {
       updateLeadsMetaLabel();
     });
 
-    for (const title of ["Lead", "Contacto", "Estado", "Consent", "Score", "Acciones"]) {
-      headRow.append(createElement("th", "", title));
-    }
+    const activeSortBy = (leadsSortBy.value.trim() || "updated_at") as LeadSortField;
+    const activeSortDir = (leadsSortDir.value.trim() || "desc") as LeadSortDir;
+    const sortArrow = activeSortDir === "asc" ? "↑" : "↓";
+
+    const createSortableHeader = (label: string, field: LeadSortField): HTMLTableCellElement => {
+      const th = createElement("th");
+      const button = createElement("button", "table-sort-button", label) as HTMLButtonElement;
+      button.type = "button";
+      if (activeSortBy === field) {
+        button.classList.add("is-active");
+        button.textContent = `${label} ${sortArrow}`;
+      }
+      button.addEventListener("click", () => {
+        toggleLeadSort(field);
+      });
+      th.append(button);
+      return th;
+    };
+
+    headRow.append(createSortableHeader("Lead", "business_name"));
+    headRow.append(createElement("th", "", "Contacto"));
+    headRow.append(createSortableHeader("Estado", "status"));
+    headRow.append(createSortableHeader("Consent", "consent_status"));
+    headRow.append(createSortableHeader("Fuente", "source"));
+    headRow.append(createSortableHeader("Score", "score"));
+    headRow.append(createSortableHeader("Act.", "updated_at"));
+    headRow.append(createElement("th", "", "Acciones"));
     headRow.prepend(selectAllHead);
     thead.append(headRow);
     leadsTable.append(thead);
@@ -344,7 +391,7 @@ export function createCRMView(deps: CRMViewDeps): ViewModule {
     const tbody = createElement("tbody");
     if (!items.length) {
       const row = createElement("tr");
-      row.innerHTML = '<td colspan="7" class="muted">No hay leads.</td>';
+      row.innerHTML = '<td colspan="9" class="muted">No hay leads.</td>';
       tbody.append(row);
       leadsTable.append(tbody);
       return;
@@ -359,7 +406,9 @@ export function createCRMView(deps: CRMViewDeps): ViewModule {
         .join(" · ");
       const consentStatus = String(item.legal?.consent_status || "missing");
       const status = String(item.status || "-");
+      const source = String(item.source || "-");
       const score = typeof item.score === "number" ? item.score.toFixed(1) : "-";
+      const updatedAt = String(item.updated_at || "").trim();
 
       const selectCell = createElement("td");
       const rowCheckbox = createInput({ type: "checkbox" }) as HTMLInputElement;
@@ -399,7 +448,9 @@ export function createCRMView(deps: CRMViewDeps): ViewModule {
 
       row.innerHTML = `<td><strong>${leadName}</strong><br><span class="muted">${escapeHtml(leadId)}</span></td><td>${escapeHtml(
         contact || "-"
-      )}</td><td>${escapeHtml(status)}</td><td>${escapeHtml(consentStatus)}</td><td>${escapeHtml(score)}</td>`;
+      )}</td><td>${escapeHtml(status)}</td><td>${escapeHtml(consentStatus)}</td><td>${escapeHtml(
+        source
+      )}</td><td>${escapeHtml(score)}</td><td>${escapeHtml(updatedAt || "-")}</td>`;
       row.prepend(selectCell);
       row.append(actionsCell);
       tbody.append(row);
@@ -657,6 +708,64 @@ export function createCRMView(deps: CRMViewDeps): ViewModule {
     eventsTable.append(tbody);
   }
 
+  async function refreshDiscoveryRuns(): Promise<void> {
+    discoveryRunsStatus.textContent = "Cargando runs...";
+    try {
+      const response = await deps.apiClient.get<PaginatedResponse<Record<string, unknown>>>(
+        `/crm/discovery-runs?page=1&page_size=80`
+      );
+      const items = Array.isArray(response.items) ? response.items : [];
+      renderDiscoveryRunsTable(items);
+      discoveryRunsStatus.textContent = `Runs: ${items.length}`;
+    } catch (error) {
+      discoveryRunsStatus.textContent = `ERROR runs: ${formatError(error)}`;
+      renderDiscoveryRunsTable([]);
+    }
+  }
+
+  function renderDiscoveryRunsTable(items: Record<string, unknown>[]): void {
+    clearElement(discoveryRunsTable);
+    const thead = createElement("thead");
+    thead.innerHTML =
+      "<tr><th>Run</th><th>Estado</th><th>Query</th><th>Candidatos</th><th>Insertados</th><th>Actualizados</th><th>Inicio</th><th>Acción</th></tr>";
+    discoveryRunsTable.append(thead);
+
+    const tbody = createElement("tbody");
+    if (!items.length) {
+      const row = createElement("tr");
+      row.innerHTML = '<td colspan="8" class="muted">Sin runs.</td>';
+      tbody.append(row);
+      discoveryRunsTable.append(tbody);
+      return;
+    }
+
+    for (const item of items) {
+      const metrics = item.metrics && typeof item.metrics === "object" ? (item.metrics as Record<string, unknown>) : {};
+      const runId = String(item.discovery_run_id || "-");
+      const status = String(item.status || "-");
+      const query = String(item.query || "-");
+      const candidates = Number(metrics.cards_seen || 0);
+      const inserted = Number(metrics.inserted || 0);
+      const updated = Number(metrics.updated || 0);
+      const startedAt = String(item.started_at || item.created_at || "-");
+      const row = createElement("tr");
+      row.innerHTML = `<td><span class=\"mono\">${escapeHtml(runId).slice(0, 12)}</span></td><td>${escapeHtml(
+        status
+      )}</td><td>${escapeHtml(query)}</td><td>${candidates}</td><td>${inserted}</td><td>${updated}</td><td>${escapeHtml(
+        startedAt
+      )}</td><td><button class=\"btn btn--white btn--sm\" data-run-query=\"${escapeHtml(query)}\">Ver leads</button></td>`;
+      const button = row.querySelector("button[data-run-query]") as HTMLButtonElement | null;
+      if (button) {
+        button.addEventListener("click", () => {
+          leadsSearch.value = query;
+          void refreshLeads({ resetPage: true, resetSelection: true });
+        });
+      }
+      tbody.append(row);
+    }
+    discoveryRunsTable.append(tbody);
+  }
+
   discoveryForm.addEventListener("submit", (event) => {
     event.preventDefault();
     void (async () => {
@@ -680,6 +789,7 @@ export function createCRMView(deps: CRMViewDeps): ViewModule {
         discoveryStatus.textContent = `Discovery en cola (job ${String(response.job_id || "-")})`;
         resetLeadSelection();
         await refreshLeads({ resetPage: true });
+        await refreshDiscoveryRuns();
       } catch (error) {
         discoveryStatus.textContent = `ERROR discovery: ${formatError(error)}`;
       }
@@ -693,6 +803,9 @@ export function createCRMView(deps: CRMViewDeps): ViewModule {
 
   leadsRefreshButton.addEventListener("click", () => {
     void refreshLeads();
+  });
+  discoveryRunsRefreshButton.addEventListener("click", () => {
+    void refreshDiscoveryRuns();
   });
   selectAllMatchingButton.addEventListener("click", () => {
     allMatchingSelected = true;
@@ -749,6 +862,7 @@ export function createCRMView(deps: CRMViewDeps): ViewModule {
 
   const onShow = () => {
     void refreshLeads({ resetPage: true });
+    void refreshDiscoveryRuns();
     void refreshCampaigns();
     void refreshEvents();
   };

@@ -9,8 +9,8 @@ x-app-env: &app_env
   DB_NAME: ${DB_NAME:-business_reviews_analyzer}
   GEMINI_API_KEY: ${GEMINI_API_KEY:-}
   GEMINI_MODEL: ${GEMINI_MODEL:-gemini-1.5-flash}
-  # Docker/dev profile defaults (do not depend on local headed settings)
-  SCRAPER_HEADLESS: ${SCRAPER_HEADLESS_DOCKER:-true}
+  # Docker/dev profile defaults: headed browser via XVFB
+  SCRAPER_HEADLESS: ${SCRAPER_HEADLESS_DOCKER:-false}
   SCRAPER_INCOGNITO: ${SCRAPER_INCOGNITO_DOCKER:-false}
   SCRAPER_USER_DATA_DIR: ${SCRAPER_USER_DATA_DIR_DOCKER:-playwright-data-docker}
   SCRAPER_TRIPADVISOR_USER_DATA_DIR: ${SCRAPER_TRIPADVISOR_USER_DATA_DIR_DOCKER:-playwright-data-tripadvisor-docker}
@@ -37,6 +37,8 @@ x-app-env: &app_env
   CRM_UNSUBSCRIBE_URL: ${CRM_UNSUBSCRIBE_URL:-}
   CRM_UNSUBSCRIBE_SECRET: ${CRM_UNSUBSCRIBE_SECRET:-}
   CRM_SCHEDULER_BATCH_SIZE: ${CRM_SCHEDULER_BATCH_SIZE:-200}
+  CRM_REPO_V2: ${CRM_REPO_V2:-true}
+  CRM_DISCOVERY_V2: ${CRM_DISCOVERY_V2:-true}
 
 x-app-base: &app_base
   image: review-llm-app:latest
@@ -87,7 +89,9 @@ services:
       WORKER_SCRAPE_QUEUE: scrape_google_maps
       WORKER_SCRAPE_SOURCE: google_maps
       SCRAPER_USER_DATA_DIR: ${SCRAPER_USER_DATA_DIR_GOOGLE_WORKER_DOCKER:-playwright-data-google-worker-docker}
-    command: python -m src.workers.scraper_worker
+    command: >
+      bash -lc "Xvfb :99 -screen 0 ${XVFB_SCREEN:-1920x1080x24} -ac +extension RANDR -nolisten tcp >/tmp/xvfb.log 2>&1 &
+      export DISPLAY=:99; sleep 1; exec python -m src.workers.scraper_worker"
 
   analysis-worker:
     <<: *app_base
@@ -105,7 +109,9 @@ services:
     <<: *app_base
     container_name: bra-crm-worker
     profiles: ["worker"]
-    command: python -m src.workers.crm_worker
+    command: >
+      bash -lc "Xvfb :99 -screen 0 ${XVFB_SCREEN:-1920x1080x24} -ac +extension RANDR -nolisten tcp >/tmp/xvfb.log 2>&1 &
+      export DISPLAY=:99; sleep 1; exec python -m src.workers.crm_worker"
 
 volumes:
   mongo_data:

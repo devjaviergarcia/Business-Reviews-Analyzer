@@ -420,6 +420,22 @@ select.atom-input {
   vertical-align: top;
 }
 
+.table-sort-button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.table-sort-button.is-active {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
 .table-link {
   background: transparent;
   border: 0;

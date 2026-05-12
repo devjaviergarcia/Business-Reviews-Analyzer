@@ -35,6 +35,16 @@ from src.models.crm import (
     CRMMessageStatus,
     CRMSuppression,
 )
+from src.crm.discovery import DiscoveryOrchestrator
+from src.crm.repositories import (
+    CRMRepositoryBootstrap,
+    MongoCampaignRepository,
+    MongoDiscoveryRunRepository,
+    MongoEventRepository,
+    MongoLeadRepository,
+    MongoMessageRepository,
+    MongoSuppressionRepository,
+)
 from src.services.analysis_job_service import AnalysisJobService
 from src.services.business_service import BusinessService
 from src.services.pagination import build_pagination_payload, coerce_pagination
@@ -52,6 +62,7 @@ class CRMService:
     _MESSAGES_COLLECTION = "crm_messages"
     _EVENTS_COLLECTION = "crm_events"
     _SUPPRESSIONS_COLLECTION = "crm_suppressions"
+    _DISCOVERY_RUNS_COLLECTION = "crm_discovery_runs"
     _RESEARCH_LEADS_COLLECTION = "research_leads"
     _BUSINESSES_COLLECTION = "businesses"
     _ANALYSES_COLLECTION = "analyses"
@@ -65,6 +76,7 @@ class CRMService:
         "auto_live_google_maps",
         "live_auto_google_maps",
     )
+    _LIVE_GOOGLE_DISCOVERY_ALIASES = ("auto", "all", "")
 
     def __init__(
         self,
@@ -76,6 +88,15 @@ class CRMService:
         self.business_service = business_service or BusinessService(job_service=self.job_service)
         self._indexes_ensured = False
         self._indexes_lock = asyncio.Lock()
+        self._use_repo_v2 = bool(settings.crm_repo_v2)
+        self._use_discovery_v2 = bool(settings.crm_discovery_v2)
+        self._repository_bootstrap = CRMRepositoryBootstrap()
+        self._lead_repository = MongoLeadRepository()
+        self._event_repository = MongoEventRepository()
+        self._campaign_repository = MongoCampaignRepository()
+        self._message_repository = MongoMessageRepository()
+        self._suppression_repository = MongoSuppressionRepository()
+        self._discovery_run_repository = MongoDiscoveryRunRepository()
 
     async def ensure_indexes(self) -> None:
         if self._indexes_ensured:
@@ -83,73 +104,7 @@ class CRMService:
         async with self._indexes_lock:
             if self._indexes_ensured:
                 return
-            database = get_database()
-            leads = database[self._LEADS_COLLECTION]
-            campaigns = database[self._CAMPAIGNS_COLLECTION]
-            cadence = database[self._CADENCE_COLLECTION]
-            messages = database[self._MESSAGES_COLLECTION]
-            events = database[self._EVENTS_COLLECTION]
-            suppressions = database[self._SUPPRESSIONS_COLLECTION]
-
-            await leads.create_index(
-                [("email_normalized", 1)],
-                name="idx_crm_leads_email_partial_unique",
-                unique=True,
-                partialFilterExpression={"email_normalized": {"$type": "string"}},
-            )
-            await leads.create_index(
-                [("status", 1), ("updated_at", -1)],
-                name="idx_crm_leads_status_updated",
-            )
-            await leads.create_index(
-                [("business_name_normalized", 1), ("address", 1)],
-                name="idx_crm_leads_name_address",
-            )
-            await leads.create_index(
-                [("legal.consent_status", 1), ("legal.do_not_contact", 1)],
-                name="idx_crm_leads_legal",
-            )
-
-            await campaigns.create_index(
-                [("status", 1), ("updated_at", -1)],
-                name="idx_crm_campaign_status_updated",
-            )
-
-            await cadence.create_index(
-                [("key", 1)],
-                name="idx_crm_cadence_key_unique",
-                unique=True,
-            )
-
-            await messages.create_index(
-                [("campaign_id", 1), ("scheduled_at", 1), ("status", 1)],
-                name="idx_crm_messages_campaign_schedule_status",
-            )
-            await messages.create_index(
-                [("provider_message_id", 1)],
-                name="idx_crm_messages_provider_id",
-                sparse=True,
-            )
-            await messages.create_index(
-                [("lead_id", 1), ("status", 1)],
-                name="idx_crm_messages_lead_status",
-            )
-
-            await events.create_index(
-                [("lead_id", 1), ("created_at", -1)],
-                name="idx_crm_events_lead_created",
-            )
-            await events.create_index(
-                [("campaign_id", 1), ("created_at", -1)],
-                name="idx_crm_events_campaign_created",
-            )
-
-            await suppressions.create_index(
-                [("email_normalized", 1)],
-                name="idx_crm_suppressions_email_unique",
-                unique=True,
-            )
-
+            await self._repository_bootstrap.ensure_indexes()
             self._indexes_ensured = True
 
     async def enqueue_lead_discovery_job(
@@ -161,18 +116,53 @@ class CRMService:
         limit: int = 100,
         source: str = "auto_live_google_maps",
     ) -> dict[str, Any]:
+        normalized_source = str(source or "").strip().lower()
+        if normalized_source in self._LIVE_GOOGLE_DISCOVERY_ALIASES:
+            normalized_source = "auto_live_google_maps"
+        if not normalized_source:
+            normalized_source = "auto_live_google_maps"
+        queue_name = "scrape_google_maps" if normalized_source in self._LIVE_GOOGLE_DISCOVERY_SOURCES else "crm"
+        discovery_run_id: str | None = None
+        if self._use_discovery_v2:
+            await self.ensure_indexes()
+            run_doc = await self._discovery_run_repository.create_run(
+                {
+                    "job_id": None,
+                    "query": query,
+                    "city": city,
+                    "category": category,
+                    "limit": limit,
+                    "source": normalized_source,
+                }
+            )
+            discovery_run_id = str(run_doc.get("discovery_run_id") or "").strip() or None
+
         payload = CRMLeadDiscoveryTaskPayload(
             query=query,
             city=city,
             category=category,
             limit=limit,
-            source=source,
+            source=normalized_source,
+            discovery_run_id=discovery_run_id,
         )
-        return await self.job_service.enqueue_job(
+        queued = await self.job_service.enqueue_job(
             task_payload=payload,
-            queue_name="crm",
+            queue_name=queue_name,
             job_type="crm_lead_discovery",
         )
+        if discovery_run_id:
+            await self._discovery_run_repository.append_step(
+                run_id=discovery_run_id,
+                step="job_enqueued",
+                ok=True,
+                duration_ms=0,
+                data={
+                    "job_id": str(queued.get("job_id") or "").strip() or None,
+                    "queue_name": str(queued.get("queue_name") or "").strip() or None,
+                },
+            )
+            queued["discovery_run_id"] = discovery_run_id
+        return queued
 
     async def enqueue_lead_pipeline_job(
         self,
@@ -236,6 +226,19 @@ class CRMService:
         sort_dir: str = "desc",
     ) -> dict[str, Any]:
         await self.ensure_indexes()
+        if self._use_repo_v2:
+            payload = await self._lead_repository.list(
+                page=page,
+                page_size=page_size,
+                status_filter=status_filter,
+                consent_filter=consent_filter,
+                source_filter=source_filter,
+                q=q,
+                sort_by=sort_by,
+                sort_dir=sort_dir,
+            )
+            return self._sanitize_payload(payload)
+
         page_value, page_size_value = coerce_pagination(page=page, page_size=page_size, max_page_size=200)
         leads = get_database()[self._LEADS_COLLECTION]
         query = self._build_leads_query(
@@ -277,6 +280,30 @@ class CRMService:
         q: str | None = None,
     ) -> dict[str, Any]:
         await self.ensure_indexes()
+        if self._use_repo_v2:
+            result = await self._lead_repository.bulk_delete(
+                lead_ids=lead_ids,
+                delete_all_matching=delete_all_matching,
+                exclude_lead_ids=exclude_lead_ids,
+                status_filter=status_filter,
+                consent_filter=consent_filter,
+                source_filter=source_filter,
+                q=q,
+            )
+            await self._record_event(
+                event_type="leads_bulk_deleted",
+                data=result,
+            )
+            return self._sanitize_payload(
+                {
+                    "deleted_count": int(result.get("deleted_count") or 0),
+                    "matched_count": int(result.get("matched_count") or 0),
+                    "delete_all_matching": bool(result.get("delete_all_matching")),
+                    "requested_ids": int(result.get("requested_ids") or 0),
+                    "excluded_ids": int(result.get("excluded_ids") or 0),
+                }
+            )
+
         leads = get_database()[self._LEADS_COLLECTION]
 
         normalized_ids: list[ObjectId] = []
@@ -345,15 +372,21 @@ class CRMService:
 
     async def get_lead(self, *, lead_id: str, sync_pipeline_refs: bool = True) -> dict[str, Any]:
         await self.ensure_indexes()
-        parsed_lead_id = self._parse_object_id(lead_id, field_name="lead_id")
-        leads = get_database()[self._LEADS_COLLECTION]
-        lead_doc = await leads.find_one({"_id": parsed_lead_id})
+        if self._use_repo_v2:
+            lead_doc = await self._lead_repository.get_by_id(lead_id=lead_id)
+        else:
+            parsed_lead_id = self._parse_object_id(lead_id, field_name="lead_id")
+            leads = get_database()[self._LEADS_COLLECTION]
+            lead_doc = await leads.find_one({"_id": parsed_lead_id})
         if lead_doc is None:
             raise LookupError(f"Lead '{lead_id}' not found.")
 
         if sync_pipeline_refs:
             await self.sync_lead_pipeline_refs(lead_id=lead_id)
-            lead_doc = await leads.find_one({"_id": parsed_lead_id})
+            if self._use_repo_v2:
+                lead_doc = await self._lead_repository.get_by_id(lead_id=lead_id)
+            else:
+                lead_doc = await leads.find_one({"_id": parsed_lead_id})
             if lead_doc is None:
                 raise LookupError(f"Lead '{lead_id}' not found.")
 
@@ -401,10 +434,15 @@ class CRMService:
             "updated_at": "updated_at",
             "business_name": "business_name_normalized",
             "score": "score",
+            "status": "status",
+            "consent_status": "legal.consent_status",
+            "source": "source",
         }
         field_name = field_map.get(normalized_sort_by)
         if field_name is None:
-            raise ValueError("Invalid sort_by. Use 'updated_at', 'business_name' or 'score'.")
+            raise ValueError(
+                "Invalid sort_by. Use 'updated_at', 'business_name', 'score', 'status', 'consent_status' or 'source'."
+            )
 
         direction = -1 if normalized_sort_dir == "desc" else 1
         return [(field_name, direction), ("_id", direction)]
@@ -416,6 +454,9 @@ class CRMService:
         updates: dict[str, Any],
     ) -> dict[str, Any]:
         await self.ensure_indexes()
+        if self._use_repo_v2:
+            return await self._update_lead_v2(lead_id=lead_id, updates=updates)
+
         parsed_lead_id = self._parse_object_id(lead_id, field_name="lead_id")
         leads = get_database()[self._LEADS_COLLECTION]
 
@@ -474,6 +515,93 @@ class CRMService:
             {"_id": parsed_lead_id},
             {"$set": set_fields},
             return_document=ReturnDocument.AFTER,
+        )
+        if updated is None:
+            raise LookupError(f"Lead '{lead_id}' not found.")
+
+        await self._record_event(
+            event_type="lead_updated",
+            lead_id=lead_id,
+            data={"fields": sorted(set_fields.keys())},
+        )
+
+        if set_fields.get("legal.suppressed_reason") or set_fields.get("legal.do_not_contact"):
+            email_norm = self._normalize_email(updated.get("email"))
+            email_value = str(updated.get("email") or "").strip()
+            if email_norm and email_value:
+                await self._upsert_suppression(
+                    email=email_value,
+                    reason=str(set_fields.get("legal.suppressed_reason") or "manual"),
+                    source="manual",
+                )
+
+        return self._sanitize_payload(self._serialize_mongo_doc(updated, id_key="lead_id"))
+
+    async def _update_lead_v2(
+        self,
+        *,
+        lead_id: str,
+        updates: dict[str, Any],
+    ) -> dict[str, Any]:
+        parsed_lead_id = self._parse_object_id(lead_id, field_name="lead_id")
+
+        set_fields: dict[str, Any] = {}
+        now = self._now_utc()
+
+        if "status" in updates and updates.get("status") is not None:
+            set_fields["status"] = str(updates.get("status")).strip().lower()
+
+        for text_field in ("business_name", "email", "phone", "website", "category", "city", "address"):
+            if text_field in updates:
+                value = updates.get(text_field)
+                if value is None:
+                    continue
+                cleaned = str(value).strip()
+                set_fields[text_field] = cleaned or None
+
+        if "email" in set_fields:
+            email_norm = self._normalize_email(set_fields.get("email"))
+            set_fields["email_normalized"] = email_norm
+            set_fields["domain_normalized"] = self._domain_from_email_or_website(
+                email=set_fields.get("email"), website=set_fields.get("website")
+            )
+
+        if "business_name" in set_fields and set_fields.get("business_name"):
+            set_fields["business_name_normalized"] = self._normalize_text(str(set_fields["business_name"]))
+
+        if "do_not_contact" in updates:
+            set_fields["legal.do_not_contact"] = bool(updates.get("do_not_contact"))
+
+        if "consent_status" in updates and updates.get("consent_status") is not None:
+            set_fields["legal.consent_status"] = str(updates.get("consent_status")).strip().lower()
+
+        if "suppressed_reason" in updates:
+            reason = str(updates.get("suppressed_reason") or "").strip()
+            set_fields["legal.suppressed_reason"] = reason or None
+
+        consent_proof_payload = updates.get("consent_proof")
+        if isinstance(consent_proof_payload, dict):
+            proof = CRMConsentProof.model_validate(consent_proof_payload)
+            set_fields["legal.consent_proof"] = proof.model_dump(mode="python")
+            set_fields["legal.consent_status"] = CRMConsentStatus.GRANTED.value
+
+        if "unsubscribed" in updates:
+            unsubscribed = bool(updates.get("unsubscribed"))
+            set_fields["legal.unsubscribed_at"] = now if unsubscribed else None
+            if unsubscribed:
+                set_fields["legal.do_not_contact"] = True
+                set_fields["legal.suppressed_reason"] = "unsubscribed"
+
+        if not set_fields:
+            lead_doc = await self._lead_repository.get_by_id(lead_id=lead_id)
+            if lead_doc is None:
+                raise LookupError(f"Lead '{lead_id}' not found.")
+            return self._sanitize_payload(self._serialize_mongo_doc(lead_doc, id_key="lead_id"))
+
+        set_fields["updated_at"] = now
+        updated = await self._lead_repository.find_one_and_update(
+            {"_id": parsed_lead_id},
+            {"$set": set_fields},
         )
         if updated is None:
             raise LookupError(f"Lead '{lead_id}' not found.")
@@ -772,6 +900,15 @@ class CRMService:
         page_size: int = 50,
     ) -> dict[str, Any]:
         await self.ensure_indexes()
+        if self._use_repo_v2:
+            payload = await self._event_repository.list(
+                page=page,
+                page_size=page_size,
+                lead_id=lead_id,
+                campaign_id=campaign_id,
+            )
+            return self._sanitize_payload(payload)
+
         page_value, page_size_value = coerce_pagination(page=page, page_size=page_size, max_page_size=200)
         events = get_database()[self._EVENTS_COLLECTION]
         query: dict[str, Any] = {}
@@ -793,6 +930,23 @@ class CRMService:
         items = [self._serialize_mongo_doc(doc, id_key="event_id") for doc in docs]
         payload = build_pagination_payload(items=items, page=page_value, page_size=page_size_value, total=total)
         return self._sanitize_payload(payload)
+
+    async def list_discovery_runs(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, Any]:
+        await self.ensure_indexes()
+        payload = await self._discovery_run_repository.list_runs(page=page, page_size=page_size)
+        return self._sanitize_payload(payload)
+
+    async def get_discovery_run(self, *, discovery_run_id: str) -> dict[str, Any]:
+        await self.ensure_indexes()
+        run_doc = await self._discovery_run_repository.get_run(run_id=discovery_run_id)
+        if run_doc is None:
+            raise LookupError(f"Discovery run '{discovery_run_id}' not found.")
+        return self._sanitize_payload(run_doc)
 
     async def handle_resend_webhook(self, *, payload: dict[str, Any]) -> dict[str, Any]:
         await self.ensure_indexes()
@@ -875,6 +1029,20 @@ class CRMService:
         job_id: Any | None = None,
     ) -> dict[str, Any]:
         await self.ensure_indexes()
+        if self._use_discovery_v2:
+            orchestrator = DiscoveryOrchestrator(
+                runs=self._discovery_run_repository,
+                discover_candidates=self._discover_candidates_for_orchestrator,
+                upsert_candidate=self._upsert_lead_candidate,
+                record_event=self._record_event,
+            )
+            result = await orchestrator.run(
+                task_payload=task_payload,
+                job_id=str(job_id) if job_id is not None else None,
+                discovery_run_id=task_payload.discovery_run_id,
+            )
+            return self._sanitize_payload(result)
+
         candidates = await self._discover_candidates(task_payload=task_payload)
 
         inserted = 0
@@ -893,6 +1061,7 @@ class CRMService:
             event_type="lead_discovery_processed",
             data={
                 "job_id": str(job_id) if job_id is not None else None,
+                "discovery_run_id": task_payload.discovery_run_id,
                 "query": task_payload.query,
                 "city": task_payload.city,
                 "category": task_payload.category,
@@ -907,6 +1076,7 @@ class CRMService:
 
         return self._sanitize_payload(
             {
+                "discovery_run_id": task_payload.discovery_run_id,
                 "query": task_payload.query,
                 "city": task_payload.city,
                 "category": task_payload.category,
@@ -1410,6 +1580,8 @@ class CRMService:
         safe_limit = max(1, min(int(task_payload.limit), 5000))
 
         normalized_source = str(task_payload.source or "").strip().lower()
+        if normalized_source in self._LIVE_GOOGLE_DISCOVERY_ALIASES:
+            normalized_source = "auto_live_google_maps"
         if normalized_source in self._LIVE_GOOGLE_DISCOVERY_SOURCES:
             live_candidates = await self._discover_candidates_live_google_maps(
                 task_payload=task_payload,
@@ -1442,6 +1614,12 @@ class CRMService:
             normalized_category=normalized_category,
             safe_limit=safe_limit,
         )
+
+    async def _discover_candidates_for_orchestrator(
+        self,
+        task_payload: CRMLeadDiscoveryTaskPayload,
+    ) -> list[dict[str, Any]]:
+        return await self._discover_candidates(task_payload=task_payload)
 
     async def _discover_candidates_from_stored_sources(
         self,
@@ -1674,11 +1852,11 @@ class CRMService:
                             "maps_url": raw_url,
                             "maps_url_canonical": canonical_url,
                             "discovery_query": search_query,
-                            "source_card_label": source_card_label,
-                            "discovery_mode": "live_google_maps_auto_scroll",
-                        },
-                        "rating": None,
-                        "review_count": None,
+                                "source_card_label": source_card_label,
+                                "discovery_mode": "live_google_maps_auto_scroll",
+                            },
+                        "rating": item.get("rating"),
+                        "review_count": item.get("review_count"),
                     }
 
                 if len(collected) >= safe_limit:
@@ -1693,26 +1871,26 @@ class CRMService:
 
                 await self._scroll_google_maps_results(scraper=scraper)
                 await scraper.page.wait_for_timeout(scroll_wait_ms)
+
+            candidates = list(collected.values())
+            candidates.sort(key=lambda item: self._normalize_text(str(item.get("business_name") or "")))
+            if normalized_query:
+                # Keep cards that better match user query tokens first.
+                query_tokens = set(normalized_query.split())
+                candidates.sort(
+                    key=lambda item: len(
+                        query_tokens
+                        & set(self._normalize_text(str(item.get("business_name") or "")).split())
+                    ),
+                    reverse=True,
+                )
+            top_candidates = candidates[:safe_limit]
+            return await self._enrich_live_google_maps_candidates(
+                scraper=scraper,
+                candidates=top_candidates,
+            )
         finally:
             await scraper.close()
-
-        candidates = list(collected.values())
-        candidates.sort(key=lambda item: self._normalize_text(str(item.get("business_name") or "")))
-        if normalized_query:
-            # Keep cards that better match user query tokens first.
-            query_tokens = set(normalized_query.split())
-            candidates.sort(
-                key=lambda item: len(
-                    query_tokens
-                    & set(self._normalize_text(str(item.get("business_name") or "")).split())
-                ),
-                reverse=True,
-            )
-        top_candidates = candidates[:safe_limit]
-        return await self._enrich_live_google_maps_candidates(
-            scraper=scraper,
-            candidates=top_candidates,
-        )
 
     async def _wait_for_results_feed(self, *, scraper: GoogleMapsScraper, timeout_ms: int = 15_000) -> bool:
         deadline = asyncio.get_running_loop().time() + (max(1, int(timeout_ms)) / 1000.0)
@@ -1749,6 +1927,9 @@ class CRMService:
         return None
 
     async def _search_google_maps_query(self, *, scraper: GoogleMapsScraper, query: str) -> None:
+        # Align discovery with the same startup flow used in regular Maps scraping:
+        # navigate/normalize home state first, then dismiss consent if still present.
+        await scraper._go_to_maps_home()
         await scraper._dismiss_google_consent_if_present()
         search_input = await self._first_visible_from_patterns(scraper=scraper, key="SEARCH_INPUT", timeout_ms=8_000)
         if search_input is None:
@@ -1796,12 +1977,27 @@ class CRMService:
                 ).trim();
                 const fallbackText = readText(anchor).split("\\n")[0].trim();
                 const name = labelFromHeading || labelFromAnchor || labelFromArticle || fallbackText;
+                const ratingAria = String(
+                  (
+                    article &&
+                    article.querySelector &&
+                    article.querySelector("[role='img'][aria-label*='estrella' i], [role='img'][aria-label*='star' i]")
+                  )?.getAttribute("aria-label") || ""
+                ).trim();
+                const ratingText = readText(
+                  article && article.querySelector ? article.querySelector(".MW4etd") : null
+                );
+                const reviewsText = readText(
+                  article && article.querySelector ? article.querySelector(".UY7F9") : null
+                );
                 const href = String(anchor.href || "").trim();
                 if (!name || !href) continue;
                 items.push({
                   name: name,
                   maps_url: href,
                   source_card_label: labelFromArticle || labelFromAnchor || null,
+                  rating_label: ratingAria || ratingText || null,
+                  reviews_label: reviewsText || ratingAria || null,
                 });
               }
               return { found: true, items: items };
@@ -1826,6 +2022,8 @@ class CRMService:
                     "name": name,
                     "maps_url": maps_url,
                     "source_card_label": str(item.get("source_card_label") or "").strip() or None,
+                    "rating": self._parse_rating_text(item.get("rating_label")),
+                    "review_count": self._parse_reviews_count_text(item.get("reviews_label")),
                 }
             )
         return cleaned
@@ -2028,6 +2226,16 @@ class CRMService:
                   );
                   const ratingLabel = pickAriaLabel(ratingNodes, "estrella");
                   const reviewsLabel = pickAriaLabel(reviewsNodes, "rese");
+                  const ratingText =
+                    text(document.querySelector(".F7nice .MW4etd")) ||
+                    text(document.querySelector(".AJB7ye .MW4etd")) ||
+                    text(document.querySelector(".ZkP5Je .MW4etd")) ||
+                    "";
+                  const reviewsText =
+                    text(document.querySelector(".F7nice .UY7F9")) ||
+                    text(document.querySelector(".AJB7ye .UY7F9")) ||
+                    text(document.querySelector(".ZkP5Je .UY7F9")) ||
+                    "";
 
                   const categoryButtons = Array.from(
                     document.querySelectorAll("button[jsaction*='.category'], button[jsaction*='pane.wfvdle'][aria-label], div.fontBodyMedium button")
@@ -2049,8 +2257,8 @@ class CRMService:
                     address: address || null,
                     phone: phone || null,
                     website: websiteText || websiteHref || null,
-                    rating_label: ratingLabel || null,
-                    reviews_label: reviewsLabel || null,
+                    rating_label: ratingLabel || ratingText || null,
+                    reviews_label: reviewsLabel || reviewsText || null,
                     categories: categories,
                   };
                 }
@@ -2181,9 +2389,11 @@ class CRMService:
 
         rating_value = candidate.get("rating")
         review_count_value = candidate.get("review_count")
+        parsed_rating = self._parse_rating_text(rating_value)
+        parsed_review_count = self._parse_reviews_count_text(review_count_value)
         score = self._build_lead_score(
-            rating=rating_value,
-            review_count=review_count_value,
+            rating=parsed_rating,
+            review_count=parsed_review_count,
             has_email=bool(email_normalized),
             has_website=bool(website),
         )
@@ -2217,6 +2427,8 @@ class CRMService:
                 address=address,
                 source=str(candidate.get("source") or "unknown"),
                 source_ref=dict(candidate.get("source_ref") or {}),
+                rating=parsed_rating,
+                review_count=parsed_review_count,
                 status=CRMLeadStatus.ENRICHING if not email_normalized else CRMLeadStatus.READY,
                 score=score,
                 legal=legal,
@@ -2245,6 +2457,16 @@ class CRMService:
             set_fields["city"] = str(candidate.get("city") or "").strip()
         if not str(existing.get("category") or "").strip() and str(candidate.get("category") or "").strip():
             set_fields["category"] = str(candidate.get("category") or "").strip()
+
+        existing_rating = self._parse_rating_text(existing.get("rating"))
+        if parsed_rating is not None:
+            if existing_rating is None or abs(parsed_rating - existing_rating) > 1e-9:
+                set_fields["rating"] = parsed_rating
+
+        existing_review_count = self._parse_reviews_count_text(existing.get("review_count"))
+        if parsed_review_count is not None:
+            if existing_review_count is None or parsed_review_count > existing_review_count:
+                set_fields["review_count"] = parsed_review_count
 
         existing_score = float(existing.get("score") or 0.0)
         if score > existing_score:
@@ -2373,7 +2595,6 @@ class CRMService:
         data: dict[str, Any] | None = None,
         actor: str = "system",
     ) -> None:
-        events = get_database()[self._EVENTS_COLLECTION]
         event = CRMEvent(
             event_type=str(event_type or "event").strip(),
             lead_id=str(lead_id).strip() if lead_id else None,
@@ -2383,7 +2604,7 @@ class CRMService:
             data=dict(data or {}),
             created_at=self._now_utc(),
         )
-        await events.insert_one(event.model_dump(mode="python"))
+        await self._event_repository.insert(event.model_dump(mode="python"))
 
     async def _build_mini_report_for_lead(self, *, lead_doc: dict[str, Any]) -> str:
         pipeline = lead_doc.get("pipeline") if isinstance(lead_doc.get("pipeline"), dict) else {}

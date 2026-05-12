@@ -115,7 +115,9 @@ async def list_crm_leads(
     consent_filter: str | None = Query(default=None, alias="consent_status"),
     source_filter: str | None = Query(default=None, alias="source"),
     q: str | None = Query(default=None),
-    sort_by: Literal["updated_at", "business_name", "score"] = Query(default="updated_at"),
+    sort_by: Literal["updated_at", "business_name", "score", "status", "consent_status", "source"] = Query(
+        default="updated_at"
+    ),
     sort_dir: Literal["asc", "desc"] = Query(default="desc"),
 ) -> dict[str, Any]:
     try:
@@ -265,6 +267,28 @@ async def list_crm_events(
             page=page,
             page_size=page_size,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/discovery-runs", tags=["CRM"])
+async def list_crm_discovery_runs(
+    service: CRMServiceDep,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    try:
+        return await service.list_discovery_runs(page=page, page_size=page_size)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/discovery-runs/{discovery_run_id}", tags=["CRM"])
+async def get_crm_discovery_run(discovery_run_id: str, service: CRMServiceDep) -> dict[str, Any]:
+    try:
+        return await service.get_discovery_run(discovery_run_id=discovery_run_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

@@ -95,6 +95,24 @@ class _FakeBroker:
         raise AssertionError(f"handoff_job should not be called: {kwargs}")
 
 
+class _FakeCRMService:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def process_discovery_task(self, *, task_payload: Any, job_id: Any) -> dict[str, Any]:
+        payload = task_payload.model_dump(mode="python")
+        self.calls.append({"job_id": job_id, "payload": payload})
+        return {
+            "query": payload.get("query"),
+            "source": payload.get("source"),
+            "status": "completed",
+            "candidates": 2,
+            "inserted": 2,
+            "updated": 0,
+            "skipped": 0,
+        }
+
+
 def test_scraper_worker_queues_separate_analysis_job_and_keeps_scrape_job_done() -> None:
     fake_service = _FakeBusinessService()
     fake_broker = _FakeBroker()
@@ -128,6 +146,38 @@ def test_scraper_worker_queues_separate_analysis_job_and_keeps_scrape_job_done()
     assert done_payload["analysis_handoff"]["job_type"] == "analysis_generate"
 
     assert any(event["stage"] == "handoff_analysis_queued" for event in fake_broker.appended_events)
+
+
+def test_scraper_worker_processes_crm_discovery_jobs_on_scrape_google_maps_queue() -> None:
+    fake_service = _FakeBusinessService()
+    fake_crm_service = _FakeCRMService()
+    fake_broker = _FakeBroker()
+    worker = ScraperWorker(service=fake_service, job_broker=fake_broker, crm_service=fake_crm_service)
+    worker.queue_name = "scrape_google_maps"  # noqa: SLF001
+
+    job = {
+        "_id": "crm-discovery-job-1",
+        "queue_name": "scrape_google_maps",
+        "job_type": "crm_lead_discovery",
+        "payload": {
+            "query": "merienda",
+            "limit": 100,
+            "source": "auto_live_google_maps",
+        },
+    }
+
+    asyncio.run(worker._process_job(job))
+
+    assert len(fake_crm_service.calls) == 1
+    assert fake_crm_service.calls[0]["job_id"] == "crm-discovery-job-1"
+    assert fake_crm_service.calls[0]["payload"]["query"] == "merienda"
+
+    assert len(fake_broker.done_results) == 1
+    done_payload = fake_broker.done_results[0]["result"]
+    assert done_payload["status"] == "completed"
+    assert done_payload["candidates"] == 2
+    assert any(event["stage"] == "crm_discovery_worker_started" for event in fake_broker.appended_events)
+    assert any(event["stage"] == "crm_discovery_worker_completed" for event in fake_broker.appended_events)
 
 
 def test_scraper_worker_tripadvisor_only_still_handoffs_to_analysis_single_source() -> None:

@@ -77,6 +77,8 @@ class Settings(BaseSettings):
     crm_unsubscribe_url: str = ""
     crm_unsubscribe_secret: str = ""
     crm_scheduler_batch_size: int = 200
+    crm_repo_v2: bool = True
+    crm_discovery_v2: bool = True
 
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
 
