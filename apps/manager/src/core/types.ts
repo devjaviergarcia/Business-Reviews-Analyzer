@@ -1,4 +1,4 @@
-export type MenuKey = "analysis" | "jobs" | "business" | "api";
+export type MenuKey = "analysis" | "jobs" | "business" | "crm" | "api";
 
 export type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
 
@@ -96,4 +96,43 @@ export interface ViewModule {
   root: HTMLElement;
   onShow: () => void;
   onHide: () => void;
+}
+
+export interface CRMLeadItem {
+  lead_id: string;
+  business_name?: string;
+  email?: string;
+  phone?: string;
+  website?: string;
+  city?: string;
+  category?: string;
+  source?: string;
+  status?: string;
+  score?: number;
+  legal?: {
+    consent_status?: string;
+    do_not_contact?: boolean;
+    suppressed_reason?: string | null;
+  };
+  pipeline?: {
+    business_id?: string | null;
+    source_job_ids?: string[];
+    analysis_job_id?: string | null;
+    report_job_id?: string | null;
+  };
+  updated_at?: string;
+  created_at?: string;
+}
+
+export interface CRMCampaignItem {
+  campaign_id: string;
+  name?: string;
+  status?: string;
+  source_mode?: string;
+  selected_source?: string | null;
+  cadence_template_id?: string | null;
+  metrics?: Record<string, unknown>;
+  launched_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
 }

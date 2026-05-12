@@ -178,6 +178,15 @@ def test_advanced_report_builder_builds_5_sections_redesigned() -> None:
     scatter = customer_and_problems.get("scatter_clientes")
     assert isinstance(scatter, dict)
     assert isinstance(scatter.get("circles"), list)
+    bubbles = scatter.get("bubbles")
+    assert isinstance(bubbles, list)
+    if bubbles:
+        radii = [float(item.get("radius", 0.0) or 0.0) for item in bubbles if isinstance(item, dict)]
+        assert radii
+        assert all(radius > 0.0 for radius in radii)
+        weights = [float(item.get("weight_pct", 0.0) or 0.0) / 100.0 for item in bubbles if isinstance(item, dict)]
+        assert weights
+        assert abs(max(radii) - max(weights)) <= 0.001
 
     action_plan = sections["4_plan_de_accion"]
     assert isinstance(action_plan.get("corto_plazo_0_30_dias"), list)
@@ -204,6 +213,55 @@ def test_advanced_report_builder_builds_5_sections_redesigned() -> None:
     history = evolution.get("analyses_history") if isinstance(evolution, dict) else []
     if isinstance(history, list) and history:
         assert "analysis_id" not in history[0]
+
+    source_reports = report.get("source_reports")
+    assert isinstance(source_reports, dict)
+    assert "google_maps" in source_reports
+    assert "tripadvisor" in source_reports
+    source_analysis = report.get("source_analysis")
+    assert isinstance(source_analysis, dict)
+    assert "google_maps" in source_analysis
+    assert "tripadvisor" in source_analysis
+    google_narrative = source_analysis["google_maps"].get("narrativa")
+    assert isinstance(google_narrative, dict)
+    assert isinstance(google_narrative.get("narrativa"), str)
+    comparison = report.get("source_comparison")
+    assert isinstance(comparison, dict)
+    assert isinstance(comparison.get("narrativa_comparacion"), str)
+    assert isinstance(comparison.get("recomendaciones"), list)
+
+
+def test_advanced_report_builder_source_reports_single_source_only() -> None:
+    builder = AdvancedBusinessReportBuilder()
+    business_id = str(ObjectId())
+    google_only_reviews = [item for item in _sample_reviews() if str(item.get("source")) == "google_maps"]
+
+    report = asyncio.run(
+        builder.build(
+            business_id=business_id,
+            business_name="Solo Google",
+            listing={"categories": ["restaurante"], "overall_rating": 4.2},
+            stats={"avg_rating": 3.4, "response_rate": 0.32},
+            reviews=google_only_reviews,
+            analysis_payload={"overall_sentiment": "mixed", "main_topics": ["servicio"]},
+            businesses_collection=_FakeCollection([]),
+            analyses_collection=_FakeCollection([]),
+        )
+    )
+
+    source_reports = report.get("source_reports")
+    assert isinstance(source_reports, dict)
+    assert "google_maps" in source_reports
+    assert "tripadvisor" not in source_reports
+    source_analysis = report.get("source_analysis")
+    assert isinstance(source_analysis, dict)
+    assert "google_maps" in source_analysis
+    assert "tripadvisor" not in source_analysis
+    assert report.get("source_comparison") is None
+    google_data = source_reports.get("google_maps")
+    assert isinstance(google_data, dict)
+    assert isinstance(google_data.get("stats"), dict)
+    assert isinstance(google_data.get("review_metrics"), list)
 
 
 def test_advanced_report_builder_handles_empty_reviews() -> None:
@@ -330,3 +388,34 @@ def test_sanitize_llm_text_reduces_generation_artifacts() -> None:
     assert "impactoooo" not in cleaned
     assert "**" not in cleaned
     assert ".." not in cleaned
+
+
+def test_action_plan_does_not_call_llm_when_disabled() -> None:
+    class _NoLlmBuilder(AdvancedBusinessReportBuilder):
+        async def _build_llm_action_plan(self, **_kwargs):  # type: ignore[override]
+            raise AssertionError("LLM should not be called when report LLM is disabled.")
+
+    builder = _NoLlmBuilder(enable_llm=False)
+    # Defensive: even if a client object is present, llm_enabled=False must win.
+    builder.client = object()  # type: ignore[assignment]
+
+    result = asyncio.run(
+        builder._build_action_plan(
+            problem_clusters={
+                "clusters": [
+                    {
+                        "problem": "servicio",
+                        "severity": 0.61,
+                        "count": 8,
+                        "avg_rating": 2.3,
+                    }
+                ]
+            },
+            customer_clusters={"cluster_count": 2},
+            business_name="Negocio Demo",
+            business_context={"tipo_negocio": "restauración"},
+        )
+    )
+
+    assert isinstance(result, dict)
+    assert result.get("llm_generated") is False

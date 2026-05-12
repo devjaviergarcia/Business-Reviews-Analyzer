@@ -121,6 +121,17 @@ class RelaunchAnalyzeBusinessJobRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class RelaunchScrapeJobRequest(BaseModel):
+    reason: str | None = None
+    force: bool = False
+    restart_from_zero: bool = False
+    google_maps_name: str | None = None
+    tripadvisor_name: str | None = None
+    scraper_params: ScraperParamsRequest | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class RelaunchTripadvisorAntiBotJobsRequest(BaseModel):
     limit: int = Field(default=20, ge=1, le=200)
     reason: str | None = None
@@ -147,8 +158,19 @@ class AnalyzeStoredReviewsJobRequest(BaseModel):
     batch_size: int | None = Field(default=None, ge=1, le=2000)
     max_reviews_pool: int | None = Field(default=None, ge=1, le=100000)
     source_job_id: str | None = None
+    source_mode: Literal["auto", "combined", "single"] = "auto"
+    selected_source: Literal["google_maps", "tripadvisor"] | None = None
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_source_scope(self) -> "AnalyzeStoredReviewsJobRequest":
+        mode = str(self.source_mode or "auto").strip().lower()
+        if mode == "single" and self.selected_source is None:
+            raise ValueError("selected_source is required when source_mode='single'.")
+        if mode != "single":
+            self.selected_source = None
+        return self
 
 
 def _json_default(value: Any) -> str:
@@ -341,17 +363,35 @@ async def delete_scrape_job(
 async def relaunch_scrape_job(
     job_id: str,
     service: BusinessServiceDep,
-    payload: RelaunchAnalyzeBusinessJobRequest | None = None,
+    payload: RelaunchScrapeJobRequest | None = None,
 ) -> dict:
     reason = payload.reason if payload else None
     force = bool(payload.force) if payload else False
     restart_from_zero = bool(payload.restart_from_zero) if payload else False
+    scraper_params = payload.scraper_params if payload else None
     try:
         return await service.relaunch_scrape_job(
             job_id=job_id,
             reason=reason,
             force=force,
             restart_from_zero=restart_from_zero,
+            google_maps_name=payload.google_maps_name if payload else None,
+            tripadvisor_name=payload.tripadvisor_name if payload else None,
+            interactive_max_rounds=(
+                scraper_params.scraper_interactive_max_rounds if scraper_params else None
+            ),
+            html_scroll_max_rounds=(
+                scraper_params.scraper_html_scroll_max_rounds if scraper_params else None
+            ),
+            html_stable_rounds=(
+                scraper_params.scraper_html_stable_rounds if scraper_params else None
+            ),
+            tripadvisor_max_pages=(
+                scraper_params.scraper_tripadvisor_max_pages if scraper_params else None
+            ),
+            tripadvisor_pages_percent=(
+                scraper_params.scraper_tripadvisor_pages_percent if scraper_params else None
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -484,6 +524,8 @@ async def enqueue_analyze_job(
             batch_size=payload.batch_size,
             max_reviews_pool=payload.max_reviews_pool,
             source_job_id=payload.source_job_id,
+            source_mode=payload.source_mode,
+            selected_source=payload.selected_source,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

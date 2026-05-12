@@ -33,6 +33,18 @@ export class ApiClient {
     return (await response.json()) as T;
   }
 
+  public async patch<T>(path: string, payload: Record<string, unknown>): Promise<T> {
+    const response = await fetch(this.buildUrl(path), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    return (await response.json()) as T;
+  }
+
   public async delete<T>(path: string): Promise<T> {
     const response = await fetch(this.buildUrl(path), {
       method: "DELETE",

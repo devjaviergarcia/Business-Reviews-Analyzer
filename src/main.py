@@ -7,6 +7,7 @@ from src.config import settings
 from src.database import close_mongo_connection, connect_to_mongo
 from src.routers.analysis import router as analysis_router
 from src.routers.business import router as business_router
+from src.routers.crm import router as crm_router
 from src.routers.health import router as health_router
 from src.routers.tripadvisor import router as tripadvisor_router
 
@@ -49,6 +50,10 @@ app = FastAPI(
             "name": "Tripadvisor Session",
             "description": "Global Tripadvisor session state and manual intervention actions.",
         },
+        {
+            "name": "CRM",
+            "description": "Lead discovery, cadences, campaigns and outreach compliance controls.",
+        },
     ],
     lifespan=lifespan,
 )
@@ -65,3 +70,4 @@ app.include_router(health_router)
 app.include_router(business_router)
 app.include_router(analysis_router)
 app.include_router(tripadvisor_router)
+app.include_router(crm_router)

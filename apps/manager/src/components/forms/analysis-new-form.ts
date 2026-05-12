@@ -5,6 +5,7 @@ import { createInput } from "../atoms/input";
 
 export type AnalysisNewFormValues = {
   name: string;
+  sourceScope: "all" | "google_maps" | "tripadvisor";
   googleMapsName: string;
   tripadvisorName: string;
   strategy: string;
@@ -41,12 +42,18 @@ export type AnalysisNewFormHandle = {
 
 export function createAnalysisNewForm(options: AnalysisNewFormOptions): AnalysisNewFormHandle {
   const root = createElement("section", "panel form-panel");
-  root.append(createElement("h2", "panel__title", "Analizar nuevo (solo cola)"));
+  root.append(createElement("h2", "panel__title", "Capturar reseñas (pipeline automático)"));
 
   const form = createElement("form", "form-grid") as HTMLFormElement;
   root.append(form);
 
   const nameInput = createInput({ placeholder: "Nombre del negocio" });
+  const sourceScopeSelect = createElement("select", "atom-input") as HTMLSelectElement;
+  sourceScopeSelect.innerHTML = `
+    <option value="all" selected>Todas las fuentes</option>
+    <option value="google_maps">Solo Google Maps</option>
+    <option value="tripadvisor">Solo Tripadvisor</option>
+  `;
   const googleMapsNameInput = createInput({ placeholder: "Nombre en Google Maps (opcional)" });
   const tripadvisorNameInput = createInput({ placeholder: "Nombre en Tripadvisor (opcional)" });
   const strategySelect = createElement("select", "atom-input") as HTMLSelectElement;
@@ -67,6 +74,7 @@ export function createAnalysisNewForm(options: AnalysisNewFormOptions): Analysis
   });
 
   appendLabeled(form, "Nombre", nameInput);
+  appendLabeled(form, "Fuentes para el pipeline", sourceScopeSelect);
   appendLabeled(form, "Nombre Google Maps (opcional)", googleMapsNameInput);
   appendLabeled(form, "Nombre Tripadvisor (opcional)", tripadvisorNameInput);
   appendLabeled(form, "Strategy", strategySelect);
@@ -79,7 +87,7 @@ export function createAnalysisNewForm(options: AnalysisNewFormOptions): Analysis
   appendLabeled(form, "TripAdvisor pages percent", tripadvisorPagesPercentInput);
 
   const actions = createElement("div", "form-actions");
-  const submitButton = createButton({ label: "Lanzar análisis", tone: "orange", type: "submit" });
+  const submitButton = createButton({ label: "Lanzar scrape", tone: "orange", type: "submit" });
   const statusLabel = createElement("span", "muted", "");
   actions.append(submitButton, statusLabel);
   form.append(actions);
@@ -88,6 +96,7 @@ export function createAnalysisNewForm(options: AnalysisNewFormOptions): Analysis
     event.preventDefault();
     options.onSubmit({
       name: nameInput.value.trim(),
+      sourceScope: sourceScopeSelect.value as "all" | "google_maps" | "tripadvisor",
       googleMapsName: googleMapsNameInput.value.trim(),
       tripadvisorName: tripadvisorNameInput.value.trim(),
       strategy: strategySelect.value,

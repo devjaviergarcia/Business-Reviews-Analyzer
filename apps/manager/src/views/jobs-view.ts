@@ -1,7 +1,7 @@
 import { AnimationController } from "../animations/controller";
 import { createButton } from "../components/atoms/button";
 import { ApiClient } from "../core/api-client";
-import { clearElement, createElement, formatError } from "../core/dom";
+import { clearElement, createElement, formatError, parseOptionalFloat, parseOptionalInteger } from "../core/dom";
 import type { AnalyzeJobItem, JobEventItem, PaginatedResponse, ViewModule } from "../core/types";
 
 type JobsViewDeps = {
@@ -211,6 +211,38 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
   const drawerError = createElement("div", "jobs6-drawer-block jobs6-drawer-error muted", "Sin error.");
   const drawerTransitionsTitle = createElement("h4", "jobs6-drawer-section-title", "Transiciones recientes");
   const drawerTransitions = createElement("pre", "code-block jobs6-drawer-transitions", "");
+  const drawerRelaunchConfigTitle = createElement(
+    "h4",
+    "jobs6-drawer-section-title hidden",
+    "Relanzar con ajustes (Tripadvisor)"
+  );
+  const drawerRelaunchConfig = createElement("div", "jobs6-drawer-block hidden");
+  const drawerTripadvisorNameInput = createElement("input", "atom-input") as HTMLInputElement;
+  drawerTripadvisorNameInput.placeholder = "Nombre en Tripadvisor (opcional)";
+  const drawerTripadvisorMaxPagesInput = createElement("input", "atom-input") as HTMLInputElement;
+  drawerTripadvisorMaxPagesInput.type = "number";
+  drawerTripadvisorMaxPagesInput.min = "1";
+  drawerTripadvisorMaxPagesInput.placeholder = "Tripadvisor max pages (opcional)";
+  const drawerTripadvisorPagesPercentInput = createElement("input", "atom-input") as HTMLInputElement;
+  drawerTripadvisorPagesPercentInput.type = "number";
+  drawerTripadvisorPagesPercentInput.min = "0.1";
+  drawerTripadvisorPagesPercentInput.max = "100";
+  drawerTripadvisorPagesPercentInput.step = "0.1";
+  drawerTripadvisorPagesPercentInput.placeholder = "Tripadvisor pages percent (opcional)";
+  const drawerRelaunchConfigHint = createElement(
+    "div",
+    "muted",
+    "Si completas estos campos, se usarán en el payload del relanzado."
+  );
+  drawerRelaunchConfig.append(
+    createElement("label", "form-label", "Nombre Tripadvisor"),
+    drawerTripadvisorNameInput,
+    createElement("label", "form-label", "Tripadvisor max pages"),
+    drawerTripadvisorMaxPagesInput,
+    createElement("label", "form-label", "Tripadvisor pages percent"),
+    drawerTripadvisorPagesPercentInput,
+    drawerRelaunchConfigHint
+  );
   const drawerNodeActionsTitle = createElement("h4", "jobs6-drawer-section-title", "Acciones");
   const drawerNodeActions = createElement("div", "form-actions");
   const drawerRelaunchButton = createButton({ label: "Relanzar", tone: "turquoise" });
@@ -237,6 +269,8 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     drawerError,
     drawerTransitionsTitle,
     drawerTransitions,
+    drawerRelaunchConfigTitle,
+    drawerRelaunchConfig,
     drawerNodeActionsTitle,
     drawerNodeActions,
     drawerActionStatus
@@ -1305,6 +1339,8 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
       drawerStateLine.textContent = "-";
       drawerError.textContent = "Sin error.";
       drawerTransitions.textContent = "";
+      drawerRelaunchConfigTitle.classList.add("hidden");
+      drawerRelaunchConfig.classList.add("hidden");
       drawerActionStatus.textContent = "";
       drawerManualButton.classList.add("hidden");
       drawerLaunchLiveButton.classList.add("hidden");
@@ -1343,6 +1379,8 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
 
     drawerManualButton.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
     drawerLaunchLiveButton.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
+    drawerRelaunchConfigTitle.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
+    drawerRelaunchConfig.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
     drawerRelaunchFromZeroButton.classList.toggle("hidden", node.key === "analysis" || node.key === "report");
     drawerRelaunchButton.toggleAttribute("disabled", !node.jobId);
     drawerRelaunchFromZeroButton.toggleAttribute("disabled", !node.jobId || node.key === "analysis" || node.key === "report");
@@ -1350,6 +1388,31 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     drawerDeleteButton.toggleAttribute("disabled", !node.jobId);
     drawerOutputButton.toggleAttribute("disabled", !node.outputUrl);
     drawerCopyJobButton.toggleAttribute("disabled", !node.jobId);
+
+    if (node.key === "scrape_tripadvisor" && node.jobId) {
+      const job = findJobById(node.jobId);
+      const payload = isRecord(job?.payload) ? job.payload : null;
+      if (!drawerTripadvisorNameInput.value.trim()) {
+        const sourceName = String(
+          (payload?.source_name as string | undefined) ||
+            (payload?.name as string | undefined) ||
+            ""
+        ).trim();
+        if (sourceName) drawerTripadvisorNameInput.value = sourceName;
+      }
+      if (!drawerTripadvisorMaxPagesInput.value.trim()) {
+        const maxPages = String(
+          (payload?.tripadvisor_max_pages as number | string | undefined) || ""
+        ).trim();
+        if (maxPages) drawerTripadvisorMaxPagesInput.value = maxPages;
+      }
+      if (!drawerTripadvisorPagesPercentInput.value.trim()) {
+        const pagesPercent = String(
+          (payload?.tripadvisor_pages_percent as number | string | undefined) || ""
+        ).trim();
+        if (pagesPercent) drawerTripadvisorPagesPercentInput.value = pagesPercent;
+      }
+    }
   }
 
   function getDrawerNode(): PipelineNodeState | null {
@@ -1386,6 +1449,7 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
 
     drawerActionStatus.textContent = restartFromZero ? "Relanzando de 0..." : "Relanzando...";
     try {
+      const relaunchOverrides = buildRelaunchOverridesForNode(node);
       const basePath =
         node.key === "analysis"
           ? "/business/analyze/jobs"
@@ -1397,8 +1461,8 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
       let relaunchedJobId = node.jobId;
       try {
         const firstPayload = restartFromZero
-          ? { force: true, restart_from_zero: true }
-          : {};
+          ? { force: true, restart_from_zero: true, ...relaunchOverrides }
+          : { ...relaunchOverrides };
         const response = await deps.apiClient.post<{ job_id?: string }>(endpoint, firstPayload);
         const responseJobId = String(response?.job_id || "").trim();
         if (responseJobId) {
@@ -1429,7 +1493,10 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
         drawerActionStatus.textContent = "Relanzando (forzado)...";
         let response: { job_id?: string };
         try {
-          response = await deps.apiClient.post<{ job_id?: string }>(endpoint, { force: true });
+          response = await deps.apiClient.post<{ job_id?: string }>(endpoint, {
+            force: true,
+            ...relaunchOverrides,
+          });
         } catch (forceError) {
           const forceMessage = formatError(forceError);
           if (isForceFieldUnsupported(forceMessage)) {
@@ -1476,6 +1543,43 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     } catch (error) {
       drawerActionStatus.textContent = `ERROR: ${formatError(error)}`;
     }
+  }
+
+  function buildRelaunchOverridesForNode(node: PipelineNodeState): Record<string, unknown> {
+    if (node.key !== "scrape_tripadvisor") {
+      return {};
+    }
+    const payload: Record<string, unknown> = {};
+    const tripadvisorName = drawerTripadvisorNameInput.value.trim();
+    if (tripadvisorName) {
+      payload.tripadvisor_name = tripadvisorName;
+    }
+    const tripadvisorMaxPages = parseOptionalInteger(drawerTripadvisorMaxPagesInput.value);
+    const tripadvisorPagesPercent = parseOptionalFloat(drawerTripadvisorPagesPercentInput.value);
+    if (
+      tripadvisorPagesPercent !== null &&
+      (tripadvisorPagesPercent <= 0 || tripadvisorPagesPercent > 100)
+    ) {
+      throw new Error("Tripadvisor pages percent debe estar entre 0 y 100.");
+    }
+    const scraperParams: Record<string, unknown> = {};
+    if (tripadvisorMaxPages !== null) {
+      scraperParams.scraper_tripadvisor_max_pages = tripadvisorMaxPages;
+    }
+    if (tripadvisorPagesPercent !== null) {
+      scraperParams.scraper_tripadvisor_pages_percent = tripadvisorPagesPercent;
+    }
+    if (Object.keys(scraperParams).length > 0) {
+      payload.scraper_params = scraperParams;
+    }
+    return payload;
+  }
+
+  function findJobById(jobId: string): AnalyzeJobItem | null {
+    const normalizedTarget = String(jobId || "").trim();
+    if (!normalizedTarget) return null;
+    const match = jobs.find((item) => String(item.job_id || "").trim() === normalizedTarget);
+    return match || null;
   }
 
   async function confirmManualTripadvisorSession(): Promise<void> {

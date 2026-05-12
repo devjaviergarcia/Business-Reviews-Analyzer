@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
@@ -31,6 +32,8 @@ class ReportWorker(QueuedJobWorkerBase):
     _BUSINESSES_COLLECTION = "businesses"
     _REVIEWS_COLLECTION = "reviews"
     _ANALYSES_COLLECTION = "analyses"
+    _REPORT_REVIEWS_LIMIT = 800
+    _REPORT_BALANCED_SOURCES = ("google_maps", "tripadvisor")
 
     def __init__(
         self,
@@ -84,15 +87,17 @@ class ReportWorker(QueuedJobWorkerBase):
                 raise LookupError(f"Business '{business_id}' not found.")
 
             dataset_id = str(analysis_doc.get("dataset_id") or "").strip() or None
-            reviews_query: dict[str, Any] = {"business_id": business_id}
-            if dataset_id:
-                reviews_query["dataset_id"] = dataset_id
-
-            review_docs = (
-                await reviews.find(reviews_query)
-                .sort([("scraped_at", -1), ("_id", -1)])
-                .limit(800)
-                .to_list(length=800)
+            (
+                review_docs,
+                report_source_mode,
+                report_sources_included,
+                report_source_counts,
+            ) = await self._load_report_review_docs(
+                reviews_collection=reviews,
+                business_id=business_id,
+                source_mode=task_payload.source_mode,
+                selected_source=task_payload.selected_source,
+                limit=self._REPORT_REVIEWS_LIMIT,
             )
             normalized_reviews = [self._normalize_review_doc(doc) for doc in review_docs]
 
@@ -110,6 +115,22 @@ class ReportWorker(QueuedJobWorkerBase):
                     businesses_collection=businesses,
                     analyses_collection=analyses,
                 )
+            report_metadata = (
+                advanced_report.get("report_metadata")
+                if isinstance(advanced_report.get("report_metadata"), dict)
+                else {}
+            )
+            report_metadata = {
+                **report_metadata,
+                "report_source_mode": report_source_mode,
+                "report_sources_included": list(report_sources_included),
+                "source_counts": dict(report_source_counts),
+                "dataset_id": dataset_id,
+            }
+            advanced_report = {
+                **advanced_report,
+                "report_metadata": report_metadata,
+            }
 
             intro_context = self._build_intro_context_text(
                 business_name=str(business_doc.get("name", "") or "").strip(),
@@ -147,6 +168,9 @@ class ReportWorker(QueuedJobWorkerBase):
                         "preview_report_artifacts": preview_artifacts,
                         "report_generated_at": now,
                         "preview_report_generated_at": now,
+                        "report_source_mode": report_source_mode,
+                        "report_sources_included": report_sources_included,
+                        "report_source_counts": report_source_counts,
                         "updated_at": now,
                     }
                 },
@@ -164,6 +188,9 @@ class ReportWorker(QueuedJobWorkerBase):
                     "analysis_id": task_payload.analysis_id,
                     "business_id": business_id,
                     "dataset_id": dataset_id,
+                    "report_source_mode": report_source_mode,
+                    "report_sources_included": report_sources_included,
+                    "source_counts": report_source_counts,
                     "report_sections": list((advanced_report.get("sections") or {}).keys()),
                     "report_artifacts": artifacts,
                     "preview_report_sections": list((preview_report.get("sections") or {}).keys()),
@@ -177,6 +204,9 @@ class ReportWorker(QueuedJobWorkerBase):
                     "business_id": business_id,
                     "dataset_id": dataset_id,
                     "output_format": task_payload.output_format,
+                    "report_source_mode": report_source_mode,
+                    "report_sources_included": report_sources_included,
+                    "source_counts": report_source_counts,
                     "report_version": advanced_report.get("report_version"),
                     "section_count": len((advanced_report.get("sections") or {})),
                     "stored_in_analysis": True,
@@ -195,6 +225,115 @@ class ReportWorker(QueuedJobWorkerBase):
                 job_type,
                 exc,
             )
+
+    async def _load_report_review_docs(
+        self,
+        *,
+        reviews_collection: Any,
+        business_id: str,
+        source_mode: str,
+        selected_source: str | None,
+        limit: int,
+    ) -> tuple[list[dict[str, Any]], str, list[str], dict[str, int]]:
+        safe_limit = max(1, int(limit))
+        normalized_mode = str(source_mode or "").strip().lower()
+        if normalized_mode not in {"auto", "combined", "single"}:
+            normalized_mode = "auto"
+        normalized_selected_source = str(selected_source or "").strip().lower() or None
+
+        # Single-source mode (explicit source) falls back to auto if source is missing/invalid.
+        if normalized_mode == "single" and normalized_selected_source in self._REPORT_BALANCED_SOURCES:
+            docs = await (
+                reviews_collection.find(
+                    {
+                        "business_id": business_id,
+                        "source": normalized_selected_source,
+                    }
+                )
+                .sort([("scraped_at", -1), ("_id", -1)])
+                .limit(safe_limit)
+                .to_list(length=safe_limit)
+            )
+            source_counts = self._count_sources(docs)
+            included_sources = [source for source in self._REPORT_BALANCED_SOURCES if source_counts.get(source, 0) > 0]
+            return docs, "single", included_sources, source_counts
+
+        normalized_mode = "auto" if normalized_mode == "single" else normalized_mode
+        source_doc_counts = {
+            source: int(
+                await reviews_collection.count_documents(
+                    {"business_id": business_id, "source": source}
+                )
+            )
+            for source in self._REPORT_BALANCED_SOURCES
+        }
+        has_balanced_sources = all(source_doc_counts.get(source, 0) > 0 for source in self._REPORT_BALANCED_SOURCES)
+        if not has_balanced_sources:
+            docs = await (
+                reviews_collection.find({"business_id": business_id})
+                .sort([("scraped_at", -1), ("_id", -1)])
+                .limit(safe_limit)
+                .to_list(length=safe_limit)
+            )
+            source_counts = self._count_sources(docs)
+            included_sources = [source for source, count in source_counts.items() if count > 0]
+            return docs, normalized_mode, included_sources, source_counts
+
+        half_limit = safe_limit // 2
+        limits = {source: min(source_doc_counts[source], half_limit) for source in self._REPORT_BALANCED_SOURCES}
+        remaining = safe_limit - sum(limits.values())
+        if remaining > 0:
+            expandable_sources = sorted(
+                self._REPORT_BALANCED_SOURCES,
+                key=lambda source: source_doc_counts[source] - limits[source],
+                reverse=True,
+            )
+            for source in expandable_sources:
+                if remaining <= 0:
+                    break
+                available_extra = max(0, source_doc_counts[source] - limits[source])
+                take_extra = min(remaining, available_extra)
+                limits[source] += take_extra
+                remaining -= take_extra
+
+        balanced_docs: list[dict[str, Any]] = []
+        for source in self._REPORT_BALANCED_SOURCES:
+            source_limit = max(0, int(limits.get(source, 0)))
+            if source_limit <= 0:
+                continue
+            source_docs = await (
+                reviews_collection.find({"business_id": business_id, "source": source})
+                .sort([("scraped_at", -1), ("_id", -1)])
+                .limit(source_limit)
+                .to_list(length=source_limit)
+            )
+            balanced_docs.extend(source_docs)
+
+        balanced_docs.sort(key=self._review_sort_key, reverse=True)
+        docs = balanced_docs[:safe_limit]
+        source_counts = self._count_sources(docs)
+        included_sources = [source for source in self._REPORT_BALANCED_SOURCES if source_counts.get(source, 0) > 0]
+        return docs, normalized_mode, included_sources, source_counts
+
+    def _count_sources(self, review_docs: list[dict[str, Any]]) -> dict[str, int]:
+        source_counter = Counter(
+            str((doc or {}).get("source") or "unknown").strip().lower() or "unknown"
+            for doc in review_docs
+            if isinstance(doc, dict)
+        )
+        return {source: int(count) for source, count in sorted(source_counter.items(), key=lambda item: item[0])}
+
+    def _review_sort_key(self, review_doc: dict[str, Any]) -> tuple[float, str]:
+        raw_scraped_at = review_doc.get("scraped_at") if isinstance(review_doc, dict) else None
+        if isinstance(raw_scraped_at, datetime):
+            try:
+                scraped_ts = float(raw_scraped_at.timestamp())
+            except (OverflowError, OSError, ValueError):
+                scraped_ts = 0.0
+        else:
+            scraped_ts = 0.0
+        review_identifier = str(review_doc.get("_id") or review_doc.get("review_id") or "")
+        return (scraped_ts, review_identifier)
 
     def _parse_object_id(self, value: str, *, field_name: str) -> ObjectId:
         try:

@@ -1011,6 +1011,8 @@ class BusinessService:
         batchers: list[str] | None = None,
         batch_size: int | None = None,
         max_reviews_pool: int | None = None,
+        source_mode: str | None = None,
+        selected_source: str | None = None,
     ) -> dict:
         return await self.reanalyze_use_case.execute(
             business_id=business_id,
@@ -1018,6 +1020,8 @@ class BusinessService:
             batchers=batchers,
             batch_size=batch_size,
             max_reviews_pool=max_reviews_pool,
+            source_mode=source_mode,
+            selected_source=selected_source,
         )
 
     async def enqueue_business_scrape_jobs(
@@ -1192,6 +1196,8 @@ class BusinessService:
         batch_size: int | None = None,
         max_reviews_pool: int | None = None,
         source_job_id: str | None = None,
+        source_mode: str | None = None,
+        selected_source: str | None = None,
     ) -> dict[str, Any]:
         parsed_business_id = self._parse_object_id(business_id, field_name="business_id")
         businesses = get_database()[self._BUSINESSES_COLLECTION]
@@ -1206,6 +1212,12 @@ class BusinessService:
             batch_size=batch_size,
             max_reviews_pool=max_reviews_pool,
             source_job_id=str(source_job_id or "").strip() or None,
+            source_mode=str(source_mode or "auto").strip().lower() or "auto",
+            selected_source=(
+                str(selected_source).strip().lower()
+                if selected_source is not None
+                else None
+            ),
         )
         return await self.job_service.enqueue_analysis_generate_job(task_payload=payload)
 
@@ -1736,6 +1748,13 @@ class BusinessService:
         reason: str | None = None,
         force: bool = False,
         restart_from_zero: bool = False,
+        google_maps_name: str | None = None,
+        tripadvisor_name: str | None = None,
+        interactive_max_rounds: int | None = None,
+        html_scroll_max_rounds: int | None = None,
+        html_stable_rounds: int | None = None,
+        tripadvisor_max_pages: int | None = None,
+        tripadvisor_pages_percent: float | None = None,
     ) -> dict[str, Any]:
         existing = await self.job_service.get_job(job_id=job_id)
         self._ensure_job_is_scrape(existing)
@@ -1745,11 +1764,36 @@ class BusinessService:
                 operation="relaunch_tripadvisor_job",
                 job_id=job_id,
             )
+        payload_override: dict[str, Any] = {}
+        if interactive_max_rounds is not None:
+            payload_override["interactive_max_rounds"] = int(interactive_max_rounds)
+        if html_scroll_max_rounds is not None:
+            payload_override["html_scroll_max_rounds"] = int(html_scroll_max_rounds)
+        if html_stable_rounds is not None:
+            payload_override["html_stable_rounds"] = int(html_stable_rounds)
+        if tripadvisor_max_pages is not None:
+            payload_override["tripadvisor_max_pages"] = int(tripadvisor_max_pages)
+        if tripadvisor_pages_percent is not None:
+            payload_override["tripadvisor_pages_percent"] = float(tripadvisor_pages_percent)
+
+        override_source_name: str | None = None
+        if queue_name == "scrape_google_maps":
+            if isinstance(google_maps_name, str) and google_maps_name.strip():
+                override_source_name = self._validate_business_name(google_maps_name)
+        elif queue_name == "scrape_tripadvisor":
+            if isinstance(tripadvisor_name, str) and tripadvisor_name.strip():
+                override_source_name = self._validate_business_name(tripadvisor_name)
+        if override_source_name:
+            payload_override["name"] = override_source_name
+            payload_override["source_name"] = override_source_name
+            payload_override["source_name_normalized"] = self._normalize_text(override_source_name)
+
         return await self.job_service.relaunch_job(
             job_id=job_id,
             reason=reason or "Job relaunched via API.",
             force=bool(force) or bool(restart_from_zero),
             restart_from_zero=bool(restart_from_zero),
+            payload_override=payload_override or None,
         )
 
     async def relaunch_analysis_job(

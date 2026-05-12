@@ -49,6 +49,8 @@ class ReanalyzeUseCase:
         batchers: list[str] | None = None,
         batch_size: int | None = None,
         max_reviews_pool: int | None = None,
+        source_mode: str | None = None,
+        selected_source: str | None = None,
     ) -> dict[str, Any]:
         parsed_business_id = self._parse_object_id(business_id, field_name="business_id")
         database = get_database()
@@ -75,6 +77,14 @@ class ReanalyzeUseCase:
         if selected_dataset_id is not None:
             reviews_query["dataset_id"] = selected_dataset_id
 
+        normalized_source_mode = str(source_mode or "auto").strip().lower() or "auto"
+        normalized_selected_source = str(selected_source or "").strip().lower() or None
+        if normalized_source_mode == "single" and normalized_selected_source in {"google_maps", "tripadvisor"}:
+            reviews_query["source"] = normalized_selected_source
+        else:
+            normalized_source_mode = "auto"
+            normalized_selected_source = None
+
         review_docs = (
             await reviews.find(reviews_query)
             .sort([("scraped_at", -1), ("_id", -1)])
@@ -85,6 +95,10 @@ class ReanalyzeUseCase:
             if selected_dataset_id is not None:
                 raise LookupError(
                     f"No stored reviews found for business '{business_id}' and dataset '{selected_dataset_id}'."
+                )
+            if normalized_selected_source is not None:
+                raise LookupError(
+                    f"No stored reviews found for business '{business_id}' and source '{normalized_selected_source}'."
                 )
             raise LookupError(f"No stored reviews found for business '{business_id}'.")
 
@@ -128,6 +142,8 @@ class ReanalyzeUseCase:
         merged_analysis_payload["meta"] = {
             "type": "stored_reviews_reanalysis",
             "dataset_id": selected_dataset_id,
+            "source_mode": normalized_source_mode,
+            "selected_source": normalized_selected_source,
             "batchers": selected_batchers,
             "batch_size": batch_size_value,
             "pool_size": pool_size,
@@ -163,6 +179,8 @@ class ReanalyzeUseCase:
         review_count_query = {"business_id": business_id}
         if selected_dataset_id is not None:
             review_count_query["dataset_id"] = selected_dataset_id
+        if normalized_source_mode == "single" and normalized_selected_source is not None:
+            review_count_query["source"] = normalized_selected_source
         review_count = await reviews.count_documents(review_count_query)
 
         await businesses.update_one(
@@ -186,6 +204,8 @@ class ReanalyzeUseCase:
             "stats": stats,
             "review_count": review_count,
             "dataset_id": selected_dataset_id,
+            "source_mode": normalized_source_mode,
+            "selected_source": normalized_selected_source,
             "listing_total_reviews": (listing_payload or {}).get("total_reviews") if isinstance(listing_payload, dict) else None,
             "processed_review_count": len(processed_reviews),
             "analysis": merged_analysis_payload,

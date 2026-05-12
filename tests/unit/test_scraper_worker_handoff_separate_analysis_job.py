@@ -128,3 +128,37 @@ def test_scraper_worker_queues_separate_analysis_job_and_keeps_scrape_job_done()
     assert done_payload["analysis_handoff"]["job_type"] == "analysis_generate"
 
     assert any(event["stage"] == "handoff_analysis_queued" for event in fake_broker.appended_events)
+
+
+def test_scraper_worker_tripadvisor_only_still_handoffs_to_analysis_single_source() -> None:
+    fake_service = _FakeBusinessService()
+    fake_broker = _FakeBroker()
+    worker = ScraperWorker(service=fake_service, job_broker=fake_broker)
+    worker._scrape_source = "tripadvisor"  # noqa: SLF001
+    worker._selected_sources = ("tripadvisor",)  # noqa: SLF001
+
+    job = {
+        "_id": "scrape-job-trip-1",
+        "queue_name": "scrape_tripadvisor",
+        "job_type": "business_analyze",
+        "payload": {
+            "name": "Negocio Tripadvisor",
+            "force": True,
+            "strategy": "scroll_copy",
+            "force_mode": "fallback_existing",
+        },
+    }
+
+    asyncio.run(worker._process_job(job))
+
+    assert len(fake_service.job_service.enqueue_calls) == 1
+    enqueue_payload = fake_service.job_service.enqueue_calls[0]
+    assert enqueue_payload["business_id"] == "biz-1"
+    assert enqueue_payload["source_job_id"] == "scrape-job-trip-1"
+    assert enqueue_payload["source_mode"] == "single"
+    assert enqueue_payload["selected_source"] == "tripadvisor"
+
+    assert len(fake_broker.done_results) == 1
+    done_payload = fake_broker.done_results[0]["result"]
+    assert done_payload["analysis_handoff"]["analysis_job_id"] == "analysis-job-1"
+    assert any(event["stage"] == "handoff_analysis_queued" for event in fake_broker.appended_events)

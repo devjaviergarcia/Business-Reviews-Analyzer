@@ -8,6 +8,7 @@ import type { AnalyzeJobItem, MenuKey, PaginatedResponse, ViewModule } from "./c
 import { createAnalysisView } from "./views/analysis-view";
 import { createApiView } from "./views/api-view";
 import { createBusinessView } from "./views/business-view";
+import { createCRMView } from "./views/crm-view";
 import { createJobsView } from "./views/jobs-view";
 
 const ACTIVE_JOB_STATUSES = ["running", "queued", "retrying", "partial", "needs_human"] as const;
@@ -31,7 +32,19 @@ const analysisView = createAnalysisView({
   },
 });
 
-const views: ViewModule[] = [analysisView, jobsView, createBusinessView({ apiClient }), createApiView({ apiClient })];
+const views: ViewModule[] = [
+  analysisView,
+  jobsView,
+  createBusinessView({ apiClient }),
+  createCRMView({
+    apiClient,
+    onJobQueued: (jobId) => {
+      setActiveView("jobs");
+      jobsView.selectJob(jobId);
+    },
+  }),
+  createApiView({ apiClient }),
+];
 
 for (const view of views) {
   view.root.classList.add("app-view", "hidden");
@@ -46,6 +59,7 @@ const menu = createSidebarMenu({
     { key: "analysis", label: "Analisis" },
     { key: "jobs", label: "Pipeline" },
     { key: "business", label: "Negocios" },
+    { key: "crm", label: "CRM" },
     { key: "api", label: "API" },
   ],
   initial: activeKey,

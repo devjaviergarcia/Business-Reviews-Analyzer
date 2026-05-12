@@ -193,3 +193,32 @@ def test_relaunch_job_inactive_from_zero_requeues_same_job_with_strict_rescrape(
     assert jobs.docs[object_id]["force"] is True
     assert jobs.docs[object_id]["force_mode"] == "strict_rescrape"
     assert jobs.docs[object_id]["events"][-1]["data"]["restart_from_zero"] is True
+
+
+def test_relaunch_job_applies_payload_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    object_id, doc = _build_job_doc(status="failed")
+    jobs = _FakeJobsCollection(docs={object_id: doc})
+    monkeypatch.setattr(analysis_job_module, "get_database", lambda: _FakeDatabase(jobs))
+    service = AnalysisJobService()
+
+    result = asyncio.run(
+        service.relaunch_job(
+            job_id=str(object_id),
+            reason="override payload",
+            payload_override={
+                "name": "Nuevo Nombre Tripadvisor",
+                "source_name": "Nuevo Nombre Tripadvisor",
+                "source_name_normalized": "nuevo_nombre_tripadvisor",
+                "tripadvisor_max_pages": 12,
+                "tripadvisor_pages_percent": 100.0,
+            },
+        )
+    )
+
+    assert result["job_id"] == str(object_id)
+    assert result["status"] == "queued"
+    assert jobs.docs[object_id]["payload"]["name"] == "Nuevo Nombre Tripadvisor"
+    assert jobs.docs[object_id]["payload"]["source_name"] == "Nuevo Nombre Tripadvisor"
+    assert jobs.docs[object_id]["payload"]["source_name_normalized"] == "nuevo_nombre_tripadvisor"
+    assert jobs.docs[object_id]["payload"]["tripadvisor_max_pages"] == 12
+    assert jobs.docs[object_id]["payload"]["tripadvisor_pages_percent"] == 100.0

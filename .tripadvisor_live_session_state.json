@@ -1,6 +1,6 @@
 {
-  "state": "finished",
-  "pid": null,
-  "updated_at_ts": 1774991963.8696196,
-  "finished_reason": "tripadvisor-flow-complete"
+  "state": "running",
+  "pid": 15349,
+  "updated_at_ts": 1775255530.266128,
+  "finished_reason": null
 }

@@ -25,8 +25,8 @@ def test_detect_tripadvisor_antibot_from_captcha_provider_markers() -> None:
         html_text="<html><script src='https://ct.captcha-delivery.com/c.js'></script></html>",
         keyword_matches={"captcha": ["https://geo.captcha-delivery.com/captcha/?initialCid=abc"]},
     )
-    assert detected is True
-    assert rule.startswith("captcha_provider_markers:")
+    assert detected is False
+    assert rule == "robot_keyword_missing"
 
 
 def test_detect_tripadvisor_antibot_keeps_non_provider_captcha_as_non_blocking() -> None:
@@ -36,4 +36,19 @@ def test_detect_tripadvisor_antibot_keeps_non_provider_captcha_as_non_blocking()
         keyword_matches={"captcha": ["some random captcha label"]},
     )
     assert detected is False
-    assert rule == "captcha_without_companion"
+    assert rule == "robot_keyword_missing"
+
+
+def test_detect_tripadvisor_antibot_requires_robot_and_provider_markers() -> None:
+    service = _build_service()
+    detected, rule = service._detect_tripadvisor_antibot(
+        html_text=(
+            "<html><body>"
+            "Nos aseguramos de que nos dirigimos a usted, y no a un robot. "
+            "<script src='https://ct.captcha-delivery.com/c.js'></script>"
+            "</body></html>"
+        ),
+        keyword_matches={"captcha": ["https://geo.captcha-delivery.com/captcha/?initialCid=abc"]},
+    )
+    assert detected is True
+    assert rule.startswith("explicit_challenge_markers:") or rule.startswith("captcha_provider_markers:")

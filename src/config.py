@@ -16,6 +16,7 @@ class Settings(BaseSettings):
 
     gemini_api_key: str = ""
     gemini_model: str = "gemini-1.5-flash"
+    report_builder_enable_llm: bool = False
 
     scraper_headless: bool = False
     scraper_incognito: bool = False
@@ -68,6 +69,14 @@ class Settings(BaseSettings):
     tripadvisor_worker_singleton_enabled: bool = True
     tripadvisor_worker_singleton_heartbeat_seconds: int = 10
     tripadvisor_worker_singleton_stale_seconds: int = 45
+    crm_resend_api_key: str = ""
+    crm_resend_from_email: str = ""
+    crm_resend_reply_to: str = ""
+    crm_sender_name: str = "Repiq"
+    crm_cta_url: str = "https://www.repiq.ai/demo"
+    crm_unsubscribe_url: str = ""
+    crm_unsubscribe_secret: str = ""
+    crm_scheduler_batch_size: int = 200
 
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
 

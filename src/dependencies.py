@@ -6,6 +6,7 @@ from src.pipeline.preprocessor import ReviewPreprocessor
 from src.services.analysis_job_service import AnalysisJobService
 from src.services.business_service import BusinessService
 from src.services.business_query_service import BusinessQueryService
+from src.services.crm_service import CRMService
 from src.services.tripadvisor_local_worker_control_service import TripadvisorLocalWorkerControlService
 from src.services.tripadvisor_session_service import TripadvisorSessionService
 from src.workers.broker import WorkerJobBroker
@@ -65,4 +66,20 @@ def create_business_service() -> BusinessService:
         job_service=create_analysis_job_service(),
         query_service=create_business_query_service(),
         tripadvisor_local_worker_control_service=create_tripadvisor_local_worker_control_service(),
+    )
+
+
+def create_crm_service() -> CRMService:
+    job_service = create_analysis_job_service()
+    return CRMService(
+        job_service=job_service,
+        business_service=BusinessService(
+            scraper=create_google_maps_scraper(),
+            tripadvisor_scraper=create_tripadvisor_scraper(),
+            preprocessor=create_review_preprocessor(),
+            llm_analyzer=create_review_llm_analyzer(),
+            job_service=job_service,
+            query_service=create_business_query_service(),
+            tripadvisor_local_worker_control_service=create_tripadvisor_local_worker_control_service(),
+        ),
     )

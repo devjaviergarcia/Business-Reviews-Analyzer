@@ -6,7 +6,12 @@ import { createInput } from "../atoms/input";
 type AnalysisReanalyzeFormOptions = {
   onLoadCatalog: () => void;
   onSearchTerm: (term: string) => void;
-  onSubmit: (values: { batchers: string; batchSize: string; poolSize: string }) => void;
+  onSubmit: (values: {
+    batchers: string;
+    batchSize: string;
+    poolSize: string;
+    sourceScope: "all" | "google_maps" | "tripadvisor";
+  }) => void;
 };
 
 export type ReanalyzeSuggestion = { businessId: string; name: string };
@@ -25,7 +30,7 @@ export function createAnalysisReanalyzeForm(
   options: AnalysisReanalyzeFormOptions
 ): AnalysisReanalyzeFormHandle {
   const root = createElement("section", "panel form-panel");
-  root.append(createElement("h2", "panel__title", "Reanalizar existente"));
+  root.append(createElement("h2", "panel__title", "Generar reporte desde reseñas guardadas"));
 
   const topActions = createElement("div", "form-actions");
   const loadButton = createButton({
@@ -57,18 +62,26 @@ export function createAnalysisReanalyzeForm(
   root.append(selectedLabel);
 
   const form = createElement("form", "form-grid") as HTMLFormElement;
+  const sourceScopeSelect = createElement("select", "atom-input") as HTMLSelectElement;
+  sourceScopeSelect.innerHTML = `
+    <option value="all" selected>Todas las fuentes</option>
+    <option value="google_maps">Solo Google Maps</option>
+    <option value="tripadvisor">Solo Tripadvisor</option>
+  `;
   const batchersInput = createInput({ placeholder: "latest_text,balanced_rating" });
   const batchSizeInput = createInput({ type: "number", min: "1", placeholder: "opcional" });
   const poolSizeInput = createInput({ type: "number", min: "1", placeholder: "opcional" });
+  form.append(createElement("label", "form-label", "Fuentes para el reporte"), sourceScopeSelect);
   form.append(createElement("label", "form-label", "Batchers"), batchersInput);
   form.append(createElement("label", "form-label", "Batch size"), batchSizeInput);
   form.append(createElement("label", "form-label", "Pool size"), poolSizeInput);
   const submitActions = createElement("div", "form-actions");
-  submitActions.append(createButton({ label: "Reanalizar", tone: "orange", type: "submit" }));
+  submitActions.append(createButton({ label: "Generar reporte", tone: "orange", type: "submit" }));
   form.append(submitActions);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     options.onSubmit({
+      sourceScope: sourceScopeSelect.value as "all" | "google_maps" | "tripadvisor",
       batchers: batchersInput.value.trim(),
       batchSize: batchSizeInput.value.trim(),
       poolSize: poolSizeInput.value.trim(),

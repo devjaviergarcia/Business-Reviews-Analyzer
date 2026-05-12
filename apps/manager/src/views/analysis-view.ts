@@ -48,14 +48,21 @@ const JOB_STAGES = [
   "analysis_worker_summary",
   "done",
 ];
+const ANALYSIS_JOB_STAGES = [
+  "queued",
+  "analysis_worker_started",
+  "analysis_worker_summary",
+  "report_handoff_queued",
+  "done",
+];
 
 export function createAnalysisView(deps: AnalysisViewDeps): ViewModule {
   const root = createElement("section", "view-panel");
   const modeBar = createElement("div", "panel mode-switch");
-  modeBar.append(createElement("h2", "panel__title", "Análisis"));
+  modeBar.append(createElement("h2", "panel__title", "Pipeline de Análisis y Reporte"));
   const modeActions = createElement("div", "form-actions");
   const newModeButton = createButton({ label: "Analizar nuevo", tone: "turquoise" });
-  const reanalyzeModeButton = createButton({ label: "Reanalizar existente", tone: "white" });
+  const reanalyzeModeButton = createButton({ label: "Generar reporte", tone: "white" });
   modeActions.append(newModeButton, reanalyzeModeButton);
   modeBar.append(modeActions);
   root.append(modeBar);
@@ -73,6 +80,9 @@ export function createAnalysisView(deps: AnalysisViewDeps): ViewModule {
           strategy: values.strategy,
           force_mode: values.forceMode || null,
         };
+        if (values.sourceScope === "google_maps" || values.sourceScope === "tripadvisor") {
+          payload.sources = [values.sourceScope];
+        }
         if (values.googleMapsName) {
           payload.google_maps_name = values.googleMapsName;
         }
@@ -113,7 +123,7 @@ export function createAnalysisView(deps: AnalysisViewDeps): ViewModule {
         if (!queuedJobId) {
           throw new Error("La API no devolvió job_id.");
         }
-        setSelectedJob(queuedJobId);
+        setSelectedJob(queuedJobId, "scrape");
         newForm.statusLabel.textContent = `Job encolado: ${queuedJobId}`;
         if (typeof deps.onJobQueued === "function") {
           deps.onJobQueued(queuedJobId);
@@ -145,9 +155,15 @@ export function createAnalysisView(deps: AnalysisViewDeps): ViewModule {
         reanalyzeForm.statusLabel.textContent = "Selecciona un negocio del autocompletado.";
         return;
       }
-      reanalyzeForm.statusLabel.textContent = "Reanalizando...";
+      reanalyzeForm.statusLabel.textContent = "Encolando generación de reporte...";
       try {
         const payload: Record<string, unknown> = {};
+        if (values.sourceScope === "google_maps" || values.sourceScope === "tripadvisor") {
+          payload.source_mode = "single";
+          payload.selected_source = values.sourceScope;
+        } else {
+          payload.source_mode = "auto";
+        }
         const batchers = values.batchers
           .split(",")
           .map((item) => item.trim())
@@ -163,11 +179,20 @@ export function createAnalysisView(deps: AnalysisViewDeps): ViewModule {
         if (poolSize !== null) {
           payload.max_reviews_pool = poolSize;
         }
+        payload.business_id = selectedCatalogBusinessId;
         const response = await deps.apiClient.post<Record<string, unknown>>(
-          `/business/${encodeURIComponent(selectedCatalogBusinessId)}/reanalyze`,
+          "/business/analyze/jobs",
           payload
         );
-        reanalyzeForm.statusLabel.textContent = "Reanálisis completado.";
+        const queuedJobId = String(response.job_id || "").trim();
+        if (!queuedJobId) {
+          throw new Error("La API no devolvió job_id.");
+        }
+        setSelectedJob(queuedJobId, "analysis");
+        reanalyzeForm.statusLabel.textContent = `Pipeline encolado: ${queuedJobId}`;
+        if (typeof deps.onJobQueued === "function") {
+          deps.onJobQueued(queuedJobId);
+        }
         reanalyzeForm.responseBlock.textContent = JSON.stringify(response, null, 2);
       } catch (error) {
         reanalyzeForm.statusLabel.textContent = `ERROR: ${formatError(error)}`;
@@ -225,6 +250,7 @@ export function createAnalysisView(deps: AnalysisViewDeps): ViewModule {
 
   let activeMode: "new" | "reanalyze" = "new";
   let selectedJobId: string | null = null;
+  let selectedJobScope: "scrape" | "analysis" = "scrape";
   let selectedBusinessId: string | null = null;
   let selectedJobStream: EventSource | null = null;
   let reviewsLoaded = 0;
@@ -248,23 +274,28 @@ export function createAnalysisView(deps: AnalysisViewDeps): ViewModule {
 
   setMode("new");
 
-  function setSelectedJob(jobIdValue: string): void {
+  function setSelectedJob(jobIdValue: string, scope: "scrape" | "analysis" = "scrape"): void {
     selectedJobId = jobIdValue;
+    selectedJobScope = scope;
     selectedBusinessId = null;
     reviewsLoaded = 0;
     listingTotalReviews = null;
     jobEvents.textContent = "";
     jobJson.textContent = "";
     clearElement(reviewCardsContainer);
-    updateProgressBars("queued");
+    updateProgressBars("queued", scope);
     jobLabel.textContent = `Job: ${jobIdValue}`;
-    startJobStream(jobIdValue);
+    startJobStream(jobIdValue, scope);
   }
 
-  function startJobStream(jobIdValue: string): void {
+  function startJobStream(jobIdValue: string, scope: "scrape" | "analysis"): void {
     stopJobStream();
+    const streamPath =
+      scope === "analysis"
+        ? `/business/analyze/jobs/${encodeURIComponent(jobIdValue)}/events`
+        : `/business/scrape/jobs/${encodeURIComponent(jobIdValue)}/events`;
     const stream = deps.apiClient.createEventSource(
-      `/business/scrape/jobs/${encodeURIComponent(jobIdValue)}/events`
+      streamPath
     );
     selectedJobStream = stream;
     appendEventLine(`[open] ${jobIdValue}`);
@@ -327,7 +358,7 @@ export function createAnalysisView(deps: AnalysisViewDeps): ViewModule {
       reviewsLoaded = Math.max(reviewsLoaded, loadedRaw);
     }
 
-    updateProgressBars(stage);
+    updateProgressBars(stage, selectedJobScope);
     if (selectedBusinessId && (typeof loadedRaw === "number" || stage === "done")) {
       schedulePreviewRefresh();
     }
@@ -336,10 +367,11 @@ export function createAnalysisView(deps: AnalysisViewDeps): ViewModule {
     }
   }
 
-  function updateProgressBars(stage: string): void {
-    const stageIndex = JOB_STAGES.indexOf(stage);
+  function updateProgressBars(stage: string, scope: "scrape" | "analysis" = "scrape"): void {
+    const stages = scope === "analysis" ? ANALYSIS_JOB_STAGES : JOB_STAGES;
+    const stageIndex = stages.indexOf(stage);
     const normalizedIndex = stageIndex >= 0 ? stageIndex : 0;
-    const stagePct = Math.round(((normalizedIndex + 1) / JOB_STAGES.length) * 100);
+    const stagePct = Math.round(((normalizedIndex + 1) / stages.length) * 100);
     stageFill.style.width = `${Math.max(0, Math.min(100, stagePct))}%`;
     stageLabel.textContent = `Stage: ${stage} (${stagePct}%)`;
 
@@ -355,8 +387,12 @@ export function createAnalysisView(deps: AnalysisViewDeps): ViewModule {
 
   async function loadJobDetail(jobIdValue: string): Promise<void> {
     try {
+      const path =
+        selectedJobScope === "analysis"
+          ? `/business/analyze/jobs/${encodeURIComponent(jobIdValue)}`
+          : `/business/scrape/jobs/${encodeURIComponent(jobIdValue)}`;
       const detail = await deps.apiClient.get<AnalyzeJobItem | Record<string, unknown>>(
-        `/business/scrape/jobs/${encodeURIComponent(jobIdValue)}`
+        path
       );
       jobJson.textContent = JSON.stringify(detail, null, 2);
     } catch (error) {

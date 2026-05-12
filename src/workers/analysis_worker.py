@@ -44,7 +44,7 @@ class AnalysisWorker(QueuedJobWorkerBase):
         try:
             task_payload = parse_analysis_generate_payload(job)
             LOGGER.info(
-                "Processing analysis job id=%s business_id=%s dataset_id=%s batchers=%s batch_size=%s max_reviews_pool=%s source_job_id=%s",
+                "Processing analysis job id=%s business_id=%s dataset_id=%s batchers=%s batch_size=%s max_reviews_pool=%s source_job_id=%s source_mode=%s selected_source=%s",
                 job_id,
                 task_payload.business_id,
                 task_payload.dataset_id,
@@ -52,6 +52,8 @@ class AnalysisWorker(QueuedJobWorkerBase):
                 task_payload.batch_size,
                 task_payload.max_reviews_pool,
                 task_payload.source_job_id,
+                task_payload.source_mode,
+                task_payload.selected_source,
             )
             await self._job_broker.append_event(
                 job_id=job_id,
@@ -81,6 +83,8 @@ class AnalysisWorker(QueuedJobWorkerBase):
                     batchers=task_payload.batchers,
                     batch_size=task_payload.batch_size,
                     max_reviews_pool=task_payload.max_reviews_pool,
+                    source_mode=task_payload.source_mode,
+                    selected_source=task_payload.selected_source,
                 )
             )
             done, _ = await asyncio.wait(
@@ -135,7 +139,7 @@ class AnalysisWorker(QueuedJobWorkerBase):
             analysis_id = str(
                 (analysis_payload.get("id") or analysis_payload.get("_id") or "")
             ).strip()
-            if analysis_id and bool(settings.analysis_auto_enqueue_report_job):
+            if analysis_id:
                 try:
                     report_payload = ReportGenerateTaskPayload(
                         business_id=task_payload.business_id,
@@ -143,6 +147,8 @@ class AnalysisWorker(QueuedJobWorkerBase):
                         output_format="pdf",
                         locale="es-ES",
                         source_job_id=str(job_id),
+                        source_mode=task_payload.source_mode,
+                        selected_source=task_payload.selected_source,
                     )
                     report_handoff = await self._service.job_service.enqueue_report_generate_job(
                         task_payload=report_payload
@@ -171,6 +177,8 @@ class AnalysisWorker(QueuedJobWorkerBase):
             result["pipeline"] = {
                 "source_job_id": task_payload.source_job_id,
                 "worker": "analysis",
+                "source_mode": task_payload.source_mode,
+                "selected_source": task_payload.selected_source,
             }
             if report_handoff:
                 result["report_handoff"] = {

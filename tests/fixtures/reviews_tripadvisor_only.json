@@ -1,0 +1,17 @@
+[
+  {"review_id":"ta_001","source":"tripadvisor","author_name":"Turista1","rating":3,"relative_time":"hace 1 mes","text":"El sitio es bonito pero el servicio fue irregular.","owner_reply":""},
+  {"review_id":"ta_002","source":"tripadvisor","author_name":"Turista2","rating":2,"relative_time":"hace 2 meses","text":"Demasiada espera para los platos principales.","owner_reply":""},
+  {"review_id":"ta_003","source":"tripadvisor","author_name":"Turista3","rating":4,"relative_time":"hace 3 meses","text":"Buena comida, aunque el precio algo elevado.","owner_reply":""},
+  {"review_id":"ta_004","source":"tripadvisor","author_name":"Turista4","rating":1,"relative_time":"hace 4 meses","text":"Muy mala experiencia, tardaron muchísimo.","owner_reply":""},
+  {"review_id":"ta_005","source":"tripadvisor","author_name":"Turista5","rating":2,"relative_time":"hace 5 meses","text":"La comida llegó templada y no como esperábamos.","owner_reply":""},
+  {"review_id":"ta_006","source":"tripadvisor","author_name":"Turista6","rating":3,"relative_time":"hace 6 meses","text":"Correcto sin más, ruido en el comedor.","owner_reply":""},
+  {"review_id":"ta_007","source":"tripadvisor","author_name":"Turista7","rating":4,"relative_time":"hace 7 meses","text":"Buen trato, pero tiempos de cocina mejorables.","owner_reply":""},
+  {"review_id":"ta_008","source":"tripadvisor","author_name":"Turista8","rating":2,"relative_time":"hace 8 meses","text":"Precio alto para lo que recibimos.","owner_reply":""},
+  {"review_id":"ta_009","source":"tripadvisor","author_name":"Turista9","rating":1,"relative_time":"hace 9 meses","text":"Servicio lento y confusión con la comanda.","owner_reply":""},
+  {"review_id":"ta_010","source":"tripadvisor","author_name":"Turista10","rating":3,"relative_time":"hace 10 meses","text":"Platos buenos pero experiencia inconsistente.","owner_reply":""},
+  {"review_id":"ta_011","source":"tripadvisor","author_name":"Turista11","rating":2,"relative_time":"hace 11 meses","text":"No cumplió las expectativas por el precio.","owner_reply":""},
+  {"review_id":"ta_012","source":"tripadvisor","author_name":"Turista12","rating":4,"relative_time":"hace 12 meses","text":"Ambiente agradable y buena ubicación.","owner_reply":""},
+  {"review_id":"ta_013","source":"tripadvisor","author_name":"Turista13","rating":1,"relative_time":"hace 13 meses","text":"Atención deficiente y demora excesiva.","owner_reply":""},
+  {"review_id":"ta_014","source":"tripadvisor","author_name":"Turista14","rating":3,"relative_time":"hace 14 meses","text":"Aceptable, pero hay margen de mejora en sala.","owner_reply":""},
+  {"review_id":"ta_015","source":"tripadvisor","author_name":"Turista15","rating":2,"relative_time":"hace 15 meses","text":"Comida correcta, servicio por debajo de lo esperado.","owner_reply":""}
+]

@@ -14,6 +14,7 @@ from bson import ObjectId
 from bson.errors import InvalidId
 
 from src.config import settings
+from src.pipeline.preprocessor import ReviewPreprocessor
 
 try:
     from google import genai
@@ -234,16 +235,23 @@ class AdvancedBusinessReportBuilder:
         "very",
     }
 
-    def __init__(self, *, model_name: str | None = None) -> None:
+    def __init__(self, *, model_name: str | None = None, enable_llm: bool | None = None) -> None:
         self.model_name = str(model_name or settings.gemini_model or "gemini-2.5-flash").strip()
         self.fallback_models = ["gemini-2.5-flash", "gemini-flash-latest"]
-        if genai is not None and settings.gemini_api_key:
+        self._source_preprocessor = ReviewPreprocessor()
+        self.llm_enabled = bool(
+            settings.report_builder_enable_llm if enable_llm is None else enable_llm
+        )
+        if self.llm_enabled and genai is not None and settings.gemini_api_key:
             try:
                 self.client = genai.Client(api_key=settings.gemini_api_key)
             except Exception:
                 self.client = None
         else:
             self.client = None
+
+    def _can_use_llm(self) -> bool:
+        return bool(self.llm_enabled and self.client is not None)
 
     async def build(
         self,
@@ -257,6 +265,7 @@ class AdvancedBusinessReportBuilder:
         businesses_collection,
         analyses_collection,
     ) -> dict[str, Any]:
+        source_reports = self._build_source_reports(reviews=reviews)
         review_metrics = [self._score_review_dimensions(index=idx, review=review) for idx, review in enumerate(reviews)]
 
         customer_clusters = self._build_customer_clusters(review_metrics=review_metrics)
@@ -266,6 +275,37 @@ class AdvancedBusinessReportBuilder:
             listing=listing if isinstance(listing, dict) else {},
             stats=stats,
         )
+        source_analysis: dict[str, dict[str, Any]] = {}
+        for source_name, source_data in source_reports.items():
+            if not isinstance(source_data, dict):
+                continue
+            source_narrative = await self._build_llm_source_narrative(
+                source=source_name,
+                business_name=business_name,
+                business_context=business_context,
+                stats=source_data.get("stats") if isinstance(source_data.get("stats"), dict) else {},
+                customer_clusters=(
+                    source_data.get("customer_clusters")
+                    if isinstance(source_data.get("customer_clusters"), dict)
+                    else {}
+                ),
+                problem_clusters=(
+                    source_data.get("problem_clusters")
+                    if isinstance(source_data.get("problem_clusters"), dict)
+                    else {}
+                ),
+            )
+            source_analysis[source_name] = {
+                **source_data,
+                "narrativa": source_narrative,
+            }
+        source_comparison: dict[str, Any] | None = None
+        if "google_maps" in source_reports and "tripadvisor" in source_reports:
+            source_comparison = await self._build_llm_source_comparison(
+                business_name=business_name,
+                google_data=source_reports["google_maps"],
+                tripadvisor_data=source_reports["tripadvisor"],
+            )
 
         benchmarking = await self._build_benchmarking(
             business_id=business_id,
@@ -414,11 +454,367 @@ class AdvancedBusinessReportBuilder:
             "business_id": business_id,
             "business_name": business_name,
             "business_context": business_context,
+            "source_reports": source_reports,
+            "source_analysis": source_analysis,
+            "source_comparison": source_comparison,
             "section_order": list(sections.keys()),
             "sections": sections,
             "llm_clustering_insights": llm_clustering_insights,
             "llm_section_narratives": llm_section_narratives,
             "annexes": annexes,
+        }
+
+    def _build_source_reports(self, *, reviews: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        if not isinstance(reviews, list) or not reviews:
+            return {}
+
+        reviews_by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for review in reviews:
+            if not isinstance(review, dict):
+                continue
+            source = str(review.get("source") or "unknown").strip().lower()
+            reviews_by_source[source].append(review)
+
+        source_reports: dict[str, dict[str, Any]] = {}
+        for source in ("google_maps", "tripadvisor"):
+            source_reviews = reviews_by_source.get(source)
+            if not source_reviews:
+                continue
+            processed_reviews = self._source_preprocessor.process(source_reviews)
+            source_stats = self._source_preprocessor.compute_stats(processed_reviews)
+            source_review_metrics = [
+                self._score_review_dimensions(index=idx, review=review)
+                for idx, review in enumerate(processed_reviews)
+            ]
+            source_reports[source] = {
+                "stats": source_stats,
+                "review_metrics": source_review_metrics,
+                "customer_clusters": self._build_customer_clusters(review_metrics=source_review_metrics),
+                "problem_clusters": self._build_problem_clusters(review_metrics=source_review_metrics),
+                "review_count": len(source_review_metrics),
+            }
+        return source_reports
+
+    async def _build_llm_source_narrative(
+        self,
+        *,
+        source: str,
+        business_name: str,
+        business_context: dict[str, Any],
+        stats: dict[str, Any],
+        customer_clusters: dict[str, Any],
+        problem_clusters: dict[str, Any],
+    ) -> dict[str, Any]:
+        source_key = str(source or "").strip().lower() or "unknown"
+        source_label = {
+            "google_maps": "Google Maps",
+            "tripadvisor": "Tripadvisor",
+        }.get(source_key, source_key.replace("_", " ").title())
+        top_problems = self._summarize_problem_clusters(problem_clusters=problem_clusters, limit=3)
+        top_problem_labels = [
+            self._human_label_problem(str(item.get("problem", "") or ""))
+            for item in top_problems
+            if isinstance(item, dict)
+        ]
+        fallback_note = (
+            "En Tripadvisor el perfil suele ser más crítico y turístico; conviene comparar con Google Maps "
+            "antes de sacar conclusiones definitivas."
+            if source_key == "tripadvisor"
+            else None
+        )
+        fallback: dict[str, Any] = {
+            "narrativa": (
+                f"En {source_label}, {business_name or 'el negocio'} tiene una valoración media de "
+                f"{self._safe_float(stats.get('avg_rating')):.2f}/5 y una tasa de respuesta del "
+                f"{self._safe_float(stats.get('response_rate')) * 100:.1f}%. "
+                + (
+                    "Los puntos de fricción más repetidos son: "
+                    + ", ".join(top_problem_labels[:3])
+                    + "."
+                    if top_problem_labels
+                    else "No se detectan focos de fricción repetidos con suficiente volumen."
+                )
+            ),
+            "top_fortalezas": [
+                f"Valoración media de {self._safe_float(stats.get('avg_rating')):.2f} sobre 5",
+                "Hay opiniones positivas recientes que sostienen la reputación.",
+            ][:3],
+            "top_problemas": top_problem_labels[:3],
+            "nota_sesgo": fallback_note,
+        }
+
+        prompt_payload = {
+            "business_name": business_name,
+            "source": source_key,
+            "tipo_negocio": str((business_context or {}).get("tipo_negocio", "") or "negocio local"),
+            "stats": {
+                "avg_rating": round(self._safe_float(stats.get("avg_rating")), 4),
+                "response_rate": round(self._safe_float(stats.get("response_rate")), 4),
+                "review_count": self._safe_int(
+                    customer_clusters.get("total_reviews")
+                    if isinstance(customer_clusters, dict)
+                    else 0
+                ),
+            },
+            "customer_clusters": (
+                customer_clusters.get("clusters")[:4]
+                if isinstance(customer_clusters.get("clusters"), list)
+                else []
+            ),
+            "problem_clusters": (
+                problem_clusters.get("clusters")[:5]
+                if isinstance(problem_clusters.get("clusters"), list)
+                else []
+            ),
+        }
+
+        if not self._can_use_llm():
+            return fallback
+
+        tripadvisor_bias_instruction = (
+            "IMPORTANTE: Tripadvisor suele concentrar perfiles más críticos y más turísticos que Google Maps. "
+            "Las valoraciones negativas pueden verse amplificadas por ese sesgo de perfil. "
+            "Distingue entre sesgo de plataforma y problema operativo real; no sobrerreacciones si el volumen es bajo.\n"
+            if source_key == "tripadvisor"
+            else ""
+        )
+        prompt = (
+            "Eres consultor de reputación para negocios locales en España. "
+            f"Analiza ÚNICAMENTE la fuente '{source_key}' del negocio '{business_name or 'negocio local'}'.\n"
+            f"{tripadvisor_bias_instruction}"
+            "Escribe en español de España, sin anglicismos y sin jerga técnica.\n"
+            "Devuelve SOLO JSON válido con esta estructura exacta:\n"
+            "{\n"
+            '  "narrativa": "3-5 frases directas sobre lo que muestra esta fuente",\n'
+            '  "top_fortalezas": ["string"],\n'
+            '  "top_problemas": ["string"],\n'
+            '  "nota_sesgo": "string o null"\n'
+            "}\n"
+            "Sin markdown y sin texto fuera del JSON.\n"
+            f"Datos de la fuente:\n{json.dumps(prompt_payload, ensure_ascii=False, indent=2)}"
+        )
+        try:
+            text, _model_used = await asyncio.to_thread(self._llm_generate_text, prompt)
+            extracted = self._extract_json_object(text)
+            parsed = json.loads(extracted)
+        except Exception:
+            return fallback
+
+        if not isinstance(parsed, dict):
+            return fallback
+        narrativa = self._sanitize_llm_text(
+            self._plainify_business_text(str(parsed.get("narrativa", "") or "").strip())
+        )
+        raw_fortalezas = parsed.get("top_fortalezas")
+        raw_problemas = parsed.get("top_problemas")
+        fortalezas = (
+            [
+                self._sanitize_llm_text(self._plainify_business_text(str(item or "").strip()))
+                for item in raw_fortalezas
+                if str(item or "").strip()
+            ][:3]
+            if isinstance(raw_fortalezas, list)
+            else []
+        )
+        problemas = (
+            [
+                self._sanitize_llm_text(self._plainify_business_text(str(item or "").strip()))
+                for item in raw_problemas
+                if str(item or "").strip()
+            ][:3]
+            if isinstance(raw_problemas, list)
+            else []
+        )
+        note_value = parsed.get("nota_sesgo")
+        note_text = None
+        if note_value is not None and str(note_value).strip():
+            note_text = self._sanitize_llm_text(
+                self._plainify_business_text(str(note_value).strip())
+            )
+        if source_key == "tripadvisor" and not note_text:
+            note_text = fallback_note
+        if not narrativa:
+            narrativa = str(fallback.get("narrativa") or "")
+        if not fortalezas:
+            fortalezas = list(fallback.get("top_fortalezas") or [])
+        if not problemas:
+            problemas = list(fallback.get("top_problemas") or [])
+        return {
+            "narrativa": narrativa,
+            "top_fortalezas": fortalezas,
+            "top_problemas": problemas,
+            "nota_sesgo": note_text,
+        }
+
+    async def _build_llm_source_comparison(
+        self,
+        *,
+        business_name: str,
+        google_data: dict[str, Any],
+        tripadvisor_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        google_stats = google_data.get("stats") if isinstance(google_data.get("stats"), dict) else {}
+        trip_stats = tripadvisor_data.get("stats") if isinstance(tripadvisor_data.get("stats"), dict) else {}
+        google_metrics = google_data.get("review_metrics") if isinstance(google_data.get("review_metrics"), list) else []
+        trip_metrics = (
+            tripadvisor_data.get("review_metrics")
+            if isinstance(tripadvisor_data.get("review_metrics"), list)
+            else []
+        )
+        google_problem_clusters = (
+            google_data.get("problem_clusters") if isinstance(google_data.get("problem_clusters"), dict) else {}
+        )
+        trip_problem_clusters = (
+            tripadvisor_data.get("problem_clusters")
+            if isinstance(tripadvisor_data.get("problem_clusters"), dict)
+            else {}
+        )
+
+        google_top = self._summarize_problem_clusters(problem_clusters=google_problem_clusters, limit=3)
+        trip_top = self._summarize_problem_clusters(problem_clusters=trip_problem_clusters, limit=3)
+        google_problems = [
+            self._human_label_problem(str(item.get("problem", "") or ""))
+            for item in google_top
+            if isinstance(item, dict)
+        ]
+        trip_problems = [
+            self._human_label_problem(str(item.get("problem", "") or ""))
+            for item in trip_top
+            if isinstance(item, dict)
+        ]
+        google_negative_ratio = self._negative_ratio(review_metrics=google_metrics)
+        trip_negative_ratio = self._negative_ratio(review_metrics=trip_metrics)
+        google_avg_rating = self._safe_float(google_stats.get("avg_rating"))
+        trip_avg_rating = self._safe_float(trip_stats.get("avg_rating"))
+        google_sentiment = self._average_dimension(google_metrics, "sentiment")
+        trip_sentiment = self._average_dimension(trip_metrics, "sentiment")
+
+        google_set = {self._normalize_text(item) for item in google_problems if item}
+        trip_set = {self._normalize_text(item) for item in trip_problems if item}
+        coincidences = [item for item in google_problems if self._normalize_text(item) in trip_set][:3]
+        divergences = [
+            item
+            for item in [*google_problems, *trip_problems]
+            if self._normalize_text(item) not in (google_set & trip_set)
+        ][:4]
+        if trip_avg_rating < google_avg_rating - 0.2:
+            harder_source = "tripadvisor"
+        elif google_avg_rating < trip_avg_rating - 0.2:
+            harder_source = "google_maps"
+        else:
+            harder_source = "similar"
+        fallback: dict[str, Any] = {
+            "narrativa_comparacion": (
+                f"Comparando ambas fuentes de {business_name or 'este negocio'}, Tripadvisor muestra un tono más exigente "
+                "que Google Maps, algo habitual por el perfil más turístico y crítico de la plataforma. "
+                "Aun así, conviene priorizar los problemas que se repiten en ambas fuentes, porque esos sí indican "
+                "un patrón operativo real."
+            ),
+            "coincidencias": coincidences,
+            "divergencias": divergences,
+            "fuente_mas_dura": harder_source,
+            "explicacion_diferencia": (
+                "Tripadvisor suele concentrar perfiles más críticos; interpreta las diferencias junto al volumen de reseñas."
+            ),
+            "recomendaciones": [
+                "Prioriza primero los problemas repetidos en ambas fuentes.",
+                "Responde reseñas críticas en menos de 24 horas en las dos plataformas.",
+                "Mide semanalmente si baja la repetición de esos problemas clave.",
+            ][:4],
+        }
+
+        if not self._can_use_llm():
+            return fallback
+
+        prompt_payload = {
+            "business_name": business_name,
+            "google_maps": {
+                "avg_rating": round(google_avg_rating, 4),
+                "response_rate": round(self._safe_float(google_stats.get("response_rate")), 4),
+                "negative_ratio": round(google_negative_ratio, 4),
+                "sentiment_avg": round(google_sentiment, 4),
+                "top_problems": google_problems,
+            },
+            "tripadvisor": {
+                "avg_rating": round(trip_avg_rating, 4),
+                "response_rate": round(self._safe_float(trip_stats.get("response_rate")), 4),
+                "negative_ratio": round(trip_negative_ratio, 4),
+                "sentiment_avg": round(trip_sentiment, 4),
+                "top_problems": trip_problems,
+            },
+        }
+        prompt = (
+            f"Compara Google Maps vs Tripadvisor del negocio '{business_name or 'negocio local'}'.\n"
+            "Analiza: 1) coincidencias, 2) divergencias, 3) qué fuente es más dura y si hay sesgo de plataforma, "
+            "4) recomendaciones prácticas priorizadas.\n"
+            "Ten en cuenta que Tripadvisor concentra perfil más crítico y turístico.\n"
+            "Escribe en español de España y devuelve SOLO JSON válido con estructura exacta:\n"
+            "{\n"
+            '  "narrativa_comparacion": "string",\n'
+            '  "coincidencias": ["string"],\n'
+            '  "divergencias": ["string"],\n'
+            '  "fuente_mas_dura": "google_maps|tripadvisor|similar",\n'
+            '  "explicacion_diferencia": "string",\n'
+            '  "recomendaciones": ["string"]\n'
+            "}\n"
+            "Sin markdown y sin texto fuera del JSON.\n"
+            f"Datos:\n{json.dumps(prompt_payload, ensure_ascii=False, indent=2)}"
+        )
+        try:
+            text, _model_used = await asyncio.to_thread(self._llm_generate_text, prompt)
+            extracted = self._extract_json_object(text)
+            parsed = json.loads(extracted)
+        except Exception:
+            return fallback
+
+        if not isinstance(parsed, dict):
+            return fallback
+        narrative = self._sanitize_llm_text(
+            self._plainify_business_text(str(parsed.get("narrativa_comparacion", "") or "").strip())
+        )
+        coincidence_items = parsed.get("coincidencias")
+        divergence_items = parsed.get("divergencias")
+        recommendation_items = parsed.get("recomendaciones")
+        parsed_harder_source = str(parsed.get("fuente_mas_dura", "") or "").strip().lower()
+        harder_source_value = (
+            parsed_harder_source
+            if parsed_harder_source in {"google_maps", "tripadvisor", "similar"}
+            else fallback["fuente_mas_dura"]
+        )
+        explanation = self._sanitize_llm_text(
+            self._plainify_business_text(str(parsed.get("explicacion_diferencia", "") or "").strip())
+        )
+        return {
+            "narrativa_comparacion": narrative or str(fallback["narrativa_comparacion"]),
+            "coincidencias": (
+                [
+                    self._sanitize_llm_text(self._plainify_business_text(str(item or "").strip()))
+                    for item in coincidence_items
+                    if str(item or "").strip()
+                ][:4]
+                if isinstance(coincidence_items, list)
+                else list(fallback["coincidencias"])
+            ),
+            "divergencias": (
+                [
+                    self._sanitize_llm_text(self._plainify_business_text(str(item or "").strip()))
+                    for item in divergence_items
+                    if str(item or "").strip()
+                ][:4]
+                if isinstance(divergence_items, list)
+                else list(fallback["divergencias"])
+            ),
+            "fuente_mas_dura": harder_source_value,
+            "explicacion_diferencia": explanation or str(fallback["explicacion_diferencia"]),
+            "recomendaciones": (
+                [
+                    self._sanitize_llm_text(self._plainify_business_text(str(item or "").strip()))
+                    for item in recommendation_items
+                    if str(item or "").strip()
+                ][:4]
+                if isinstance(recommendation_items, list)
+                else list(fallback["recomendaciones"])
+            ),
         }
 
     def build_preview_report(
@@ -1142,7 +1538,8 @@ class AdvancedBusinessReportBuilder:
                     # Coordinates are no longer positional source of truth in layout mode.
                     "x": 0.0,
                     "y": 0.0,
-                    "radius": 0.0,
+                    # Normalized weight (0-1). Renderer maps this to pixel radius per zone.
+                    "radius": round(weight, 4),
                     "color": color,
                     "count_reviews": count,
                     "weight_pct": round(weight * 100.0, 1),
@@ -1521,7 +1918,7 @@ class AdvancedBusinessReportBuilder:
         clusters = clusters if isinstance(clusters, list) else []
         top_problems = clusters[:3]
 
-        if self.client is not None and top_problems:
+        if self._can_use_llm() and top_problems:
             llm_actions = await self._build_llm_action_plan(
                 business_name=business_name,
                 business_context=business_context or {},
@@ -2410,7 +2807,7 @@ class AdvancedBusinessReportBuilder:
             ),
         }
 
-        if self.client is None:
+        if not self._can_use_llm():
             return fallback
 
         payload = self._build_llm_user_prompt_payload(
@@ -2628,7 +3025,7 @@ class AdvancedBusinessReportBuilder:
             problem_clusters=problem_clusters,
             quick_wins=quick_wins,
         )
-        if self.client is None:
+        if not self._can_use_llm():
             return {
                 "generated": False,
                 "model": None,

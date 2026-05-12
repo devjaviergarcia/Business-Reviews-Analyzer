@@ -29,6 +29,14 @@ x-app-env: &app_env
   TRIPADVISOR_LOCAL_WORKER_BRIDGE_URL: ${TRIPADVISOR_LOCAL_WORKER_BRIDGE_URL:-http://host.docker.internal:8765}
   TRIPADVISOR_LOCAL_WORKER_BRIDGE_TIMEOUT_SECONDS: ${TRIPADVISOR_LOCAL_WORKER_BRIDGE_TIMEOUT_SECONDS:-5}
   TRIPADVISOR_LOCAL_WORKER_AUTOSTART_ON_ENQUEUE: ${TRIPADVISOR_LOCAL_WORKER_AUTOSTART_ON_ENQUEUE:-false}
+  CRM_RESEND_API_KEY: ${CRM_RESEND_API_KEY:-}
+  CRM_RESEND_FROM_EMAIL: ${CRM_RESEND_FROM_EMAIL:-}
+  CRM_RESEND_REPLY_TO: ${CRM_RESEND_REPLY_TO:-}
+  CRM_SENDER_NAME: ${CRM_SENDER_NAME:-Repiq}
+  CRM_CTA_URL: ${CRM_CTA_URL:-https://www.repiq.ai/demo}
+  CRM_UNSUBSCRIBE_URL: ${CRM_UNSUBSCRIBE_URL:-}
+  CRM_UNSUBSCRIBE_SECRET: ${CRM_UNSUBSCRIBE_SECRET:-}
+  CRM_SCHEDULER_BATCH_SIZE: ${CRM_SCHEDULER_BATCH_SIZE:-200}
 
 x-app-base: &app_base
   image: review-llm-app:latest
@@ -92,6 +100,12 @@ services:
     container_name: bra-report-worker
     profiles: ["worker"]
     command: python -m src.workers.report_worker
+
+  crm-worker:
+    <<: *app_base
+    container_name: bra-crm-worker
+    profiles: ["worker"]
+    command: python -m src.workers.crm_worker
 
 volumes:
   mongo_data:

@@ -1,0 +1,317 @@
+[
+  {
+    "review_id": "gm_001",
+    "source": "google_maps",
+    "author_name": "Ana",
+    "rating": 5,
+    "relative_time": "hace 1 mes",
+    "text": "Servicio muy amable y comida excelente.",
+    "owner_reply": "Muchas gracias por venir."
+  },
+  {
+    "review_id": "gm_002",
+    "source": "google_maps",
+    "author_name": "Luis",
+    "rating": 4,
+    "relative_time": "hace 2 meses",
+    "text": "Buena pizza y trato rápido.",
+    "owner_reply": "Gracias por tu comentario."
+  },
+  {
+    "review_id": "gm_003",
+    "source": "google_maps",
+    "author_name": "Marta",
+    "rating": 5,
+    "relative_time": "hace 3 meses",
+    "text": "Todo perfecto, repetiremos seguro.",
+    "owner_reply": "Os esperamos pronto."
+  },
+  {
+    "review_id": "gm_004",
+    "source": "google_maps",
+    "author_name": "Pablo",
+    "rating": 4,
+    "relative_time": "hace 4 meses",
+    "text": "Comida rica y ambiente agradable.",
+    "owner_reply": "Gracias por valorar el ambiente."
+  },
+  {
+    "review_id": "gm_005",
+    "source": "google_maps",
+    "author_name": "Sara",
+    "rating": 5,
+    "relative_time": "hace 5 meses",
+    "text": "La lasaña espectacular y el local limpio.",
+    "owner_reply": "Nos alegra mucho leerlo."
+  },
+  {
+    "review_id": "gm_006",
+    "source": "google_maps",
+    "author_name": "Javier",
+    "rating": 3,
+    "relative_time": "hace 6 meses",
+    "text": "Bien en general, algo de espera en hora punta.",
+    "owner_reply": "Gracias, revisaremos tiempos."
+  },
+  {
+    "review_id": "gm_007",
+    "source": "google_maps",
+    "author_name": "Clara",
+    "rating": 4,
+    "relative_time": "hace 7 meses",
+    "text": "Carta variada y precio razonable.",
+    "owner_reply": "Gracias por tu visita."
+  },
+  {
+    "review_id": "gm_008",
+    "source": "google_maps",
+    "author_name": "David",
+    "rating": 5,
+    "relative_time": "hace 8 meses",
+    "text": "Muy buen trato de todo el equipo.",
+    "owner_reply": "Gracias por confiar en nosotros."
+  },
+  {
+    "review_id": "gm_009",
+    "source": "google_maps",
+    "author_name": "Elena",
+    "rating": 4,
+    "relative_time": "hace 9 meses",
+    "text": "Buen sitio para cenar en pareja.",
+    "owner_reply": "Nos encanta que os gustara."
+  },
+  {
+    "review_id": "gm_010",
+    "source": "google_maps",
+    "author_name": "Raul",
+    "rating": 2,
+    "relative_time": "hace 10 meses",
+    "text": "Tardaron bastante en traer el plato principal.",
+    "owner_reply": "Lamentamos la demora."
+  },
+  {
+    "review_id": "gm_011",
+    "source": "google_maps",
+    "author_name": "Irene",
+    "rating": 5,
+    "relative_time": "hace 11 meses",
+    "text": "Producto de calidad y presentación cuidada.",
+    "owner_reply": "Gracias por destacarlo."
+  },
+  {
+    "review_id": "gm_012",
+    "source": "google_maps",
+    "author_name": "Mario",
+    "rating": 4,
+    "relative_time": "hace 12 meses",
+    "text": "Buena experiencia y camareros atentos.",
+    "owner_reply": "Muchas gracias."
+  },
+  {
+    "review_id": "gm_013",
+    "source": "google_maps",
+    "author_name": "Nuria",
+    "rating": 5,
+    "relative_time": "hace 13 meses",
+    "text": "Raciones generosas y sabor muy bueno.",
+    "owner_reply": "Gracias por la reseña."
+  },
+  {
+    "review_id": "gm_014",
+    "source": "google_maps",
+    "author_name": "Oscar",
+    "rating": 3,
+    "relative_time": "hace 14 meses",
+    "text": "Comida correcta, precio algo alto.",
+    "owner_reply": "Tomamos nota del precio percibido."
+  },
+  {
+    "review_id": "gm_015",
+    "source": "google_maps",
+    "author_name": "Paula",
+    "rating": 4,
+    "relative_time": "hace 15 meses",
+    "text": "Sitio cómodo y personal cercano.",
+    "owner_reply": "Gracias por venir."
+  },
+  {
+    "review_id": "gm_016",
+    "source": "google_maps",
+    "author_name": "Sonia",
+    "rating": 5,
+    "relative_time": "hace 16 meses",
+    "text": "Uno de los mejores italianos de la zona.",
+    "owner_reply": "Qué ilusión leerte."
+  },
+  {
+    "review_id": "gm_017",
+    "source": "google_maps",
+    "author_name": "Ruben",
+    "rating": 4,
+    "relative_time": "hace 17 meses",
+    "text": "Servicio rápido y buen punto de la pasta.",
+    "owner_reply": "Gracias por tu valoración."
+  },
+  {
+    "review_id": "gm_018",
+    "source": "google_maps",
+    "author_name": "Veronica",
+    "rating": 5,
+    "relative_time": "hace 18 meses",
+    "text": "Muy recomendable para ir con amigos.",
+    "owner_reply": "Gracias por recomendarnos."
+  },
+  {
+    "review_id": "gm_019",
+    "source": "google_maps",
+    "author_name": "Carlos",
+    "rating": 4,
+    "relative_time": "hace 19 meses",
+    "text": "Buena relación calidad-precio en general.",
+    "owner_reply": "Gracias por tu opinión."
+  },
+  {
+    "review_id": "gm_020",
+    "source": "google_maps",
+    "author_name": "Lucia",
+    "rating": 1,
+    "relative_time": "hace 20 meses",
+    "text": "Nos atendieron tarde y llegó la comida fría.",
+    "owner_reply": "Sentimos lo ocurrido y lo revisaremos."
+  },
+  {
+    "review_id": "ta_001",
+    "source": "tripadvisor",
+    "author_name": "Turista1",
+    "rating": 3,
+    "relative_time": "hace 1 mes",
+    "text": "El sitio es bonito pero el servicio fue irregular.",
+    "owner_reply": ""
+  },
+  {
+    "review_id": "ta_002",
+    "source": "tripadvisor",
+    "author_name": "Turista2",
+    "rating": 2,
+    "relative_time": "hace 2 meses",
+    "text": "Demasiada espera para los platos principales.",
+    "owner_reply": ""
+  },
+  {
+    "review_id": "ta_003",
+    "source": "tripadvisor",
+    "author_name": "Turista3",
+    "rating": 4,
+    "relative_time": "hace 3 meses",
+    "text": "Buena comida, aunque el precio algo elevado.",
+    "owner_reply": ""
+  },
+  {
+    "review_id": "ta_004",
+    "source": "tripadvisor",
+    "author_name": "Turista4",
+    "rating": 1,
+    "relative_time": "hace 4 meses",
+    "text": "Muy mala experiencia, tardaron muchísimo.",
+    "owner_reply": ""
+  },
+  {
+    "review_id": "ta_005",
+    "source": "tripadvisor",
+    "author_name": "Turista5",
+    "rating": 2,
+    "relative_time": "hace 5 meses",
+    "text": "La comida llegó templada y no como esperábamos.",
+    "owner_reply": ""
+  },
+  {
+    "review_id": "ta_006",
+    "source": "tripadvisor",
+    "author_name": "Turista6",
+    "rating": 3,
+    "relative_time": "hace 6 meses",
+    "text": "Correcto sin más, ruido en el comedor.",
+    "owner_reply": ""
+  },
+  {
+    "review_id": "ta_007",
+    "source": "tripadvisor",
+    "author_name": "Turista7",
+    "rating": 4,
+    "relative_time": "hace 7 meses",
+    "text": "Buen trato, pero tiempos de cocina mejorables.",
+    "owner_reply": ""
+  },
+  {
+    "review_id": "ta_008",
+    "source": "tripadvisor",
+    "author_name": "Turista8",
+    "rating": 2,
+    "relative_time": "hace 8 meses",
+    "text": "Precio alto para lo que recibimos.",
+    "owner_reply": ""
+  },
+  {
+    "review_id": "ta_009",
+    "source": "tripadvisor",
+    "author_name": "Turista9",
+    "rating": 1,
+    "relative_time": "hace 9 meses",
+    "text": "Servicio lento y confusión con la comanda.",
+    "owner_reply": ""
+  },
+  {
+    "review_id": "ta_010",
+    "source": "tripadvisor",
+    "author_name": "Turista10",
+    "rating": 3,
+    "relative_time": "hace 10 meses",
+    "text": "Platos buenos pero experiencia inconsistente.",
+    "owner_reply": ""
+  },
+  {
+    "review_id": "ta_011",
+    "source": "tripadvisor",
+    "author_name": "Turista11",
+    "rating": 2,
+    "relative_time": "hace 11 meses",
+    "text": "No cumplió las expectativas por el precio.",
+    "owner_reply": ""
+  },
+  {
+    "review_id": "ta_012",
+    "source": "tripadvisor",
+    "author_name": "Turista12",
+    "rating": 4,
+    "relative_time": "hace 12 meses",
+    "text": "Ambiente agradable y buena ubicación.",
+    "owner_reply": ""
+  },
+  {
+    "review_id": "ta_013",
+    "source": "tripadvisor",
+    "author_name": "Turista13",
+    "rating": 1,
+    "relative_time": "hace 13 meses",
+    "text": "Atención deficiente y demora excesiva.",
+    "owner_reply": ""
+  },
+  {
+    "review_id": "ta_014",
+    "source": "tripadvisor",
+    "author_name": "Turista14",
+    "rating": 3,
+    "relative_time": "hace 14 meses",
+    "text": "Aceptable, pero hay margen de mejora en sala.",
+    "owner_reply": ""
+  },
+  {
+    "review_id": "ta_015",
+    "source": "tripadvisor",
+    "author_name": "Turista15",
+    "rating": 2,
+    "relative_time": "hace 15 meses",
+    "text": "Comida correcta, servicio por debajo de lo esperado.",
+    "owner_reply": ""
+  }
+]

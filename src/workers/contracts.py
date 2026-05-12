@@ -18,13 +18,21 @@ class AnalysisJobStatus(str, Enum):
 
 
 ScrapeQueueName = Literal["scrape", "scrape_google_maps", "scrape_tripadvisor"]
-JobQueueName = Literal["scrape", "scrape_google_maps", "scrape_tripadvisor", "analysis", "report"]
+JobQueueName = Literal["scrape", "scrape_google_maps", "scrape_tripadvisor", "analysis", "report", "crm"]
 JobType = Literal[
     "business_analyze",
     "business_reanalyze",
     "analysis_generate",
     "report_generate",
+    "crm_lead_discovery",
+    "crm_lead_pipeline",
+    "crm_campaign_dispatch",
 ]
+
+ReportFormat = Literal["pdf", "typst", "html", "json"]
+ReportSourceMode = Literal["auto", "combined", "single"]
+ReportSelectedSource = Literal["google_maps", "tripadvisor"]
+CRMLeadPipelineSource = Literal["google_maps", "tripadvisor"]
 
 
 class JobProgressEvent(BaseModel):
@@ -171,6 +179,8 @@ class AnalysisGenerateTaskPayload(BaseModel):
     batch_size: int | None = None
     max_reviews_pool: int | None = None
     source_job_id: str | None = None
+    source_mode: ReportSourceMode = "auto"
+    selected_source: ReportSelectedSource | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -199,6 +209,22 @@ class AnalysisGenerateTaskPayload(BaseModel):
         cleaned = str(value).strip()
         return cleaned or None
 
+    @field_validator("source_mode", mode="before")
+    @classmethod
+    def normalize_source_mode(cls, value: object) -> object:
+        if value is None:
+            return "auto"
+        cleaned = str(value).strip().lower()
+        return cleaned or "auto"
+
+    @field_validator("selected_source", mode="before")
+    @classmethod
+    def normalize_selected_source(cls, value: object) -> object:
+        if value is None:
+            return None
+        cleaned = str(value).strip().lower()
+        return cleaned or None
+
 
 class AnalysisGenerateJobEnvelope(BaseModel):
     queue_name: Literal["analysis"] = "analysis"
@@ -208,9 +234,6 @@ class AnalysisGenerateJobEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-ReportFormat = Literal["pdf", "typst", "html", "json"]
-
-
 class ReportGenerateTaskPayload(BaseModel):
     business_id: str
     analysis_id: str
@@ -218,6 +241,8 @@ class ReportGenerateTaskPayload(BaseModel):
     locale: str | None = None
     template_id: str | None = None
     source_job_id: str | None = None
+    source_mode: ReportSourceMode = "auto"
+    selected_source: ReportSelectedSource | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -237,6 +262,22 @@ class ReportGenerateTaskPayload(BaseModel):
         cleaned = str(value).strip().lower()
         return cleaned or "pdf"
 
+    @field_validator("source_mode", mode="before")
+    @classmethod
+    def normalize_source_mode(cls, value: object) -> object:
+        if value is None:
+            return "auto"
+        cleaned = str(value).strip().lower()
+        return cleaned or "auto"
+
+    @field_validator("selected_source", mode="before")
+    @classmethod
+    def normalize_selected_source(cls, value: object) -> object:
+        if value is None:
+            return None
+        cleaned = str(value).strip().lower()
+        return cleaned or None
+
 
 class ReportGenerateJobEnvelope(BaseModel):
     queue_name: Literal["report"] = "report"
@@ -246,7 +287,138 @@ class ReportGenerateJobEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-WorkerTaskPayload = AnalyzeBusinessTaskPayload | AnalysisGenerateTaskPayload | ReportGenerateTaskPayload
+class CRMLeadDiscoveryTaskPayload(BaseModel):
+    query: str
+    city: str | None = None
+    category: str | None = None
+    limit: int = 100
+    source: str = "auto_live_google_maps"
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("query")
+    @classmethod
+    def validate_query(cls, value: str) -> str:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            raise ValueError("query cannot be empty.")
+        return cleaned
+
+    @field_validator("city", "category", mode="before")
+    @classmethod
+    def normalize_optional_text(cls, value: object) -> object:
+        if value is None:
+            return None
+        cleaned = str(value).strip()
+        return cleaned or None
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def normalize_source(cls, value: object) -> object:
+        cleaned = str(value or "").strip().lower()
+        return cleaned or "auto_live_google_maps"
+
+    @field_validator("limit", mode="before")
+    @classmethod
+    def normalize_limit(cls, value: object) -> object:
+        if value is None or value == "":
+            return 100
+        parsed = int(value)
+        if parsed < 1:
+            raise ValueError("limit must be >= 1.")
+        return min(parsed, 5000)
+
+
+class CRMLeadPipelineTaskPayload(BaseModel):
+    lead_id: str
+    force: bool = False
+    sources: list[CRMLeadPipelineSource] = Field(default_factory=lambda: ["google_maps", "tripadvisor"])
+    google_maps_name: str | None = None
+    tripadvisor_name: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("lead_id")
+    @classmethod
+    def validate_lead_id(cls, value: str) -> str:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            raise ValueError("lead_id cannot be empty.")
+        return cleaned
+
+    @field_validator("google_maps_name", "tripadvisor_name", mode="before")
+    @classmethod
+    def normalize_optional_names(cls, value: object) -> object:
+        if value is None:
+            return None
+        cleaned = str(value).strip()
+        return cleaned or None
+
+    @field_validator("sources", mode="before")
+    @classmethod
+    def normalize_sources(cls, value: object) -> object:
+        if value is None:
+            return ["google_maps", "tripadvisor"]
+        if isinstance(value, str):
+            normalized = str(value).strip().lower()
+            return [normalized] if normalized else ["google_maps", "tripadvisor"]
+        if isinstance(value, (list, tuple)):
+            normalized_list: list[str] = []
+            for item in value:
+                cleaned = str(item or "").strip().lower()
+                if cleaned and cleaned not in normalized_list:
+                    normalized_list.append(cleaned)
+            return normalized_list or ["google_maps", "tripadvisor"]
+        return value
+
+
+class CRMCampaignDispatchTaskPayload(BaseModel):
+    campaign_id: str
+    message_id: str
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("campaign_id", "message_id")
+    @classmethod
+    def validate_required_ids(cls, value: str) -> str:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            raise ValueError("Required id field cannot be empty.")
+        return cleaned
+
+
+class CRMLeadDiscoveryJobEnvelope(BaseModel):
+    queue_name: Literal["crm"] = "crm"
+    job_type: Literal["crm_lead_discovery"] = "crm_lead_discovery"
+    payload: CRMLeadDiscoveryTaskPayload
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class CRMLeadPipelineJobEnvelope(BaseModel):
+    queue_name: Literal["crm"] = "crm"
+    job_type: Literal["crm_lead_pipeline"] = "crm_lead_pipeline"
+    payload: CRMLeadPipelineTaskPayload
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class CRMCampaignDispatchJobEnvelope(BaseModel):
+    queue_name: Literal["crm"] = "crm"
+    job_type: Literal["crm_campaign_dispatch"] = "crm_campaign_dispatch"
+    payload: CRMCampaignDispatchTaskPayload
+
+    model_config = ConfigDict(extra="forbid")
+
+
+WorkerTaskPayload = (
+    AnalyzeBusinessTaskPayload
+    | AnalysisGenerateTaskPayload
+    | ReportGenerateTaskPayload
+    | CRMLeadDiscoveryTaskPayload
+    | CRMLeadPipelineTaskPayload
+    | CRMCampaignDispatchTaskPayload
+)
 
 
 def parse_analyze_business_payload(job_doc: Mapping[str, Any]) -> AnalyzeBusinessTaskPayload:
@@ -305,6 +477,12 @@ def parse_analysis_generate_payload(job_doc: Mapping[str, Any]) -> AnalysisGener
             "batch_size": job_doc.get("batch_size"),
             "max_reviews_pool": job_doc.get("max_reviews_pool"),
             "source_job_id": str(job_doc.get("source_job_id") or "").strip() or None,
+            "source_mode": str(job_doc.get("source_mode") or "auto"),
+            "selected_source": (
+                str(job_doc.get("selected_source")).strip()
+                if job_doc.get("selected_source") is not None
+                else None
+            ),
         }
     )
 
@@ -330,6 +508,78 @@ def parse_report_generate_payload(job_doc: Mapping[str, Any]) -> ReportGenerateT
             "locale": str(job_doc.get("locale") or "").strip() or None,
             "template_id": str(job_doc.get("template_id") or "").strip() or None,
             "source_job_id": str(job_doc.get("source_job_id") or "").strip() or None,
+            "source_mode": str(job_doc.get("source_mode") or "auto"),
+            "selected_source": (
+                str(job_doc.get("selected_source")).strip()
+                if job_doc.get("selected_source") is not None
+                else None
+            ),
+        }
+    )
+
+
+def parse_crm_lead_discovery_payload(job_doc: Mapping[str, Any]) -> CRMLeadDiscoveryTaskPayload:
+    raw_payload = job_doc.get("payload")
+    if isinstance(raw_payload, dict):
+        envelope = CRMLeadDiscoveryJobEnvelope.model_validate(
+            {
+                "queue_name": str(job_doc.get("queue_name") or "crm"),
+                "job_type": str(job_doc.get("job_type") or "crm_lead_discovery"),
+                "payload": raw_payload,
+            }
+        )
+        return envelope.payload
+
+    return CRMLeadDiscoveryTaskPayload.model_validate(
+        {
+            "query": str(job_doc.get("query", "")).strip(),
+            "city": str(job_doc.get("city") or "").strip() or None,
+            "category": str(job_doc.get("category") or "").strip() or None,
+            "limit": job_doc.get("limit"),
+            "source": str(job_doc.get("source") or "auto_live_google_maps"),
+        }
+    )
+
+
+def parse_crm_lead_pipeline_payload(job_doc: Mapping[str, Any]) -> CRMLeadPipelineTaskPayload:
+    raw_payload = job_doc.get("payload")
+    if isinstance(raw_payload, dict):
+        envelope = CRMLeadPipelineJobEnvelope.model_validate(
+            {
+                "queue_name": str(job_doc.get("queue_name") or "crm"),
+                "job_type": str(job_doc.get("job_type") or "crm_lead_pipeline"),
+                "payload": raw_payload,
+            }
+        )
+        return envelope.payload
+
+    return CRMLeadPipelineTaskPayload.model_validate(
+        {
+            "lead_id": str(job_doc.get("lead_id") or "").strip(),
+            "force": bool(job_doc.get("force", False)),
+            "sources": job_doc.get("sources"),
+            "google_maps_name": str(job_doc.get("google_maps_name") or "").strip() or None,
+            "tripadvisor_name": str(job_doc.get("tripadvisor_name") or "").strip() or None,
+        }
+    )
+
+
+def parse_crm_campaign_dispatch_payload(job_doc: Mapping[str, Any]) -> CRMCampaignDispatchTaskPayload:
+    raw_payload = job_doc.get("payload")
+    if isinstance(raw_payload, dict):
+        envelope = CRMCampaignDispatchJobEnvelope.model_validate(
+            {
+                "queue_name": str(job_doc.get("queue_name") or "crm"),
+                "job_type": str(job_doc.get("job_type") or "crm_campaign_dispatch"),
+                "payload": raw_payload,
+            }
+        )
+        return envelope.payload
+
+    return CRMCampaignDispatchTaskPayload.model_validate(
+        {
+            "campaign_id": str(job_doc.get("campaign_id") or "").strip(),
+            "message_id": str(job_doc.get("message_id") or "").strip(),
         }
     )
 
@@ -339,7 +589,14 @@ def build_worker_job_envelope(
     queue_name: JobQueueName,
     job_type: JobType,
     task_payload: WorkerTaskPayload,
-) -> AnalyzeBusinessJobEnvelope | AnalysisGenerateJobEnvelope | ReportGenerateJobEnvelope:
+) -> (
+    AnalyzeBusinessJobEnvelope
+    | AnalysisGenerateJobEnvelope
+    | ReportGenerateJobEnvelope
+    | CRMLeadDiscoveryJobEnvelope
+    | CRMLeadPipelineJobEnvelope
+    | CRMCampaignDispatchJobEnvelope
+):
     normalized_queue = str(queue_name or "").strip().lower()
     normalized_job_type = str(job_type or "").strip().lower()
 
@@ -367,6 +624,33 @@ def build_worker_job_envelope(
         return ReportGenerateJobEnvelope(
             queue_name="report",
             job_type="report_generate",
+            payload=task_payload,
+        )
+
+    if normalized_queue == "crm" and normalized_job_type == "crm_lead_discovery":
+        if not isinstance(task_payload, CRMLeadDiscoveryTaskPayload):
+            raise TypeError("Expected CRMLeadDiscoveryTaskPayload for crm/crm_lead_discovery.")
+        return CRMLeadDiscoveryJobEnvelope(
+            queue_name="crm",
+            job_type="crm_lead_discovery",
+            payload=task_payload,
+        )
+
+    if normalized_queue == "crm" and normalized_job_type == "crm_lead_pipeline":
+        if not isinstance(task_payload, CRMLeadPipelineTaskPayload):
+            raise TypeError("Expected CRMLeadPipelineTaskPayload for crm/crm_lead_pipeline.")
+        return CRMLeadPipelineJobEnvelope(
+            queue_name="crm",
+            job_type="crm_lead_pipeline",
+            payload=task_payload,
+        )
+
+    if normalized_queue == "crm" and normalized_job_type == "crm_campaign_dispatch":
+        if not isinstance(task_payload, CRMCampaignDispatchTaskPayload):
+            raise TypeError("Expected CRMCampaignDispatchTaskPayload for crm/crm_campaign_dispatch.")
+        return CRMCampaignDispatchJobEnvelope(
+            queue_name="crm",
+            job_type="crm_campaign_dispatch",
             payload=task_payload,
         )
 

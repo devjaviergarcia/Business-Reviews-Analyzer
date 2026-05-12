@@ -15,6 +15,9 @@ from src.workers.contracts import (
     AnalysisJobQueueDocument,
     AnalysisGenerateTaskPayload,
     AnalyzeBusinessTaskPayload,
+    CRMCampaignDispatchTaskPayload,
+    CRMLeadDiscoveryTaskPayload,
+    CRMLeadPipelineTaskPayload,
     JobType,
     JobQueueName,
     ReportGenerateTaskPayload,
@@ -50,10 +53,16 @@ class AnalysisJobService:
         *,
         task_payload: AnalysisGenerateTaskPayload,
     ) -> dict[str, Any]:
+        payload_override = task_payload.model_dump(mode="python")
+        if str(payload_override.get("source_mode") or "").strip().lower() == "auto":
+            payload_override.pop("source_mode", None)
+        if payload_override.get("selected_source") is None:
+            payload_override.pop("selected_source", None)
         return await self.enqueue_job(
             task_payload=task_payload,
             queue_name="analysis",
             job_type="analysis_generate",
+            payload_override=payload_override,
         )
 
     async def enqueue_report_generate_job(
@@ -61,10 +70,16 @@ class AnalysisJobService:
         *,
         task_payload: ReportGenerateTaskPayload,
     ) -> dict[str, Any]:
+        payload_override = task_payload.model_dump(mode="python")
+        if str(payload_override.get("source_mode") or "").strip().lower() == "auto":
+            payload_override.pop("source_mode", None)
+        if payload_override.get("selected_source") is None:
+            payload_override.pop("selected_source", None)
         return await self.enqueue_job(
             task_payload=task_payload,
             queue_name="report",
             job_type="report_generate",
+            payload_override=payload_override,
         )
 
     async def enqueue_job(
@@ -74,13 +89,17 @@ class AnalysisJobService:
         name_normalized: str | None = None,
         queue_name: JobQueueName = "scrape",
         job_type: JobType = "business_analyze",
+        payload_override: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         envelope = build_worker_job_envelope(
             queue_name=queue_name,
             job_type=job_type,
             task_payload=task_payload,
         )
-        payload_data = envelope.payload.model_dump(mode="python")
+        if isinstance(payload_override, dict):
+            payload_data = dict(payload_override)
+        else:
+            payload_data = envelope.payload.model_dump(mode="python")
         now, initial_event, initial_progress = build_job_event_and_progress(
             stage="queued",
             message="Job queued.",
@@ -258,7 +277,7 @@ class AnalysisJobService:
         if queue_names is not None:
             if not isinstance(queue_names, (list, tuple)):
                 raise ValueError("queue_names must be a list of queue names.")
-            allowed_queues = {"scrape", "scrape_google_maps", "scrape_tripadvisor", "analysis", "report"}
+            allowed_queues = {"scrape", "scrape_google_maps", "scrape_tripadvisor", "analysis", "report", "crm"}
             normalized_queues: list[str] = []
             for raw in queue_names:
                 normalized_queue = str(raw or "").strip().lower()
@@ -285,6 +304,9 @@ class AnalysisJobService:
                 "business_reanalyze",
                 "analysis_generate",
                 "report_generate",
+                "crm_lead_discovery",
+                "crm_lead_pipeline",
+                "crm_campaign_dispatch",
             }
             if normalized_job_type not in allowed_job_types:
                 allowed_values = ", ".join(sorted(allowed_job_types))
@@ -679,6 +701,7 @@ class AnalysisJobService:
         reason: str | None = None,
         force: bool = False,
         restart_from_zero: bool = False,
+        payload_override: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         parsed_id = self._parse_object_id(job_id, field_name="job_id")
         database = get_database()
@@ -696,6 +719,11 @@ class AnalysisJobService:
             job_type=existing.get("job_type"),
             restart_from_zero=bool(restart_from_zero),
         )
+        if isinstance(payload_override, dict):
+            for key, value in payload_override.items():
+                if value is None:
+                    continue
+                payload_for_relaunch[str(key)] = value
         legacy_fields = self._extract_legacy_scrape_fields(payload_for_relaunch)
         if self._is_active_status(status_before) and not bool(force):
             raise ValueError("Active jobs cannot be relaunched.")
@@ -915,6 +943,12 @@ class AnalysisJobService:
                         "batch_size": payload.get("batch_size"),
                         "max_reviews_pool": payload.get("max_reviews_pool"),
                         "source_job_id": str(payload.get("source_job_id") or "").strip() or None,
+                        "source_mode": str(payload.get("source_mode") or "auto"),
+                        "selected_source": (
+                            str(payload.get("selected_source")).strip()
+                            if payload.get("selected_source") is not None
+                            else None
+                        ),
                     }
                 )
                 return task.model_dump(mode="python")
@@ -928,6 +962,45 @@ class AnalysisJobService:
                         "locale": str(payload.get("locale") or "").strip() or None,
                         "template_id": str(payload.get("template_id") or "").strip() or None,
                         "source_job_id": str(payload.get("source_job_id") or "").strip() or None,
+                        "source_mode": str(payload.get("source_mode") or "auto"),
+                        "selected_source": (
+                            str(payload.get("selected_source")).strip()
+                            if payload.get("selected_source") is not None
+                            else None
+                        ),
+                    }
+                )
+                return task.model_dump(mode="python")
+
+            if job_type == "crm_lead_discovery":
+                task = CRMLeadDiscoveryTaskPayload.model_validate(
+                    {
+                        "query": str(payload.get("query", "")).strip(),
+                        "city": str(payload.get("city") or "").strip() or None,
+                        "category": str(payload.get("category") or "").strip() or None,
+                        "limit": payload.get("limit"),
+                        "source": str(payload.get("source") or "auto_live_google_maps"),
+                    }
+                )
+                return task.model_dump(mode="python")
+
+            if job_type == "crm_lead_pipeline":
+                task = CRMLeadPipelineTaskPayload.model_validate(
+                    {
+                        "lead_id": str(payload.get("lead_id") or "").strip(),
+                        "force": bool(payload.get("force", False)),
+                        "sources": payload.get("sources"),
+                        "google_maps_name": str(payload.get("google_maps_name") or "").strip() or None,
+                        "tripadvisor_name": str(payload.get("tripadvisor_name") or "").strip() or None,
+                    }
+                )
+                return task.model_dump(mode="python")
+
+            if job_type == "crm_campaign_dispatch":
+                task = CRMCampaignDispatchTaskPayload.model_validate(
+                    {
+                        "campaign_id": str(payload.get("campaign_id") or "").strip(),
+                        "message_id": str(payload.get("message_id") or "").strip(),
                     }
                 )
                 return task.model_dump(mode="python")

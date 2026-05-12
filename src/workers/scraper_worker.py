@@ -266,7 +266,7 @@ class ScraperWorker(QueuedJobWorkerBase):
             )
 
     def _should_handoff_to_analysis(self) -> bool:
-        return self._scrape_source in {"all", "google_maps"}
+        return self._scrape_source in {"all", "google_maps", "tripadvisor"}
 
     def _with_worker_source(self, data: Any) -> dict[str, Any]:
         payload = dict(data) if isinstance(data, dict) else {}
@@ -516,12 +516,19 @@ class ScraperWorker(QueuedJobWorkerBase):
                 raise RuntimeError(_CANCELLED_BY_USER_ERROR)
 
             if self._should_handoff_to_analysis():
+                handoff_source_mode = "auto"
+                handoff_selected_source = None
+                if self._scrape_source in {"google_maps", "tripadvisor"}:
+                    handoff_source_mode = "single"
+                    handoff_selected_source = self._scrape_source
                 next_payload = AnalysisGenerateTaskPayload(
                     business_id=business_id,
                     dataset_id=str(scrape_result.get("analysis_dataset_id") or "").strip() or None,
                     source_profile_id=str(scrape_result.get("source_profile_id") or "").strip() or None,
                     scrape_run_id=str(scrape_result.get("scrape_run_id") or "").strip() or None,
                     source_job_id=str(job_id),
+                    source_mode=handoff_source_mode,
+                    selected_source=handoff_selected_source,
                 )
                 LOGGER.info(
                     "Handing off job=%s to queue=analysis job_type=analysis_generate payload=%s",
