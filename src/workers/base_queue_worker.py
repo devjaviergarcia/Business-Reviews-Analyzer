@@ -33,7 +33,7 @@ class QueuedJobWorkerBase:
             )
             idle_ticks = 0
             while True:
-                job = await self._job_broker.claim_next_job(queue_name=self.queue_name)
+                job = await self._claim_next_job()
                 if not job:
                     idle_ticks += 1
                     if idle_ticks % self._idle_log_every_ticks == 0:
@@ -69,3 +69,6 @@ class QueuedJobWorkerBase:
 
     async def _process_job(self, job: dict) -> None:  # pragma: no cover - abstract hook
         raise NotImplementedError
+
+    async def _claim_next_job(self) -> dict | None:
+        return await self._job_broker.claim_next_job(queue_name=self.queue_name)

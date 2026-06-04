@@ -1,0 +1,15 @@
+[Unit]
+Description=Repiq Supabase Queue Worker
+After=network.target
+
+[Service]
+Type=simple
+User=javier
+WorkingDirectory=/home/javier/Documentos/proyectos/aprender/review-llm
+EnvironmentFile=/home/javier/Documentos/proyectos/aprender/review-llm/.env
+ExecStart=/home/javier/Documentos/proyectos/aprender/review-llm/.venv-uv/bin/python scripts/run_supabase_queue_worker.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

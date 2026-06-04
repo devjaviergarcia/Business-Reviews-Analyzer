@@ -95,6 +95,28 @@ Important worker vars:
 - `WORKER_IDLE_LOG_SECONDS`: idle heartbeat interval in worker logs when no jobs are found.
 - `WORKER_BROKER_BACKEND`: queue broker backend for workers (`mongo` by default). `rabbitmq` is currently deferred and not enabled.
 
+Supabase local queue worker vars (landing manual funnel):
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_WORKER_ID` (default `repiq-local-worker`)
+- `SUPABASE_WORKER_POLL_SECONDS` (default `900` = 15 min)
+- `SUPABASE_WORKER_CONTROL_POLL_SECONDS` (default `30`, escucha trigger manual)
+- `SUPABASE_WORKER_MAX_JOBS_PER_PULL` (default `20`)
+
+Run worker:
+
+```bash
+# daemon (auto pull cada 15m + manual trigger via worker_control)
+python3 scripts/run_supabase_queue_worker.py
+
+# una pasada inmediata
+python3 scripts/run_supabase_queue_worker.py --once
+
+# pull manual inmediato
+python3 scripts/run_supabase_queue_worker.py --manual-pull
+```
+
 Important LLM vars:
 
 - `GEMINI_API_KEY`: API key for Gemini.

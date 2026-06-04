@@ -10,6 +10,7 @@ from src.services.crm_service import CRMService
 from src.workers.broker import WorkerJobBroker
 from src.workers.contracts import (
     AnalysisJobStatus,
+    parse_benchmark_local_study_payload,
     parse_crm_campaign_dispatch_payload,
     parse_crm_lead_discovery_payload,
     parse_crm_lead_pipeline_payload,
@@ -58,6 +59,19 @@ class CRMWorker:
                 except Exception:  # noqa: BLE001
                     LOGGER.exception("CRM scheduler failed while enqueueing due dispatch jobs")
 
+                try:
+                    report_requests = await self._service.process_pending_report_requests(limit=self._scheduler_batch_size)
+                    retried = int(report_requests.get("retried") or 0)
+                    failed = int(report_requests.get("failed") or 0)
+                    if retried > 0 or failed > 0:
+                        LOGGER.info(
+                            "CRM scheduler processed report_requests retried=%s failed=%s",
+                            retried,
+                            failed,
+                        )
+                except Exception:  # noqa: BLE001
+                    LOGGER.exception("CRM scheduler failed while processing report_requests")
+
                 job = await self._job_broker.claim_next_job(queue_name=self.queue_name)
                 if not job:
                     idle_ticks += 1
@@ -101,6 +115,9 @@ class CRMWorker:
             if job_type == "crm_lead_discovery":
                 payload = parse_crm_lead_discovery_payload(job)
                 result = await self._service.process_discovery_task(task_payload=payload, job_id=job_id)
+            elif job_type == "benchmark_local_study":
+                payload = parse_benchmark_local_study_payload(job)
+                result = await self._service.process_benchmark_study_task(task_payload=payload, job_id=job_id)
             elif job_type == "crm_lead_pipeline":
                 payload = parse_crm_lead_pipeline_payload(job)
                 result = await self._service.process_lead_pipeline_task(task_payload=payload, job_id=job_id)

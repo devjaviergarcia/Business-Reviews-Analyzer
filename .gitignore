@@ -12,7 +12,8 @@ __pycache__/
 .DS_Store
 playwright-data*/
 *.docx.md
+.tripadvisor*.pid
+.tripadvisor_live_session_state.json
 
 
 artifacts/
-

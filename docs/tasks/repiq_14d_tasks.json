@@ -1,0 +1,2190 @@
+{
+  "project": "repiq_14d_validation",
+  "title": "Repiq 14d Validation: Benchmark, Lead Report y Paid Report",
+  "source_plan": "docs/backlogs/plan_14_dias_validacion_benchmark_reports.md",
+  "updated_at": "2026-05-20T11:25:38Z",
+  "statuses": [
+    "backlog",
+    "ready",
+    "in_progress",
+    "review",
+    "blocked",
+    "done"
+  ],
+  "tasks": [
+    {
+      "id": "T00",
+      "type": "technical",
+      "area": "ops",
+      "priority": "P0",
+      "status": "done",
+      "title": "Sistema local de tareas y tablero",
+      "description": "Crear la fuente local de tareas, CLI de estados, tablero HTML y workflow de implementacion.",
+      "plan_ref": "docs/backlogs/plan_14_dias_validacion_benchmark_reports.md#t00---sistema-local-de-tareas-y-tablero",
+      "acceptance": [
+        "Existe docs/tasks/repiq_14d_tasks.json.",
+        "Existe scripts/tasks.py.",
+        "Existe docs/process/task_workflow.md.",
+        "Se puede ejecutar python3 scripts/tasks.py list.",
+        "Al mover una tarea se actualiza artifacts/tasks/repiq_14d_board.html.",
+        "Este ticket queda cerrado usando la propia CLI."
+      ],
+      "notes": [],
+      "tests": [
+        "python3 -m py_compile scripts/tasks.py",
+        "python3 scripts/tasks.py list",
+        "python3 scripts/tasks.py show T00",
+        "python3 scripts/tasks.py board"
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-14T21:32:06Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "done"
+        }
+      ],
+      "updated_at": "2026-05-14T21:32:06Z"
+    },
+    {
+      "id": "T01",
+      "type": "technical",
+      "area": "backend",
+      "priority": "P0",
+      "status": "done",
+      "title": "Crear modelos de benchmark",
+      "description": "Crear contratos, repositorios e indices para benchmark_runs, benchmark_businesses y competitor_sets.",
+      "plan_ref": "docs/backlogs/plan_14_dias_validacion_benchmark_reports.md#t01---crear-modelos-de-benchmark",
+      "acceptance": [
+        "CRUD basico cubierto por tests.",
+        "No rompe crm_leads."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-15T17:55:12Z",
+          "text": "Inicio implementacion de modelos/repositorios de benchmark."
+        }
+      ],
+      "tests": [
+        "PYTHONPATH=. .venv-uv/bin/pytest tests/unit/test_benchmark_repositories.py -q",
+        "PYTHONPATH=. .venv-uv/bin/pytest tests/unit/test_benchmark_repositories.py tests/unit/test_crm_leads_sorting.py tests/unit/test_crm_discovery_orchestrator.py tests/unit/test_crm_service_live_discovery.py tests/unit/test_crm_discovery_queue_routing.py -q",
+        "PYTHONPATH=. .venv-uv/bin/pytest tests/ -q"
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-15T17:55:12Z",
+          "action": "note",
+          "text": "Inicio implementacion de modelos/repositorios de benchmark."
+        },
+        {
+          "created_at": "2026-05-15T17:55:12Z",
+          "action": "status_changed",
+          "from_status": "ready",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-15T18:01:04Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "done"
+        }
+      ],
+      "updated_at": "2026-05-15T18:01:04Z"
+    },
+    {
+      "id": "T02",
+      "type": "technical",
+      "area": "backend/worker",
+      "priority": "P0",
+      "status": "done",
+      "title": "Crear orquestador de benchmark",
+      "description": "Crear job benchmark_local_study reutilizando discovery Google Maps live y persistiendo snapshots asociados al benchmark.",
+      "plan_ref": "docs/backlogs/plan_14_dias_validacion_benchmark_reports.md#t02---crear-orquestador-de-benchmark",
+      "acceptance": [
+        "Lanza benchmark desde API o script.",
+        "Genera al menos N negocios para una query controlada.",
+        "Reporta conteos reales."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-15T18:01:17Z",
+          "text": "T01 cerrado; T02 queda listo para implementar orquestador de benchmark."
+        },
+        {
+          "created_at": "2026-05-15T18:01:18Z",
+          "text": "Inicio orquestador de benchmark local reutilizando discovery live y repositorios T01."
+        }
+      ],
+      "tests": [
+        "PYTHONPATH=. .venv-uv/bin/pytest tests/unit/test_benchmark_orchestrator.py tests/unit/test_benchmark_repositories.py tests/unit/test_crm_contracts.py tests/unit/test_crm_discovery_orchestrator.py tests/unit/test_crm_service_live_discovery.py tests/unit/test_crm_discovery_queue_routing.py -q; PYTHONPATH=. .venv-uv/bin/pytest tests/ -q"
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-15T18:01:17Z",
+          "action": "note",
+          "text": "T01 cerrado; T02 queda listo para implementar orquestador de benchmark."
+        },
+        {
+          "created_at": "2026-05-15T18:01:17Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "ready"
+        },
+        {
+          "created_at": "2026-05-15T18:01:18Z",
+          "action": "note",
+          "text": "Inicio orquestador de benchmark local reutilizando discovery live y repositorios T01."
+        },
+        {
+          "created_at": "2026-05-15T18:01:18Z",
+          "action": "status_changed",
+          "from_status": "ready",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-15T18:10:08Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "done"
+        }
+      ],
+      "updated_at": "2026-05-15T18:10:08Z"
+    },
+    {
+      "id": "T03",
+      "type": "technical",
+      "area": "backend",
+      "priority": "P0",
+      "status": "done",
+      "title": "Selector de competidores",
+      "description": "Implementar seleccion determinista de competidores con scoring de similitud y fixtures.",
+      "plan_ref": "docs/backlogs/plan_14_dias_validacion_benchmark_reports.md#t03---selector-de-competidores",
+      "acceptance": [
+        "Devuelve competidores razonables.",
+        "No falla con pocos candidatos."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-15T18:10:08Z",
+          "text": "T02 cerrado; listo para seleccionar competidores sobre benchmark_businesses."
+        },
+        {
+          "created_at": "2026-05-15T18:10:08Z",
+          "text": "Inicio selector determinista de competidores V1."
+        }
+      ],
+      "tests": [
+        "PYTHONPATH=. .venv-uv/bin/pytest tests/unit/test_competitor_selector.py tests/unit/test_benchmark_orchestrator.py tests/unit/test_benchmark_repositories.py tests/unit/test_crm_contracts.py -q; PYTHONPATH=. .venv-uv/bin/pytest tests/ -q"
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-15T18:10:08Z",
+          "action": "note",
+          "text": "T02 cerrado; listo para seleccionar competidores sobre benchmark_businesses."
+        },
+        {
+          "created_at": "2026-05-15T18:10:08Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "ready"
+        },
+        {
+          "created_at": "2026-05-15T18:10:08Z",
+          "action": "note",
+          "text": "Inicio selector determinista de competidores V1."
+        },
+        {
+          "created_at": "2026-05-15T18:10:08Z",
+          "action": "status_changed",
+          "from_status": "ready",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-15T18:13:42Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "done"
+        }
+      ],
+      "updated_at": "2026-05-15T18:13:42Z"
+    },
+    {
+      "id": "T04",
+      "type": "technical",
+      "area": "analysis",
+      "priority": "P0",
+      "status": "done",
+      "title": "Hook de deep study",
+      "description": "Definir schema JSON y builder de snapshot profundo reutilizable por lead report, paid report y estudio publico.",
+      "plan_ref": "docs/backlogs/plan_14_dias_validacion_benchmark_reports.md#t04---hook-de-deep-study",
+      "acceptance": [
+        "Output estable.",
+        "Warnings cuando faltan datos."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-15T18:13:42Z",
+          "text": "T03 cerrado; listo para schema y builder de deep study."
+        },
+        {
+          "created_at": "2026-05-15T18:13:42Z",
+          "text": "Inicio hook de deep study V1 degradable con benchmark/listing/competidores."
+        }
+      ],
+      "tests": [
+        "PYTHONPATH=. .venv-uv/bin/pytest tests/unit/test_deep_study_snapshot.py tests/unit/test_competitor_selector.py tests/unit/test_benchmark_orchestrator.py tests/unit/test_benchmark_repositories.py tests/unit/test_crm_contracts.py -q; PYTHONPATH=. .venv-uv/bin/pytest tests/ -q"
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-15T18:13:42Z",
+          "action": "note",
+          "text": "T03 cerrado; listo para schema y builder de deep study."
+        },
+        {
+          "created_at": "2026-05-15T18:13:42Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "ready"
+        },
+        {
+          "created_at": "2026-05-15T18:13:42Z",
+          "action": "note",
+          "text": "Inicio hook de deep study V1 degradable con benchmark/listing/competidores."
+        },
+        {
+          "created_at": "2026-05-15T18:13:42Z",
+          "action": "status_changed",
+          "from_status": "ready",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-15T18:16:50Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "done"
+        }
+      ],
+      "updated_at": "2026-05-15T18:16:50Z"
+    },
+    {
+      "id": "T05",
+      "type": "technical",
+      "area": "reporting",
+      "priority": "P0",
+      "status": "done",
+      "title": "Lead report V1",
+      "description": "Crear template de lead report corto, orientado a conversion y robusto ante datos incompletos.",
+      "plan_ref": "docs/backlogs/plan_14_dias_validacion_benchmark_reports.md#t05---lead-report-v1",
+      "acceptance": [
+        "HTML generado para fixture completo.",
+        "HTML generado para fixture incompleto."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-15T18:16:50Z",
+          "text": "T04 cerrado; siguiente paso es Lead Report V1 usando deep_study_snapshot."
+        },
+        {
+          "created_at": "2026-05-15T18:35:17Z",
+          "text": "Inicio Lead Report V1: renderer HTML, entidad persistible y pruebas con fixtures completo/incompleto."
+        },
+        {
+          "created_at": "2026-05-15T18:41:14Z",
+          "text": "Lead Report V1 implementado: renderer HTML responsive, lead_reports repository, endpoint interno y pruebas unitarias completo/incompleto."
+        }
+      ],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-15T18:16:50Z",
+          "action": "note",
+          "text": "T04 cerrado; siguiente paso es Lead Report V1 usando deep_study_snapshot."
+        },
+        {
+          "created_at": "2026-05-15T18:16:50Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "ready"
+        },
+        {
+          "created_at": "2026-05-15T18:35:17Z",
+          "action": "note",
+          "text": "Inicio Lead Report V1: renderer HTML, entidad persistible y pruebas con fixtures completo/incompleto."
+        },
+        {
+          "created_at": "2026-05-15T18:35:17Z",
+          "action": "status_changed",
+          "from_status": "ready",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-15T18:41:14Z",
+          "action": "note",
+          "text": "Lead Report V1 implementado: renderer HTML responsive, lead_reports repository, endpoint interno y pruebas unitarias completo/incompleto."
+        },
+        {
+          "created_at": "2026-05-15T18:41:14Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "done"
+        }
+      ],
+      "updated_at": "2026-05-15T18:41:14Z"
+    },
+    {
+      "id": "T06",
+      "type": "technical",
+      "area": "reporting",
+      "priority": "P0",
+      "status": "done",
+      "title": "Paid report V1",
+      "description": "Crear template premium con competidores, acciones mensuales, plantillas y valor recurrente.",
+      "plan_ref": "docs/backlogs/plan_14_dias_validacion_benchmark_reports.md#t06---paid-report-v1",
+      "acceptance": [
+        "Diferencia clara vs lead report.",
+        "Render robusto con y sin historico."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-15T18:41:27Z",
+          "text": "Inicio Paid Report V1: version mensual completa basada en lead report + deep study + comparativa."
+        },
+        {
+          "created_at": "2026-05-15T18:45:41Z",
+          "text": "Paid Report V1 implementado: renderer mensual, paid_reports repository, endpoint interno, historico opcional y pruebas completas."
+        }
+      ],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-15T18:41:27Z",
+          "action": "note",
+          "text": "Inicio Paid Report V1: version mensual completa basada en lead report + deep study + comparativa."
+        },
+        {
+          "created_at": "2026-05-15T18:41:27Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-15T18:45:41Z",
+          "action": "note",
+          "text": "Paid Report V1 implementado: renderer mensual, paid_reports repository, endpoint interno, historico opcional y pruebas completas."
+        },
+        {
+          "created_at": "2026-05-15T18:45:41Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "done"
+        }
+      ],
+      "updated_at": "2026-05-15T18:45:41Z"
+    },
+    {
+      "id": "T07",
+      "type": "technical",
+      "area": "frontend/backend",
+      "priority": "P0",
+      "status": "done",
+      "title": "Landing de solicitud",
+      "description": "Crear landing, formulario, endpoint report_requests, captura UTM y consentimiento separado.",
+      "plan_ref": "docs/backlogs/plan_14_dias_validacion_benchmark_reports.md#t07---landing-de-solicitud",
+      "acceptance": [
+        "Formulario funcional end to end.",
+        "Consentimiento obligatorio para envio del informe.",
+        "Marketing opcional separado."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-15T18:45:41Z",
+          "text": "Inicio landing de solicitud: detectar stack UI y ruta/CTA mas simple sin romper CRM."
+        },
+        {
+          "created_at": "2026-05-15T18:49:51Z",
+          "text": "Landing solicitud implementada: endpoint report_requests, UTM/consents separados, job benchmark encolado, vista Solicitud y build frontend OK."
+        }
+      ],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-15T18:45:41Z",
+          "action": "note",
+          "text": "Inicio landing de solicitud: detectar stack UI y ruta/CTA mas simple sin romper CRM."
+        },
+        {
+          "created_at": "2026-05-15T18:45:41Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-15T18:49:51Z",
+          "action": "note",
+          "text": "Landing solicitud implementada: endpoint report_requests, UTM/consents separados, job benchmark encolado, vista Solicitud y build frontend OK."
+        },
+        {
+          "created_at": "2026-05-15T18:49:51Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "done"
+        }
+      ],
+      "updated_at": "2026-05-15T18:49:51Z"
+    },
+    {
+      "id": "T08",
+      "type": "technical",
+      "area": "worker/ops",
+      "priority": "P0",
+      "status": "done",
+      "title": "Cola local reanudable",
+      "description": "Crear worker para report_requests, reanudar pendientes, registrar eventos y smoke test.",
+      "plan_ref": "docs/backlogs/plan_14_dias_validacion_benchmark_reports.md#t08---cola-local-reanudable",
+      "acceptance": [
+        "Job pendiente se procesa al levantar stack.",
+        "Error queda visible y reintentable."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-15T18:53:34Z",
+          "text": "Implementando worker reanudable para solicitudes: reintentos, endpoint process-pending y script local."
+        },
+        {
+          "created_at": "2026-05-15T18:59:01Z",
+          "text": "Worker reanudable completado: endpoint process-pending, retry, script local y procesamiento integrado en crm-worker."
+        },
+        {
+          "created_at": "2026-05-15T19:00:00Z",
+          "text": "Ajuste posterior: create_report_request ya no pierde la solicitud si falla la cola; queda failed_to_queue y reintentable. Suite final: 124 passed."
+        }
+      ],
+      "tests": [
+        "PYTHONPATH=. .venv-uv/bin/pytest tests/unit/test_report_request_service.py -q",
+        "PYTHONPATH=. .venv-uv/bin/pytest -q"
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-15T18:53:34Z",
+          "action": "note",
+          "text": "Implementando worker reanudable para solicitudes: reintentos, endpoint process-pending y script local."
+        },
+        {
+          "created_at": "2026-05-15T18:53:34Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-15T18:59:01Z",
+          "action": "note",
+          "text": "Worker reanudable completado: endpoint process-pending, retry, script local y procesamiento integrado en crm-worker."
+        },
+        {
+          "created_at": "2026-05-15T18:59:01Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "done"
+        },
+        {
+          "created_at": "2026-05-15T19:00:00Z",
+          "action": "note",
+          "text": "Ajuste posterior: create_report_request ya no pierde la solicitud si falla la cola; queda failed_to_queue y reintentable. Suite final: 124 passed."
+        }
+      ],
+      "updated_at": "2026-05-15T19:00:00Z"
+    },
+    {
+      "id": "T09",
+      "type": "technical",
+      "area": "frontend",
+      "priority": "P1",
+      "status": "done",
+      "title": "Pantalla CRM: solicitudes",
+      "description": "Crear tabla de solicitudes con filtros, origen, estado, reintentos y enlaces a informes.",
+      "plan_ref": "docs/backlogs/plan_14_dias_validacion_benchmark_reports.md#t09---pantalla-crm-solicitudes",
+      "acceptance": [
+        "Se ve el embudo operativo.",
+        "Se puede depurar un informe fallido."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-15T18:53:34Z",
+          "text": "Implementando pantalla operativa de solicitudes: tabla, filtros, origen, estado y reintento."
+        },
+        {
+          "created_at": "2026-05-15T18:59:01Z",
+          "text": "Pantalla Solicitud completada: tabla de solicitudes, filtro por estado, busqueda, origen UTM, job/run y reintento."
+        }
+      ],
+      "tests": [
+        "cd apps/manager && npm run build",
+        "PYTHONPATH=. .venv-uv/bin/pytest -q"
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-15T18:53:34Z",
+          "action": "note",
+          "text": "Implementando pantalla operativa de solicitudes: tabla, filtros, origen, estado y reintento."
+        },
+        {
+          "created_at": "2026-05-15T18:53:34Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-15T18:59:01Z",
+          "action": "note",
+          "text": "Pantalla Solicitud completada: tabla de solicitudes, filtro por estado, busqueda, origen UTM, job/run y reintento."
+        },
+        {
+          "created_at": "2026-05-15T18:59:01Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "done"
+        }
+      ],
+      "updated_at": "2026-05-15T18:59:01Z"
+    },
+    {
+      "id": "T10",
+      "type": "technical",
+      "area": "reporting/content",
+      "priority": "P1",
+      "status": "done",
+      "title": "Estudio publico HTML",
+      "description": "Generar pagina HTML del benchmark con metricas agregadas, insights anonimizados y CTA trackeable.",
+      "plan_ref": "docs/backlogs/plan_14_dias_validacion_benchmark_reports.md#t10---estudio-publico-html",
+      "acceptance": [
+        "Estudio publicable.",
+        "No expone emails ni datos sensibles.",
+        "CTA trackeable."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-15T18:54:17Z",
+          "text": "Implementando generador HTML publico anonimo desde benchmark_run con CTA trackeable."
+        },
+        {
+          "created_at": "2026-05-15T18:59:01Z",
+          "text": "Estudio publico HTML completado: renderer anonimo, CTA trackeable y endpoint de generacion desde benchmark_run."
+        },
+        {
+          "created_at": "2026-05-15T19:00:00Z",
+          "text": "Suite final tras public study: 124 passed; HTML publico no expone datos sensibles de negocio."
+        }
+      ],
+      "tests": [
+        "PYTHONPATH=. .venv-uv/bin/pytest tests/unit/test_public_study_report.py -q",
+        "PYTHONPATH=. .venv-uv/bin/pytest -q"
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-15T18:54:17Z",
+          "action": "note",
+          "text": "Implementando generador HTML publico anonimo desde benchmark_run con CTA trackeable."
+        },
+        {
+          "created_at": "2026-05-15T18:54:17Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-15T18:59:01Z",
+          "action": "note",
+          "text": "Estudio publico HTML completado: renderer anonimo, CTA trackeable y endpoint de generacion desde benchmark_run."
+        },
+        {
+          "created_at": "2026-05-15T18:59:01Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "done"
+        },
+        {
+          "created_at": "2026-05-15T19:00:00Z",
+          "action": "note",
+          "text": "Suite final tras public study: 124 passed; HTML publico no expone datos sensibles de negocio."
+        }
+      ],
+      "updated_at": "2026-05-15T19:00:00Z"
+    },
+    {
+      "id": "E01",
+      "type": "editorial",
+      "area": "linkedin",
+      "priority": "P1",
+      "status": "review",
+      "title": "Publicar estudio en LinkedIn",
+      "description": "Publicar 3 posts con insights del estudio y enlaces UTM distintos.",
+      "plan_ref": "docs/backlogs/plan_14_dias_validacion_benchmark_reports.md#e01---publicar-estudio-en-linkedin",
+      "acceptance": [
+        "3 posts publicados.",
+        "Cada enlace tiene utm_source=linkedin.",
+        "Se mide visitas y formularios."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-19T05:42:16Z",
+          "text": "Inicio ejecucion editorial: posts LinkedIn texto plano + imagenes, basados en benchmark real y enlaces UTM."
+        },
+        {
+          "created_at": "2026-05-19T05:47:33Z",
+          "text": "Pack listo: 3 copies de LinkedIn en texto plano + 3 imagenes PNG en docs/editorial/assets + UTM por post. Pendiente publicacion manual en cuenta LinkedIn."
+        }
+      ],
+      "tests": [
+        "python3 scripts/generate_editorial_assets.py"
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-19T05:42:16Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-19T05:42:16Z",
+          "action": "note",
+          "text": "Inicio ejecucion editorial: posts LinkedIn texto plano + imagenes, basados en benchmark real y enlaces UTM."
+        },
+        {
+          "created_at": "2026-05-19T05:47:33Z",
+          "action": "note",
+          "text": "Pack listo: 3 copies de LinkedIn en texto plano + 3 imagenes PNG en docs/editorial/assets + UTM por post. Pendiente publicacion manual en cuenta LinkedIn."
+        },
+        {
+          "created_at": "2026-05-19T05:47:33Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "review"
+        }
+      ],
+      "updated_at": "2026-05-19T05:47:33Z"
+    },
+    {
+      "id": "E02",
+      "type": "editorial",
+      "area": "seo",
+      "priority": "P1",
+      "status": "done",
+      "title": "Crear pagina SEO del estudio",
+      "description": "Publicar pagina indexable con graficos del benchmark y CTA a informe individual.",
+      "plan_ref": "docs/backlogs/plan_14_dias_validacion_benchmark_reports.md#e02---crear-pagina-seo-del-estudio",
+      "acceptance": [
+        "URL indexable.",
+        "CTA visible.",
+        "utm_source=seo para CTAs internos si aplica."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-19T05:47:25Z",
+          "text": "Implementada pagina SEO indexable en /insights/estado-resenas-restaurantes-cordoba con CTA visible y utm_source=seo."
+        }
+      ],
+      "tests": [
+        "PYTHONPATH=. .venv-uv/bin/pytest tests/unit/test_editorial_routes.py tests/unit/test_api_routes_contract.py -q"
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-19T05:47:24Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-19T05:47:25Z",
+          "action": "note",
+          "text": "Implementada pagina SEO indexable en /insights/estado-resenas-restaurantes-cordoba con CTA visible y utm_source=seo."
+        },
+        {
+          "created_at": "2026-05-19T05:47:25Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "done"
+        }
+      ],
+      "updated_at": "2026-05-19T05:47:25Z"
+    },
+    {
+      "id": "E03",
+      "type": "editorial",
+      "area": "seo",
+      "priority": "P2",
+      "status": "done",
+      "title": "Crear 5 articulos de apoyo",
+      "description": "Preparar o publicar 5 articulos SEO que enlacen al informe individual.",
+      "plan_ref": "docs/backlogs/plan_14_dias_validacion_benchmark_reports.md#e03---crear-5-articulos-de-apoyo",
+      "acceptance": [
+        "5 briefs listos o publicados.",
+        "Cada articulo enlaza al informe."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-19T05:47:29Z",
+          "text": "Publicados 5 articulos SEO bajo /insights/* enlazando al informe individual con utm_source=seo."
+        }
+      ],
+      "tests": [
+        "PYTHONPATH=. .venv-uv/bin/pytest tests/unit/test_editorial_routes.py -q"
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-19T05:47:29Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-19T05:47:29Z",
+          "action": "note",
+          "text": "Publicados 5 articulos SEO bajo /insights/* enlazando al informe individual con utm_source=seo."
+        },
+        {
+          "created_at": "2026-05-19T05:47:29Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "done"
+        }
+      ],
+      "updated_at": "2026-05-19T05:47:29Z"
+    },
+    {
+      "id": "E04",
+      "type": "editorial",
+      "area": "community",
+      "priority": "P1",
+      "status": "done",
+      "title": "Publicar en comunidades locales",
+      "description": "Compartir el estudio en comunidades locales aportando valor y usando enlaces trackeados.",
+      "plan_ref": "docs/backlogs/plan_14_dias_validacion_benchmark_reports.md#e04---publicar-en-comunidades-locales",
+      "acceptance": [
+        "3 publicaciones o respuestas de valor.",
+        "Registro de canal y enlace usado."
+      ],
+      "notes": [],
+      "tests": [],
+      "history": [],
+      "updated_at": "2026-05-14T00:00:00Z"
+    },
+    {
+      "id": "E05",
+      "type": "editorial",
+      "area": "partners",
+      "priority": "P1",
+      "status": "in_progress",
+      "title": "Outreach a partners",
+      "description": "Contactar manualmente partners locales con mensaje corto y link UTM propio.",
+      "plan_ref": "docs/backlogs/plan_14_dias_validacion_benchmark_reports.md#e05---outreach-a-partners",
+      "acceptance": [
+        "10 partners contactados manualmente.",
+        "Cada partner tiene cta_id."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-21T05:36:12Z",
+          "text": "Creado pack editorial LinkedIn manual-first en docs/editorial/v220_linkedin_posts_manual_first.md con 3 copies listos (incluye post de bienvenida y post de por que a veces no funciona un negocio), UTMs y CTA alineados al flujo real."
+        }
+      ],
+      "tests": [],
+      "history": [],
+      "updated_at": "2026-05-14T00:00:00Z"
+    },
+    {
+      "id": "E06",
+      "type": "editorial",
+      "area": "x",
+      "priority": "P2",
+      "status": "in_progress",
+      "title": "Crear material para X/Twitter",
+      "description": "Preparar hilo y posts cortos con aprendizajes del estudio y link trackeado.",
+      "plan_ref": "docs/backlogs/plan_14_dias_validacion_benchmark_reports.md#e06---crear-material-para-xtwitter",
+      "acceptance": [
+        "1 hilo publicado.",
+        "3 posts publicados.",
+        "Medicion por UTM."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-21T05:36:12Z",
+          "text": "Creado pack editorial LinkedIn manual-first en docs/editorial/v220_linkedin_posts_manual_first.md con 3 copies listos (incluye post de bienvenida y post de por que a veces no funciona un negocio), UTMs y CTA alineados al flujo real."
+        },
+        {
+          "created_at": "2026-05-21T17:11:39Z",
+          "text": "Actualizado copy de bienvenida a tono mas humano y link limpio; añadida medicion GA4 en landing para UTMs + evento form_pre_submitted."
+        },
+        {
+          "created_at": "2026-05-21T17:13:26Z",
+          "text": "Implementadas redirecciones cortas para LinkedIn con tracking UTM en /l/[slug] (welcome, por-que-no-funciona, diagnostico-vs-intuicion y enlaces de estudio)."
+        }
+      ],
+      "tests": [],
+      "history": [],
+      "updated_at": "2026-05-14T00:00:00Z"
+    },
+    {
+      "id": "E07",
+      "type": "editorial",
+      "area": "offline",
+      "priority": "P2",
+      "status": "backlog",
+      "title": "Crear QR offline",
+      "description": "Crear QR con UTM offline para eventos, asociaciones o contactos presenciales no comerciales.",
+      "plan_ref": "docs/backlogs/plan_14_dias_validacion_benchmark_reports.md#e07---crear-qr-offline",
+      "acceptance": [
+        "QR generado.",
+        "Landing registra origen offline."
+      ],
+      "notes": [],
+      "tests": [],
+      "history": [],
+      "updated_at": "2026-05-14T00:00:00Z"
+    },
+    {
+      "id": "F01",
+      "type": "fix",
+      "area": "backend/benchmark",
+      "priority": "P0",
+      "status": "done",
+      "title": "Fix urgente: posicion de aparicion en benchmark",
+      "description": "Persistir el orden en el que aparece cada negocio en discovery dentro del benchmark y usarlo en scoring/estudio.",
+      "plan_ref": "",
+      "acceptance": [
+        "Cada benchmark_business guarda discovery_rank.",
+        "El orquestador asigna ranking 1-based segun orden de candidatos.",
+        "La posicion afecta al selector de competidores y al deep_study_snapshot.",
+        "Tests cubren persistencia, ranking y efecto en scoring."
+      ],
+      "notes": [],
+      "tests": [
+        "PYTHONPATH=. .venv-uv/bin/pytest tests/unit/test_benchmark_repositories.py tests/unit/test_benchmark_orchestrator.py tests/unit/test_competitor_selector.py tests/unit/test_deep_study_snapshot.py tests/unit/test_crm_contracts.py -q; PYTHONPATH=. .venv-uv/bin/pytest tests/ -q"
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-15T18:26:50Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-15T18:31:43Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "done"
+        }
+      ],
+      "updated_at": "2026-05-15T18:31:43Z"
+    },
+    {
+      "id": "G00",
+      "type": "tooling",
+      "area": "Geo Grid",
+      "priority": "high",
+      "status": "done",
+      "title": "Script selector manual de puntos geográficos",
+      "description": "Crear script en scripts/ para abrir mapa interactivo centrado en una ciudad y exportar puntos clicados como JSON/CSV.",
+      "plan_ref": "",
+      "acceptance": [
+        "Se puede ejecutar con lat/lng; permite añadir, editar, borrar y exportar coordenadas."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-16T09:30:16Z",
+          "text": "Implementado scripts/pick_city_points.py: mapa Leaflet local para clicar puntos, editar/ordenar/borrar e importar/exportar JSON/CSV."
+        },
+        {
+          "created_at": "2026-05-16T09:41:46Z",
+          "text": "Corregido bloqueo de tiles: el selector ahora se abre por localhost y usa Carto Light por defecto."
+        }
+      ],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-16T09:27:17Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-16T09:27:18Z",
+          "action": "status_changed",
+          "from_status": "ready",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-16T09:30:16Z",
+          "action": "note",
+          "text": "Implementado scripts/pick_city_points.py: mapa Leaflet local para clicar puntos, editar/ordenar/borrar e importar/exportar JSON/CSV."
+        },
+        {
+          "created_at": "2026-05-16T09:30:16Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "done"
+        },
+        {
+          "created_at": "2026-05-16T09:31:41Z",
+          "action": "status_changed",
+          "from_status": "done",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-16T09:41:46Z",
+          "action": "note",
+          "text": "Corregido bloqueo de tiles: el selector ahora se abre por localhost y usa Carto Light por defecto."
+        },
+        {
+          "created_at": "2026-05-16T09:41:46Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "done"
+        }
+      ],
+      "updated_at": "2026-05-16T09:41:46Z"
+    },
+    {
+      "id": "G01",
+      "type": "data",
+      "area": "Geo Grid",
+      "priority": "high",
+      "status": "done",
+      "title": "Registrar puntos manuales de Córdoba",
+      "description": "Guardar el set manual de 73 coordenadas de Córdoba y exponer un cargador reutilizable para geo-grid/deep study.",
+      "plan_ref": "",
+      "acceptance": [
+        "Los puntos quedan versionados en data/geo_points/cordoba.json y se pueden cargar por ciudad desde código con validación básica."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-16T09:41:46Z",
+          "text": "Añadidos 73 puntos manuales de Córdoba en data/geo_points/cordoba.json y cargador src.crm.benchmark.geo_points."
+        }
+      ],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-16T09:38:57Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-16T09:38:57Z",
+          "action": "status_changed",
+          "from_status": "ready",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-16T09:41:46Z",
+          "action": "note",
+          "text": "Añadidos 73 puntos manuales de Córdoba en data/geo_points/cordoba.json y cargador src.crm.benchmark.geo_points."
+        },
+        {
+          "created_at": "2026-05-16T09:41:46Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "done"
+        }
+      ],
+      "updated_at": "2026-05-16T09:41:46Z"
+    },
+    {
+      "id": "G02",
+      "type": "feature",
+      "area": "geo",
+      "priority": "high",
+      "status": "done",
+      "title": "Lanzar estudios Geo Grid desde CRM",
+      "description": "Crear ciudades disponibles en Mongo, runs/results GeoGrid y job para lanzar búsquedas por coordenadas desde el panel Estudios.",
+      "plan_ref": "",
+      "acceptance": [
+        "POST desde panel crea run, encola geo_grid_study en scrape_google_maps y persiste resultados por punto."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-17T18:10:17Z",
+          "text": "Cerrado: POST /crm/geo-grid-runs soporta modo maps_live/uule y configuración de grid; job geo_grid_study encola en scrape_google_maps y persiste resultados por punto con metadatos de nodo."
+        }
+      ],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-16T10:05:40Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-16T10:05:40Z",
+          "action": "status_changed",
+          "from_status": "ready",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-17T18:10:17Z",
+          "action": "note",
+          "text": "Cerrado: POST /crm/geo-grid-runs soporta modo maps_live/uule y configuración de grid; job geo_grid_study encola en scrape_google_maps y persiste resultados por punto con metadatos de nodo."
+        },
+        {
+          "created_at": "2026-05-17T18:10:17Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "done"
+        }
+      ],
+      "updated_at": "2026-05-17T18:10:17Z"
+    },
+    {
+      "id": "G03",
+      "type": "feature",
+      "area": "geo",
+      "priority": "high",
+      "status": "done",
+      "title": "Visualizar estudios Geo Grid",
+      "description": "Crear página Estudios con formulario de lanzamiento, listado de runs, progreso, mapa de puntos y estadísticas por negocio.",
+      "plan_ref": "",
+      "acceptance": [
+        "El panel muestra ciudades desde Mongo, runs por ciudad, progreso, mapa y stats por negocio."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-17T18:10:17Z",
+          "text": "Cerrado: vista Estudios carga ciudades desde Mongo, filtra runs por ciudad/estado, muestra progreso y estadísticas; mapa actualizado a OpenStreetMap (Leaflet) con leyenda y popups por punto."
+        }
+      ],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-16T10:05:40Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-16T10:05:40Z",
+          "action": "status_changed",
+          "from_status": "ready",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-17T18:10:17Z",
+          "action": "note",
+          "text": "Cerrado: vista Estudios carga ciudades desde Mongo, filtra runs por ciudad/estado, muestra progreso y estadísticas; mapa actualizado a OpenStreetMap (Leaflet) con leyenda y popups por punto."
+        },
+        {
+          "created_at": "2026-05-17T18:10:17Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "done"
+        }
+      ],
+      "updated_at": "2026-05-17T18:10:17Z"
+    },
+    {
+      "id": "G04",
+      "type": "feature",
+      "area": "geo",
+      "priority": "high",
+      "status": "ready",
+      "title": "Panel de alta y gestion de ciudades GeoGrid",
+      "description": "En la pagina Estudios, anadir panel final para crear ciudades: nombre + coordenadas base, selector interactivo de puntos integrado (sin abrir pagina aparte), guardado JSON en formato compatible con cordoba.json, persistencia en Mongo (nombre, centro, puntos, archivo generado), ciudad visible en selector de lanzamiento de estudio y gestion de ciudades existentes (consultar/eliminar con confirmacion modal).",
+      "plan_ref": "",
+      "acceptance": [
+        "Desde Estudios se puede: 1) crear ciudad con mapa de puntos integrado y guardar JSON, 2) persistir en Mongo y mostrarla en selector de estudio, 3) listar ciudades existentes, consultar detalle y borrar con modal de confirmacion."
+      ],
+      "notes": [],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-16T10:26:19Z",
+          "action": "created"
+        }
+      ],
+      "updated_at": "2026-05-16T10:26:19Z"
+    },
+    {
+      "id": "G05",
+      "type": "feature",
+      "area": "geo/reporting",
+      "priority": "high",
+      "status": "done",
+      "title": "GeoGrid UULE + Heatmap y Fuentes Embebidas",
+      "description": "Implementar geogrid real por coordenadas (UULE) integrado en CRM/estudios y añadir embebido de fuentes (@font-face base64) en los informes HTML para fidelidad visual offline.",
+      "plan_ref": "",
+      "acceptance": [
+        "Existe runner GeoGrid con grid NxN configurable (centro/spacing/size), throttle y captura de rank por punto.",
+        "Cada run persiste resultados por nodo (lat/lon, rank, visible_top10) y métricas agregadas (visibility score, share top3/top10).",
+        "El informe incluye sección de visibilidad geográfica con heatmap HTML/SVG y conclusiones accionables.",
+        "El pipeline soporta modo DIY (Playwright+UULE) y deja preparado fallback por proveedor externo (feature-flag).",
+        "El scraping de branding detecta fuentes reales (heading/body), resuelve @font-face y embebe .woff/.woff2 en base64 en el CSS final.",
+        "Los informes renderizan tipografías custom sin depender de red externa (offline-safe)."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-17T17:46:25Z",
+          "text": "Ticket creado desde especificación funcional: geogrid por UULE (DIY barato) + sección de heatmap en informe + embebido de fuentes custom (@font-face base64) con soporte Google Fonts/woff2."
+        },
+        {
+          "created_at": "2026-05-17T18:10:17Z",
+          "text": "Cerrado: añadido modo UULE DIY con grid NxN configurable, métricas agregadas (visibility_score/share_top3/share_top10/share_not_found), sección de visibilidad geográfica en informe público y embebido local de fuentes Google Fonts en report_renderer mediante @font-face base64."
+        }
+      ],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-17T17:46:21Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-17T17:46:25Z",
+          "action": "note",
+          "text": "Ticket creado desde especificación funcional: geogrid por UULE (DIY barato) + sección de heatmap en informe + embebido de fuentes custom (@font-face base64) con soporte Google Fonts/woff2."
+        },
+        {
+          "created_at": "2026-05-17T18:10:17Z",
+          "action": "note",
+          "text": "Cerrado: añadido modo UULE DIY con grid NxN configurable, métricas agregadas (visibility_score/share_top3/share_top10/share_not_found), sección de visibilidad geográfica en informe público y embebido local de fuentes Google Fonts en report_renderer mediante @font-face base64."
+        },
+        {
+          "created_at": "2026-05-17T18:10:42Z",
+          "action": "status_changed",
+          "from_status": "ready",
+          "to_status": "done"
+        }
+      ],
+      "updated_at": "2026-05-17T18:10:42Z"
+    },
+    {
+      "id": "G06",
+      "type": "feature",
+      "area": "geo/backend",
+      "priority": "high",
+      "status": "ready",
+      "title": "GeoGrid UULE integrado en flujo GeoGrid",
+      "description": "Implementar ejecución de GeoGrid basada en UULE (lat/lon) dentro del flujo existente de GeoGrid en CRM: generación de nodos, búsqueda por punto, captura de ranking y persistencia por run/punto.",
+      "plan_ref": "",
+      "acceptance": [
+        "El job geo_grid_study soporta modo UULE por feature-flag y mantiene compatibilidad con el modo actual.",
+        "Se genera grid NxN configurable (size/spacing) a partir de centro de ciudad o puntos definidos y se recorre con throttle configurable.",
+        "Cada punto persiste: lat, lon, row, col, rank, visible_top10, provider_mode, timestamp y errores por nodo.",
+        "Se calculan métricas agregadas del run: visibility_score, share_top3, share_top10, share_not_found.",
+        "La API/CRM expone progreso real por nodos procesados sobre nodos totales en runs UULE.",
+        "Se añade cobertura de tests unitarios para generación de grid, UULE builder y mapeo de resultados."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-17T17:47:13Z",
+          "text": "Task creada desde especificación técnica de GeoGrid: usar parámetro UULE por coordenada para simular búsquedas geolocalizadas, capturar ranking por nodo y alimentar heatmap/estadísticas del estudio."
+        }
+      ],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-17T17:46:55Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-17T17:47:13Z",
+          "action": "note",
+          "text": "Task creada desde especificación técnica de GeoGrid: usar parámetro UULE por coordenada para simular búsquedas geolocalizadas, capturar ranking por nodo y alimentar heatmap/estadísticas del estudio."
+        }
+      ],
+      "updated_at": "2026-05-17T17:47:13Z"
+    },
+    {
+      "id": "V201",
+      "type": "technical",
+      "area": "frontend/platform",
+      "priority": "P0",
+      "status": "ready",
+      "title": "Setup del proyecto Next.js v2",
+      "description": "Crear base repiq-web con Next.js App Router, Tailwind, RHF, Zod, Framer Motion, estructura de carpetas y branding CSS global.",
+      "plan_ref": "docs/backlogs/plan_repiq_v2_embudo_landing_geogrid_crm.md#v201---setup-del-proyecto-nextjs",
+      "acceptance": [
+        "Proyecto repiq-web arranca en local y build pasa.",
+        "Estructura de carpetas base creada segun plan.",
+        "Layout global y variables CSS de branding listos."
+      ],
+      "notes": [],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-19T15:45:14Z",
+          "action": "created"
+        }
+      ],
+      "updated_at": "2026-05-19T15:45:14Z"
+    },
+    {
+      "id": "V202",
+      "type": "technical",
+      "area": "frontend/landing",
+      "priority": "P1",
+      "status": "ready",
+      "title": "Landing principal de conversion",
+      "description": "Implementar landing de una sola pagina con Hero, HowItWorks, WhatIncludes y FinalCTA, orientada a trafico movil desde WhatsApp.",
+      "plan_ref": "docs/backlogs/plan_repiq_v2_embudo_landing_geogrid_crm.md#v202---landing-principal-de-conversion",
+      "acceptance": [
+        "Landing completa funcional en movil.",
+        "CTA principal hace scroll al formulario.",
+        "Mensajes de valor del informe visibles y claros."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-19T18:01:00Z",
+          "text": "Elevada para MVP manual-first: landing y CTA son necesarias antes del formulario operativo."
+        }
+      ],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-19T15:45:14Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-19T18:01:00Z",
+          "action": "note",
+          "text": "Elevada para MVP manual-first: landing y CTA son necesarias antes del formulario operativo."
+        },
+        {
+          "created_at": "2026-05-19T18:01:00Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "ready"
+        }
+      ],
+      "updated_at": "2026-05-19T18:01:00Z"
+    },
+    {
+      "id": "V203",
+      "type": "technical",
+      "area": "frontend/forms-api",
+      "priority": "P1",
+      "status": "blocked",
+      "title": "Formulario de cualificacion (Form 1)",
+      "description": "Crear wizard de 5 pasos y API /api/form-pre para mover lead a FORM_1_DONE y disparar envio del informe grande.",
+      "plan_ref": "docs/backlogs/plan_repiq_v2_embudo_landing_geogrid_crm.md#v203---formulario-de-cualificacion-form-1",
+      "acceptance": [
+        "Wizard Form 1 completo con validacion Zod.",
+        "API form-pre crea/actualiza lead y etapa FORM_1_DONE.",
+        "Canal/contacto guardados y trigger de envio ejecutado."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-19T18:01:00Z",
+          "text": "Replan manual-first: esta tarea se divide para MVP en V213+V214+V215+V216. Reactivar tras validar conversion manual."
+        }
+      ],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-19T15:45:14Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-19T18:01:00Z",
+          "action": "note",
+          "text": "Replan manual-first: esta tarea se divide para MVP en V213+V214+V215+V216. Reactivar tras validar conversion manual."
+        },
+        {
+          "created_at": "2026-05-19T18:01:00Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "blocked"
+        }
+      ],
+      "updated_at": "2026-05-19T18:01:00Z"
+    },
+    {
+      "id": "V204",
+      "type": "technical",
+      "area": "frontend/forms-api",
+      "priority": "P1",
+      "status": "blocked",
+      "title": "Formulario post-informe (Form 2)",
+      "description": "Implementar /valoracion con ramas A/B/C y API /api/form-post para etiquetar lead y mover etapa a FORM_2_DONE.",
+      "plan_ref": "docs/backlogs/plan_repiq_v2_embudo_landing_geogrid_crm.md#v204---formulario-post-informe-form-2",
+      "acceptance": [
+        "Flujo condicional A/B/C operativo.",
+        "API form-post persiste respuestas, etiqueta y etapa FORM_2_DONE.",
+        "Notificacion a Javier enviada con etiqueta de lead."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-19T18:02:02Z",
+          "text": "Pospuesta a fase 2: formulario post-informe cuando exista envio estable y volumen suficiente."
+        },
+        {
+          "created_at": "2026-05-19T21:40:39Z",
+          "text": "Este bloque queda sustituido en manual-first por V222 para aterrizar /valoracion con persistencia real sin acoplar toda la automatizacion de fase 2."
+        },
+        {
+          "created_at": "2026-05-20T00:00:00Z",
+          "text": "Aclaracion de producto: el formulario se responde desde el enlace embebido en el lead report; no requiere envio manual separado."
+        }
+      ],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-19T15:45:14Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-19T18:02:02Z",
+          "action": "note",
+          "text": "Pospuesta a fase 2: formulario post-informe cuando exista envio estable y volumen suficiente."
+        },
+        {
+          "created_at": "2026-05-19T18:02:02Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "blocked"
+        },
+        {
+          "created_at": "2026-05-19T21:40:39Z",
+          "action": "note",
+          "text": "Este bloque queda sustituido en manual-first por V222 para aterrizar /valoracion con persistencia real sin acoplar toda la automatizacion de fase 2."
+        }
+      ],
+      "updated_at": "2026-05-19T21:40:39Z"
+    },
+    {
+      "id": "V205",
+      "type": "technical",
+      "area": "backend/reporting/geogrid",
+      "priority": "P1",
+      "status": "backlog",
+      "title": "GeoGrid en informe grande",
+      "description": "Anadir seccion de visibilidad geografica con heatmap, score e insight en el informe grande.",
+      "plan_ref": "docs/backlogs/plan_repiq_v2_embudo_landing_geogrid_crm.md#v205---geogrid-en-informe-grande",
+      "acceptance": [
+        "Informe final incluye seccion geogrid renderizada.",
+        "Se calculan metricas de visibilidad geogrid.",
+        "Insight sintetico orientado a accion incluido."
+      ],
+      "notes": [],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-19T15:45:14Z",
+          "action": "created"
+        }
+      ],
+      "updated_at": "2026-05-19T15:45:14Z"
+    },
+    {
+      "id": "V206",
+      "type": "technical",
+      "area": "backend/reporting",
+      "priority": "P1",
+      "status": "backlog",
+      "title": "Feature flag onboarding_form_url en informe",
+      "description": "Renderizar CTA al Form 2 en el informe grande solo cuando onboarding_form_url este activo.",
+      "plan_ref": "docs/backlogs/plan_repiq_v2_embudo_landing_geogrid_crm.md#v206---feature-flag-onboarding_form_url",
+      "acceptance": [
+        "CTA se muestra solo con flag activo.",
+        "CTA usa URL parametrizada con lead_id.",
+        "Sin flag, el bloque no se renderiza."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-20T00:00:00Z",
+          "text": "Dependencia funcional para V222: el CTA final del lead report debe enlazar al formulario de valoracion con identificador trazable."
+        }
+      ],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-19T15:45:14Z",
+          "action": "created"
+        }
+      ],
+      "updated_at": "2026-05-19T15:45:14Z"
+    },
+    {
+      "id": "V207",
+      "type": "technical",
+      "area": "backend/integrations",
+      "priority": "P1",
+      "status": "blocked",
+      "title": "Envio automatico del informe grande",
+      "description": "Orquestar envio automatico tras Form 1: trigger a API Python, entrega por canal y etapa FULL_REPORT_SENT.",
+      "plan_ref": "docs/backlogs/plan_repiq_v2_embudo_landing_geogrid_crm.md#v207---envio-automatico-informe-grande",
+      "acceptance": [
+        "Al completar Form 1 se dispara envio de informe grande.",
+        "Etapa FULL_REPORT_SENT se persiste automaticamente.",
+        "Fallos notifican a Javier con contexto suficiente."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-19T18:01:00Z",
+          "text": "Pospuesta a fase 2: envio automatico del informe grande tras validacion de proceso manual."
+        }
+      ],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-19T15:45:14Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-19T18:01:00Z",
+          "action": "note",
+          "text": "Pospuesta a fase 2: envio automatico del informe grande tras validacion de proceso manual."
+        },
+        {
+          "created_at": "2026-05-19T18:01:00Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "blocked"
+        }
+      ],
+      "updated_at": "2026-05-19T18:01:00Z"
+    },
+    {
+      "id": "V208",
+      "type": "technical",
+      "area": "frontend/ui",
+      "priority": "P0",
+      "status": "ready",
+      "title": "Componente OptionCard reusable",
+      "description": "Crear OptionCard para seleccion unica/multiple y reutilizarlo en Form 1 y Form 2.",
+      "plan_ref": "docs/backlogs/plan_repiq_v2_embudo_landing_geogrid_crm.md#v208---componente-optioncard-reusable",
+      "acceptance": [
+        "OptionCard soporta modos single y multi.",
+        "Estados visuales normal/hover/selected aplicados.",
+        "Reutilizado por ambos formularios."
+      ],
+      "notes": [],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-19T15:45:14Z",
+          "action": "created"
+        }
+      ],
+      "updated_at": "2026-05-19T15:45:14Z"
+    },
+    {
+      "id": "V209",
+      "type": "technical",
+      "area": "frontend/backend/crm",
+      "priority": "P1",
+      "status": "backlog",
+      "title": "CRM de estados en /admin (kanban)",
+      "description": "Crear panel kanban por etapas del embudo con acciones manuales de stage/label/notas/lost reason y APIs de soporte.",
+      "plan_ref": "docs/backlogs/plan_repiq_v2_embudo_landing_geogrid_crm.md#v209---crm-de-estados-en-admin-kanban",
+      "acceptance": [
+        "Kanban muestra leads por etapa con datos clave.",
+        "Se puede actualizar etapa/label/notes/lost reason.",
+        "APIs create/update/list operativas y trazables."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-19T18:01:00Z",
+          "text": "Replan manual-first: el alcance inmediato se separa en V217 (import desde correo) y V218 (alta manual + etapas funnel)."
+        }
+      ],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-19T15:45:14Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-19T18:01:00Z",
+          "action": "note",
+          "text": "Replan manual-first: el alcance inmediato se separa en V217 (import desde correo) y V218 (alta manual + etapas funnel)."
+        }
+      ],
+      "updated_at": "2026-05-19T18:01:00Z"
+    },
+    {
+      "id": "V210",
+      "type": "technical",
+      "area": "backend/notifications",
+      "priority": "P0",
+      "status": "ready",
+      "title": "Sistema de notificaciones centralizado (notify.ts)",
+      "description": "Centralizar notificaciones de cambios de etapa y formularios usando Resend y tipos compartidos de LeadStage/LeadLabel.",
+      "plan_ref": "docs/backlogs/plan_repiq_v2_embudo_landing_geogrid_crm.md#v210---sistema-de-notificaciones-centralizado-notifyts",
+      "acceptance": [
+        "Funcion notifyStageChange tipada y reutilizable.",
+        "Notificaciones enviadas desde eventos clave del embudo.",
+        "Desacoplado de rutas API (sin logica duplicada)."
+      ],
+      "notes": [],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-19T15:45:14Z",
+          "action": "created"
+        }
+      ],
+      "updated_at": "2026-05-19T15:45:14Z"
+    },
+    {
+      "id": "V211",
+      "type": "technical",
+      "area": "platform/infra/security",
+      "priority": "P0",
+      "status": "backlog",
+      "title": "Infra hibrida segura con Supabase Queue (Vercel + worker local en PC)",
+      "description": "Implementar arquitectura hibrida donde la landing en Vercel persiste solicitudes y jobs en Supabase (cola/intermedio), y el worker en PC local procesa por pull sin puertos entrantes. Debe cubrir flujo unico landing+manual, estados/reintentos, consentimiento legal, trazabilidad de eventos, artefactos con hash/URL firmada y runbooks de operacion segura.",
+      "plan_ref": "docs/backlogs/plan_repiq_v2_embudo_landing_geogrid_crm.md#v211---infra-hibrida-segura-vps-control-plane--pc-worker-local",
+      "acceptance": [
+        "POST de formulario en landing guarda intake en Supabase y encola job (sin depender de API localhost).",
+        "Jobs manuales del CRM/panel entran en la misma cola Supabase (pipeline unico).",
+        "Worker local consume en modo pull con claim atomico y leases: pending->claimed->running->uploading->completed.",
+        "Existen estados retry_wait/failed/dead_letter con reintentos, backoff y requeue de stale leases.",
+        "Progreso y eventos del job quedan auditados en Supabase (job_events) y visibles en CRM.",
+        "Si el PC esta apagado, las solicitudes permanecen pending y se procesan al volver online (resume real).",
+        "Consentimiento legal y version se persisten por solicitud/lead antes de cualquier contacto outbound.",
+        "Artefactos (PDF/HTML/JSON) se indexan con hash SHA256 y se sirven por URL firmada con expiracion.",
+        "Secrets y canales M2M hardenizados (service role, rotacion, minimo privilegio, sin puertos entrantes).",
+        "Prueba E2E validada para dos entradas: (1) landing, (2) job manual, ambas en el mismo flujo de cola."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-19T17:11:04Z",
+          "text": "Documento tecnico creado: docs/backlogs/v211_infra_hibrida_vps_worker_local.md con arquitectura, flujos landing/manual, seguridad M2M, consentimiento legal, storage y runbooks."
+        },
+        {
+          "created_at": "2026-05-20T00:00:00Z",
+          "text": "Ticket V211 ajustado a implementacion concreta con Supabase Queue. Documento tecnico reescrito en docs/backlogs/v211_infra_hibrida_vps_worker_local.md con flujo E2E, schema/RPC, estados de cola, worker pull y DoD."
+        }
+      ],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-19T17:10:01Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-19T17:11:04Z",
+          "action": "note",
+          "text": "Documento tecnico creado: docs/backlogs/v211_infra_hibrida_vps_worker_local.md con arquitectura, flujos landing/manual, seguridad M2M, consentimiento legal, storage y runbooks."
+        },
+        {
+          "created_at": "2026-05-20T00:00:00Z",
+          "action": "note",
+          "text": "Ticket V211 ajustado a implementacion concreta con Supabase Queue. Documento tecnico reescrito en docs/backlogs/v211_infra_hibrida_vps_worker_local.md con flujo E2E, schema/RPC, estados de cola, worker pull y DoD."
+        }
+      ],
+      "updated_at": "2026-05-20T00:00:00Z"
+    },
+    {
+      "id": "V212",
+      "type": "epic",
+      "area": "product/funnel",
+      "priority": "P0",
+      "status": "in_progress",
+      "title": "EPICA: Manual Funnel V1 (formulario -> email -> CRM manual)",
+      "description": "Coordinar la implementacion secuencial del flujo manual-first: captacion legal, antispam, envio server-side a correo, importacion de lead a CRM y gestion de etapas (incluye leads de prospeccion en frio).",
+      "plan_ref": "docs/backlogs/epic_manual_funnel_v1.md",
+      "acceptance": [
+        "Existe orden de ejecucion definido y aplicado para tareas V213..V220.",
+        "Se validan ambos casos: lead por formulario y lead por prospeccion en frio.",
+        "Se documenta checklist de cuentas/claves/despliegue y criterios de salida."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-19T18:14:00Z",
+          "text": "Implementado bloque manual-first en landing: legal+formulario completo+email server-side+rate limit+Turnstile+CRM manual (import/create/update etapa)."
+        },
+        {
+          "created_at": "2026-05-19T21:40:39Z",
+          "text": "Pendientes añadidos en epica: V221 (persistencia automatica de form-pre en BD) y V222 (formulario final /valoracion con guardado real)."
+        }
+      ],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-19T18:00:05Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-19T18:14:00Z",
+          "action": "status_changed",
+          "from_status": "ready",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-19T18:14:00Z",
+          "action": "note",
+          "text": "Implementado bloque manual-first en landing: legal+formulario completo+email server-side+rate limit+Turnstile+CRM manual (import/create/update etapa)."
+        },
+        {
+          "created_at": "2026-05-19T21:40:39Z",
+          "action": "note",
+          "text": "Pendientes añadidos en epica: V221 (persistencia automatica de form-pre en BD) y V222 (formulario final /valoracion con guardado real)."
+        }
+      ],
+      "updated_at": "2026-05-19T21:40:39Z"
+    },
+    {
+      "id": "V213",
+      "type": "technical",
+      "area": "frontend/legal/backend",
+      "priority": "P0",
+      "status": "review",
+      "title": "Legal y consentimiento en landing/formulario",
+      "description": "Implementar Terminos, Politica de Privacidad y consentimiento explicito en formulario (checkbox no premarcado), registrando version legal aceptada, timestamp y canal autorizado para contacto (WhatsApp/email).",
+      "plan_ref": "docs/backlogs/epic_manual_funnel_v1.md",
+      "acceptance": [
+        "Landing muestra enlaces visibles a Terminos y Privacidad.",
+        "Formulario exige checkbox de consentimiento legal para enviar.",
+        "Backend persiste version legal + timestamp + canal autorizado por lead.",
+        "Sin consentimiento valido no se procesa envio ni notificacion."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-19T18:14:26Z",
+          "text": "Implementadas paginas /legal/privacidad y /legal/terminos; formulario exige consentimiento contacto+privacidad+terminos y version legal en payload."
+        }
+      ],
+      "tests": [
+        "cd /home/javier/Documentos/proyectos/aprender/repiq/landing && npm run lint && npm run build"
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-19T18:00:10Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-19T18:14:00Z",
+          "action": "status_changed",
+          "from_status": "ready",
+          "to_status": "review"
+        },
+        {
+          "created_at": "2026-05-19T18:14:26Z",
+          "action": "note",
+          "text": "Implementadas paginas /legal/privacidad y /legal/terminos; formulario exige consentimiento contacto+privacidad+terminos y version legal en payload."
+        }
+      ],
+      "updated_at": "2026-05-19T18:14:26Z"
+    },
+    {
+      "id": "V214",
+      "type": "technical",
+      "area": "frontend/forms-api",
+      "priority": "P0",
+      "status": "done",
+      "title": "Formulario completo de captacion (contacto + origen + datos operativos)",
+      "description": "Crear formulario V1 completo para captacion manual: negocio, contacto, telefono/email, canal preferido de envio, ciudad/zona, origen del lead y observaciones. Debe validar server-side con Zod y normalizar datos para CRM.",
+      "plan_ref": "docs/backlogs/epic_manual_funnel_v1.md",
+      "acceptance": [
+        "El formulario recoge telefono o email obligatorio segun canal.",
+        "Se guarda origen del lead (landing/linkedin/seo/cold/otro).",
+        "Validacion server-side evita payloads incompletos o inconsistentes.",
+        "Respuesta al usuario confirma recepcion del estudio en revision manual."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-19T18:14:26Z",
+          "text": "Formulario ampliado con negocio/contacto/telefono/email/ciudad/origen/mensaje y validacion server-side condicional por canal de entrega."
+        }
+      ],
+      "tests": [
+        "cd /home/javier/Documentos/proyectos/aprender/repiq/landing && npm run lint && npm run build"
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-19T18:00:16Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-19T18:14:00Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "done"
+        },
+        {
+          "created_at": "2026-05-19T18:14:26Z",
+          "action": "note",
+          "text": "Formulario ampliado con negocio/contacto/telefono/email/ciudad/origen/mensaje y validacion server-side condicional por canal de entrega."
+        }
+      ],
+      "updated_at": "2026-05-19T18:14:26Z"
+    },
+    {
+      "id": "V215",
+      "type": "technical",
+      "area": "backend/notifications",
+      "priority": "P0",
+      "status": "done",
+      "title": "Notificacion server-side por correo con payload importable",
+      "description": "Enviar correo operativo a Javier al recibir formulario con resumen legible + bloque estructurado (JSON compacto) para copiar/pegar en CRM y crear lead rapidamente.",
+      "plan_ref": "docs/backlogs/epic_manual_funnel_v1.md",
+      "acceptance": [
+        "Cada envio genera email server-side con datos clave y consentimiento.",
+        "El correo incluye bloque payload estable para importacion en CRM.",
+        "Se registran errores de envio y reintentos basicos.",
+        "No se exponen claves SMTP/API en cliente."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-19T21:40:39Z",
+          "text": "Estado actual: envio server-side por correo implementado; persistencia automatica de submit en BD queda en V221."
+        }
+      ],
+      "tests": [
+        "cd /home/javier/Documentos/proyectos/aprender/repiq/landing && npm run lint && npm run build"
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-19T18:00:22Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-19T18:14:00Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "done"
+        },
+        {
+          "created_at": "2026-05-19T21:40:39Z",
+          "action": "note",
+          "text": "Estado actual: envio server-side por correo implementado; persistencia automatica de submit en BD queda en V221."
+        }
+      ],
+      "updated_at": "2026-05-19T21:40:39Z"
+    },
+    {
+      "id": "V216",
+      "type": "technical",
+      "area": "security/api",
+      "priority": "P0",
+      "status": "done",
+      "title": "Proteccion antiabuso: rate limiting + Turnstile",
+      "description": "Proteger endpoint de formulario con rate limiting por IP/UA/origen y verificacion Cloudflare Turnstile server-side para evitar spam/bots y picos de coste.",
+      "plan_ref": "docs/backlogs/epic_manual_funnel_v1.md",
+      "acceptance": [
+        "Rate limiting activo con respuestas 429 y ventana configurable.",
+        "Turnstile validado server-side antes de aceptar formulario.",
+        "Eventos de bloqueo se registran para observabilidad.",
+        "Existe modo fallback controlado para entorno local/dev."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-19T18:14:26Z",
+          "text": "Proteccion antiabuso activa: honeypot + rate limiting en memoria + verificacion Turnstile server-side opcional por env."
+        }
+      ],
+      "tests": [
+        "cd /home/javier/Documentos/proyectos/aprender/repiq/landing && npm run lint && npm run build"
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-19T18:00:27Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-19T18:14:00Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "done"
+        },
+        {
+          "created_at": "2026-05-19T18:14:26Z",
+          "action": "note",
+          "text": "Proteccion antiabuso activa: honeypot + rate limiting en memoria + verificacion Turnstile server-side opcional por env."
+        }
+      ],
+      "updated_at": "2026-05-19T18:14:26Z"
+    },
+    {
+      "id": "V217",
+      "type": "technical",
+      "area": "frontend/backend/crm",
+      "priority": "P0",
+      "status": "done",
+      "title": "CRM import rapido desde correo (paste payload)",
+      "description": "Anadir en CRM un formulario de alta rapida que acepte pegar payload estructurado del correo (JSON) y cree lead automaticamente con mapeo validado de campos.",
+      "plan_ref": "docs/backlogs/epic_manual_funnel_v1.md",
+      "acceptance": [
+        "Existe campo/textarea para pegar payload y previsualizar parseo.",
+        "Creacion de lead completa en 1 accion tras validacion.",
+        "Errores de parseo muestran feedback claro y no rompen UI.",
+        "Se guarda marca de origen='formulario_email_import'."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-19T18:14:26Z",
+          "text": "Pagina /crm en landing permite pegar payload JSON del email, parsear y crear lead en backend con un clic."
+        }
+      ],
+      "tests": [
+        "cd /home/javier/Documentos/proyectos/aprender/repiq/landing && npm run lint && npm run build; cd /home/javier/Documentos/proyectos/aprender/review-llm && PYTHONPATH=. .venv-uv/bin/pytest tests/unit/test_crm_contracts.py -q"
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-19T18:00:32Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-19T18:14:00Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "done"
+        },
+        {
+          "created_at": "2026-05-19T18:14:26Z",
+          "action": "note",
+          "text": "Pagina /crm en landing permite pegar payload JSON del email, parsear y crear lead en backend con un clic."
+        }
+      ],
+      "updated_at": "2026-05-19T18:14:26Z"
+    },
+    {
+      "id": "V218",
+      "type": "technical",
+      "area": "frontend/backend/crm",
+      "priority": "P0",
+      "status": "done",
+      "title": "CRM manual: alta de lead en frio + seleccion de etapa funnel",
+      "description": "Implementar en CRM la alta manual de lead (sin formulario web) para prospeccion en frio por telefono/WhatsApp, permitiendo elegir etapa inicial del funnel, canal y notas.",
+      "plan_ref": "docs/backlogs/epic_manual_funnel_v1.md",
+      "acceptance": [
+        "Se puede crear lead manual desde CRM con campos minimos.",
+        "Se puede elegir y editar etapa del funnel en cualquier momento.",
+        "Se registran cambios de etapa con timestamp y nota opcional.",
+        "Listado de leads permite filtrar por etapa y origen."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-19T18:14:26Z",
+          "text": "Backend review-llm expone POST /crm/leads para alta manual; landing /crm permite listar leads y actualizar etapa via PATCH /crm/leads/{id}."
+        }
+      ],
+      "tests": [
+        "cd /home/javier/Documentos/proyectos/aprender/repiq/landing && npm run lint && npm run build; cd /home/javier/Documentos/proyectos/aprender/review-llm && PYTHONPATH=. .venv-uv/bin/pytest tests/unit/test_crm_contracts.py -q"
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-19T18:00:37Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-19T18:14:00Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "done"
+        },
+        {
+          "created_at": "2026-05-19T18:14:26Z",
+          "action": "note",
+          "text": "Backend review-llm expone POST /crm/leads para alta manual; landing /crm permite listar leads y actualizar etapa via PATCH /crm/leads/{id}."
+        }
+      ],
+      "updated_at": "2026-05-19T18:14:26Z"
+    },
+    {
+      "id": "V219",
+      "type": "technical",
+      "area": "ops/deploy",
+      "priority": "P0",
+      "status": "backlog",
+      "title": "Checklist de despliegue y claves (Vercel, dominio, email, turnstile)",
+      "description": "Crear checklist operativa de puesta en produccion para el flujo manual V1: cuentas, DNS, variables entorno, secretos, pruebas de humo y runbook de incidencias basicas.",
+      "plan_ref": "docs/backlogs/epic_manual_funnel_v1.md",
+      "acceptance": [
+        "Documento unico con todas las claves/cuentas necesarias y quien las aporta.",
+        "Incluye pasos de DNS y despliegue en Vercel.",
+        "Incluye validacion de envio email real y turnstile real.",
+        "Incluye runbook corto ante fallo de formulario o correo."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-19T18:01:21Z",
+          "text": "Checklist base creada en docs/ops/manual_funnel_launch_checklist.md para cuentas/claves/legal/despliegue y pruebas de humo."
+        },
+        {
+          "created_at": "2026-05-19T18:14:00Z",
+          "text": "Checklist inicial ya creada en docs/ops/manual_funnel_launch_checklist.md; pendiente completar con claves reales y smoke en prod."
+        }
+      ],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-19T18:00:42Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-19T18:01:21Z",
+          "action": "note",
+          "text": "Checklist base creada en docs/ops/manual_funnel_launch_checklist.md para cuentas/claves/legal/despliegue y pruebas de humo."
+        },
+        {
+          "created_at": "2026-05-19T18:14:00Z",
+          "action": "note",
+          "text": "Checklist inicial ya creada en docs/ops/manual_funnel_launch_checklist.md; pendiente completar con claves reales y smoke en prod."
+        }
+      ],
+      "updated_at": "2026-05-19T18:14:00Z"
+    },
+    {
+      "id": "V220",
+      "type": "editorial",
+      "area": "editorial/funnel",
+      "priority": "P1",
+      "status": "in_progress",
+      "title": "Editorial y CTAs alineados al flujo manual",
+      "description": "Alinear copys de landing, LinkedIn y pagina SEO al flujo manual-first (respuesta por email/WhatsApp tras revision), con UTMs y expectativas de tiempo de entrega realistas.",
+      "plan_ref": "docs/backlogs/epic_manual_funnel_v1.md",
+      "acceptance": [
+        "Landing y copies no prometen automatizaciones aun no activas.",
+        "CTA y mensaje post-formulario reflejan proceso manual real.",
+        "UTMs y origenes mapean correctamente al campo source del formulario."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-21T05:36:12Z",
+          "text": "Creado pack editorial LinkedIn manual-first en docs/editorial/v220_linkedin_posts_manual_first.md con 3 copies listos (incluye post de bienvenida y post de por que a veces no funciona un negocio), UTMs y CTA alineados al flujo real."
+        },
+        {
+          "created_at": "2026-05-21T17:11:39Z",
+          "text": "Actualizado copy de bienvenida a tono mas humano y link limpio; añadida medicion GA4 en landing para UTMs + evento form_pre_submitted."
+        }
+      ],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-19T18:00:46Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-21T05:36:12Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-21T05:36:12Z",
+          "action": "note",
+          "text": "Entregado pack inicial de LinkedIn para ejecucion manual."
+        },
+        {
+          "created_at": "2026-05-21T17:11:39Z",
+          "action": "note",
+          "text": "Integrada medicion GA4 y actualizado copy editorial de bienvenida para publicacion."
+        },
+        {
+          "created_at": "2026-05-21T17:13:26Z",
+          "action": "note",
+          "text": "Añadidos enlaces cortos con UTM para publicacion en LinkedIn sin URLs largas visibles."
+        }
+      ],
+      "updated_at": "2026-05-21T17:13:26Z"
+    },
+    {
+      "id": "V221",
+      "type": "technical",
+      "area": "backend/forms-api/crm",
+      "priority": "P0",
+      "status": "done",
+      "title": "Persistencia automatica en BD desde form-pre",
+      "description": "Extender /api/form-pre para que, ademas del envio por correo, cree automaticamente un registro persistente en BD (lead o report_request) con consentimiento, origen y canal; si falla correo, el dato no se pierde.",
+      "plan_ref": "docs/backlogs/epic_manual_funnel_v1.md",
+      "acceptance": [
+        "Cada submit valido del formulario queda persistido en BD con id trazable.",
+        "Persistencia ocurre antes o independientemente del envio de correo (sin perdida de datos por fallo email).",
+        "El registro guarda consentimiento (version, timestamp, canal autorizado), source y UTM.",
+        "La respuesta del endpoint devuelve identificador de registro para auditoria.",
+        "Errores de persistencia/correo quedan logueados con contexto sin exponer PII sensible."
+      ],
+      "notes": [],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-19T21:40:15Z",
+          "action": "created"
+        }
+      ],
+      "updated_at": "2026-05-20T10:30:00Z"
+    },
+    {
+      "id": "V222",
+      "type": "technical",
+      "area": "frontend/forms-api/crm",
+      "priority": "P1",
+      "status": "done",
+      "title": "Formulario final del reporte (/valoracion) con persistencia real",
+      "description": "Implementar formulario final enlazado dentro del lead report (CTA) mediante URL con identificador de lead o report_request; al responder, guardar automaticamente en BD y reflejar etapa/etiqueta en CRM sin envio manual adicional.",
+      "plan_ref": "docs/backlogs/epic_manual_funnel_v1.md",
+      "acceptance": [
+        "El lead report incluye enlace funcional al formulario final (/valoracion) con identificador trazable (lead_id o report_request_id).",
+        "El formulario identifica correctamente el origen del reporte y valida firma/token de enlace si aplica.",
+        "Al enviar el formulario, la respuesta queda persistida en BD con timestamp y branch de respuesta.",
+        "La respuesta actualiza CRM (estado/etiqueta) y queda auditada en eventos.",
+        "Si falta identificador valido, la UI muestra error controlado y no guarda datos huerfanos."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-20T07:42:26Z",
+          "text": "Requisito aclarado: respuesta del formulario final viene desde enlace embebido en el lead report y se persiste automaticamente en BD."
+        }
+      ],
+      "tests": [],
+      "history": [
+        {
+          "created_at": "2026-05-19T21:40:22Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-20T07:42:26Z",
+          "action": "note",
+          "text": "Requisito aclarado: respuesta del formulario final viene desde enlace embebido en el lead report y se persiste automaticamente en BD."
+        }
+      ],
+      "updated_at": "2026-05-20T10:30:00Z"
+    },
+    {
+      "id": "V223",
+      "type": "editorial",
+      "area": "seo/content",
+      "priority": "P1",
+      "status": "done",
+      "title": "Optimizacion SEO basada en audio de Reo + guia oficial Google AI Search",
+      "description": "Analizar la transcripcion en docs/seo/video seo google.txt y la guia oficial de Google Search sobre AI optimization para definir e implementar ajustes SEO en landing/editorial: cobertura tematica, estructura semantica, frescura, entidades y plan de distribucion externa.",
+      "plan_ref": "docs/backlogs/epic_manual_funnel_v1.md",
+      "acceptance": [
+        "Se entrega documento de recomendaciones accionables SEO/AI Search con prioridades P0-P2.",
+        "Incluye checklist tecnico on-page para landing (indexabilidad, jerarquia H1-H3, extractabilidad de respuestas, enlazado interno).",
+        "Incluye plan editorial de contenidos unicos con experiencia propia y cobertura lateral (query fanout).",
+        "Incluye plan de distribucion de menciones externas (LinkedIn, comunidades, directorios/medios segun sector).",
+        "Se actualizan copys/estructura de landing y piezas editoriales prioritarias en funcion del analisis."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-20T11:00:00Z",
+          "text": "Fuente de analisis obligatoria: docs/seo/video seo google.txt (audio transcrito) + guia oficial Google Search AI optimization."
+        },
+        {
+          "created_at": "2026-05-20T18:45:16Z",
+          "text": "Implementado: documento SEO/AI Search con P0-P2 en docs/seo/v223_google_ai_search_optimization.md + mejoras en landing (FAQ extractable, JSON-LD, copys), /insights indexable y sitemap ampliado."
+        }
+      ],
+      "tests": [
+        "Validacion manual de checklist SEO completada.",
+        "Revisión de metadatos y estructura HTML en landing.",
+        "Verificacion de consistencia de mensajes SEO en editorial y CTAs."
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-20T11:00:00Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-20T18:45:16Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "done"
+        },
+        {
+          "created_at": "2026-05-20T18:45:16Z",
+          "action": "note",
+          "text": "Ticket ejecutado en código y documentación SEO/AI Search."
+        }
+      ],
+      "updated_at": "2026-05-20T18:45:16Z"
+    },
+    {
+      "id": "V224",
+      "type": "technical",
+      "area": "frontend/backend-integration",
+      "priority": "P0",
+      "status": "done",
+      "title": "URGENTE Web: form-pre/form-post por Supabase Queue (sin CRM API publica)",
+      "description": "Desacoplar la landing de CRM_API_BASE_URL para formularios publicos. /api/form-pre y /api/form-post deben persistir en Supabase (tablas de intake/feedback) y encolar jobs en job_queue, manteniendo correo operativo y antiabuso.",
+      "plan_ref": "docs/backlogs/v211_infra_hibrida_vps_worker_local.md",
+      "acceptance": [
+        "El submit de /api/form-pre no depende de CRM API publica.",
+        "La solicitud se guarda en intake_requests y crea job pending en job_queue.",
+        "El submit de /api/form-post guarda feedback y encola job de feedback.",
+        "El email operativo incluye request_id y queue_job_id para trazabilidad.",
+        "Existe SQL de esquema Supabase para tablas de intake/queue/feedback/eventos.",
+        "Build/lint de landing en verde."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-20T12:30:00Z",
+          "text": "Ticket urgente creado por bloqueo de despliegue: Vercel no puede llamar a API localhost."
+        },
+        {
+          "created_at": "2026-05-20T12:45:00Z",
+          "text": "Implementado en landing: form-pre/form-post persisten en Supabase y encolan en job_queue; correo operativo ahora incluye request_id/queue_job_id; agregado SQL supabase/001_queue_schema.sql."
+        }
+      ],
+      "tests": [
+        "cd /home/javier/Documentos/proyectos/aprender/repiq/landing && npm run lint && npm run build"
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-20T12:30:00Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-20T12:30:00Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "in_progress"
+        },
+        {
+          "created_at": "2026-05-20T12:45:00Z",
+          "action": "status_changed",
+          "from_status": "in_progress",
+          "to_status": "done"
+        }
+      ],
+      "updated_at": "2026-05-20T12:45:00Z"
+    },
+    {
+      "id": "V225",
+      "type": "technical",
+      "area": "crm/worker",
+      "priority": "P0",
+      "status": "done",
+      "title": "URGENTE CRM: worker local pull de Supabase + sync a CRM local",
+      "description": "Implementar worker local que consuma job_queue de Supabase en modo pull (claim atomico, heartbeat, retries, dead_letter), procese intake/feedback y sincronice resultados/etapas en CRM local sin puertos entrantes.",
+      "plan_ref": "docs/backlogs/v211_infra_hibrida_vps_worker_local.md",
+      "acceptance": [
+        "Worker local hace poll/claim de job_queue y marca estados correctamente.",
+        "Procesa jobs lead_intake y report_feedback con idempotencia.",
+        "Sincroniza resultado a CRM local y actualiza status processed/error en Supabase.",
+        "Requeue de jobs stale y manejo retry_wait/dead_letter.",
+        "Servicio arrancable con systemd y runbook de recovery basico."
+      ],
+      "notes": [
+        {
+          "created_at": "2026-05-20T12:30:00Z",
+          "text": "Ticket urgente de continuidad tras V224: cerrar circuito operativo sin exponer API publica."
+        },
+        {
+          "created_at": "2026-05-20T11:25:38Z",
+          "text": "Implementado worker local Supabase: pull auto 15m, trigger manual por worker_control, heartbeat en worker_runtime, procesado lead_intake/report_feedback/manual_pipeline_launch."
+        }
+      ],
+      "tests": [
+        "PYTHONPATH=. .venv-uv/bin/pytest tests/unit/test_crm_contracts.py -q",
+        "Prueba manual E2E: enqueue web -> pull local -> sync CRM"
+      ],
+      "history": [
+        {
+          "created_at": "2026-05-20T12:30:00Z",
+          "action": "created"
+        },
+        {
+          "created_at": "2026-05-20T12:45:00Z",
+          "action": "status_changed",
+          "from_status": "backlog",
+          "to_status": "ready"
+        },
+        {
+          "created_at": "2026-05-20T11:25:38Z",
+          "action": "status_changed",
+          "from_status": "ready",
+          "to_status": "done"
+        },
+        {
+          "created_at": "2026-05-20T11:25:38Z",
+          "action": "note",
+          "text": "Implementado worker local Supabase: pull auto 15m, trigger manual por worker_control, heartbeat en worker_runtime, procesado lead_intake/report_feedback/manual_pipeline_launch."
+        }
+      ],
+      "updated_at": "2026-05-20T11:25:38Z"
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-export type MenuKey = "analysis" | "jobs" | "business" | "crm" | "api";
+export type MenuKey = "analysis" | "jobs" | "business" | "crm" | "studies" | "api";
 
 export type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
 
@@ -58,6 +58,13 @@ export interface AnalyzeJobItem {
   status: string;
   queue_name?: string;
   job_type?: string;
+  source?: string;
+  runtime_target?: string;
+  execution_mode?: "automatic" | "live" | string;
+  requested_by?: string;
+  fallback_policy?: string;
+  human_session_id?: string | null;
+  source_display_name?: string | null;
   attempts?: number;
   name?: string;
   name_normalized?: string;
@@ -135,4 +142,124 @@ export interface CRMCampaignItem {
   launched_at?: string | null;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface GeoPointItem {
+  order: number;
+  label: string;
+  lat: number;
+  lng: number;
+}
+
+export interface GeoCityItem {
+  geo_city_id: string;
+  city: string;
+  city_slug: string;
+  center: { lat: number; lng: number };
+  points: GeoPointItem[];
+  point_count: number;
+  enabled?: boolean;
+}
+
+export interface GeoGridRunItem {
+  geo_grid_run_id: string;
+  keyword: string;
+  city: string;
+  city_slug: string;
+  center?: { lat: number; lng: number };
+  provider_mode?: "maps_live" | "uule" | string;
+  grid_size?: number | null;
+  grid_spacing_km?: number | null;
+  uule_radius_m?: number | null;
+  throttle_ms?: number | null;
+  top_n: number;
+  point_count: number;
+  total_units: number;
+  completed_units: number;
+  completed_points: number;
+  status: string;
+  metrics?: Record<string, unknown>;
+  job_id?: string | null;
+  failure_reason?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+}
+
+export interface GeoGridResultItem {
+  geo_grid_result_id: string;
+  geo_grid_run_id: string;
+  city_slug: string;
+  keyword: string;
+  point_order: number;
+  point_label: string;
+  grid_row?: number | null;
+  grid_col?: number | null;
+  lat: number;
+  lng: number;
+  rank: number;
+  visible_top10?: boolean;
+  provider_mode?: string | null;
+  business_key: string;
+  business_name: string;
+  maps_url?: string | null;
+  rating?: number | null;
+  review_count?: number | null;
+}
+
+export interface GeoGridBusinessStats {
+  business_key: string;
+  business_name: string;
+  maps_url?: string | null;
+  rating?: number | null;
+  review_count?: number | null;
+  appearances: number;
+  coverage_percent: number;
+  missing_points: number;
+  avg_rank?: number | null;
+  best_rank?: number | null;
+  worst_rank?: number | null;
+  rank_stddev: number;
+  top_1_count: number;
+  top_3_count: number;
+  top_5_count: number;
+  top_10_count: number;
+  top_20_count: number;
+  points: Array<{ point_order: number; point_label?: string; lat: number; lng: number; rank: number }>;
+}
+
+export interface GeoGridPointStats {
+  point_order: number;
+  point_label?: string;
+  grid_row?: number | null;
+  grid_col?: number | null;
+  lat: number;
+  lng: number;
+  top_results: Array<{
+    rank: number;
+    business_key: string;
+    business_name: string;
+    rating?: number | null;
+    review_count?: number | null;
+    maps_url?: string | null;
+  }>;
+}
+
+export interface GeoGridStatsResponse {
+  geo_grid_run_id: string;
+  summary: Record<string, unknown> & {
+    provider_mode?: string;
+    visibility_score?: number | null;
+    share_top3?: number | null;
+    share_top10?: number | null;
+    share_not_found?: number | null;
+  };
+  businesses: GeoGridBusinessStats[];
+  leaders: GeoGridBusinessStats[];
+  weakest: GeoGridBusinessStats[];
+  most_consistent: GeoGridBusinessStats[];
+  most_dispersed: GeoGridBusinessStats[];
+  points: GeoGridPointStats[];
+  run_metrics?: Record<string, unknown>;
 }

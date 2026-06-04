@@ -9,6 +9,16 @@ from bson.errors import InvalidId
 from pymongo import ReturnDocument
 
 from src.database import get_database
+from src.job_runtime.browser_job_contracts import (
+    DEFAULT_BROWSER_FALLBACK_POLICY,
+    DEFAULT_BROWSER_EXECUTION_MODE,
+    DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
+    default_fallback_policy_for_runtime,
+    default_runtime_target_for_job,
+    default_source_display_name,
+    infer_browser_source,
+    normalize_browser_source,
+)
 from src.services.pagination import build_pagination_payload, coerce_pagination
 from src.workers.contracts import (
     AnalysisJobStatus,
@@ -18,6 +28,7 @@ from src.workers.contracts import (
     CRMCampaignDispatchTaskPayload,
     CRMLeadDiscoveryTaskPayload,
     CRMLeadPipelineTaskPayload,
+    GeoGridStudyTaskPayload,
     JobType,
     JobQueueName,
     ReportGenerateTaskPayload,
@@ -90,6 +101,13 @@ class AnalysisJobService:
         queue_name: JobQueueName = "scrape",
         job_type: JobType = "business_analyze",
         payload_override: dict[str, Any] | None = None,
+        source: str | None = None,
+        runtime_target: str | None = None,
+        execution_mode: str | None = None,
+        requested_by: str | None = None,
+        fallback_policy: str | None = None,
+        human_session_id: str | None = None,
+        source_display_name: str | None = None,
     ) -> dict[str, Any]:
         envelope = build_worker_job_envelope(
             queue_name=queue_name,
@@ -141,11 +159,79 @@ class AnalysisJobService:
         payload_tripadvisor_pages_percent = (
             payload_data.get("tripadvisor_pages_percent") if isinstance(payload_data, dict) else None
         )
+        resolved_source = normalize_browser_source(source)
+        if resolved_source is None:
+            resolved_source = infer_browser_source(
+                queue_name=envelope.queue_name,
+                payload=payload_data if isinstance(payload_data, dict) else None,
+                explicit_source=payload_data.get("source") if isinstance(payload_data, dict) else None,
+            )
+        resolved_runtime_target = (
+            str(runtime_target or "").strip().lower()
+            or (
+                str(payload_data.get("runtime_target") or "").strip().lower()
+                if isinstance(payload_data, dict)
+                else ""
+            )
+            or default_runtime_target_for_job(queue_name=envelope.queue_name, job_type=envelope.job_type)
+        )
+        resolved_execution_mode = (
+            str(execution_mode or "").strip().lower()
+            or (
+                str(payload_data.get("execution_mode") or "").strip().lower()
+                if isinstance(payload_data, dict)
+                else ""
+            )
+            or DEFAULT_BROWSER_EXECUTION_MODE
+        )
+        resolved_requested_by = (
+            str(requested_by or "").strip().lower()
+            or (
+                str(payload_data.get("requested_by") or "").strip().lower()
+                if isinstance(payload_data, dict)
+                else ""
+            )
+            or "internal_api"
+        )
+        resolved_fallback_policy = (
+            str(fallback_policy or "").strip().lower()
+            or (
+                str(payload_data.get("fallback_policy") or "").strip().lower()
+                if isinstance(payload_data, dict)
+                else ""
+            )
+            or default_fallback_policy_for_runtime(resolved_runtime_target)
+        )
+        resolved_human_session_id = (
+            str(human_session_id or "").strip()
+            or (
+                str(payload_data.get("human_session_id") or "").strip()
+                if isinstance(payload_data, dict)
+                else ""
+            )
+            or None
+        )
+        resolved_source_display_name = (
+            str(source_display_name or "").strip()
+            or (
+                str(payload_data.get("source_display_name") or "").strip()
+                if isinstance(payload_data, dict)
+                else ""
+            )
+            or default_source_display_name(resolved_source)
+        )
 
         doc = AnalysisJobQueueDocument(
             queue_name=envelope.queue_name,
             job_type=envelope.job_type,
             payload=payload_data,
+            source=resolved_source,
+            runtime_target=resolved_runtime_target,
+            execution_mode=resolved_execution_mode,
+            requested_by=resolved_requested_by,
+            fallback_policy=resolved_fallback_policy,
+            human_session_id=resolved_human_session_id,
+            source_display_name=resolved_source_display_name,
             name=str(payload_name).strip() if isinstance(payload_name, str) else None,
             name_normalized=str(name_normalized or "").strip() or None,
             canonical_name=(
@@ -208,6 +294,13 @@ class AnalysisJobService:
             "queue_name": envelope.queue_name,
             "job_type": envelope.job_type,
             "payload": payload_data,
+            "source": resolved_source,
+            "runtime_target": resolved_runtime_target,
+            "execution_mode": resolved_execution_mode,
+            "requested_by": resolved_requested_by,
+            "fallback_policy": resolved_fallback_policy,
+            "human_session_id": resolved_human_session_id,
+            "source_display_name": resolved_source_display_name,
             "created_at": now,
         }
         if isinstance(payload_name, str):
@@ -305,6 +398,8 @@ class AnalysisJobService:
                 "analysis_generate",
                 "report_generate",
                 "crm_lead_discovery",
+                "geo_grid_study",
+                "benchmark_local_study",
                 "crm_lead_pipeline",
                 "crm_campaign_dispatch",
             }
@@ -480,7 +575,14 @@ class AnalysisJobService:
 
         return bool(doc.get("cancel_requested"))
 
-    async def pick_next_queued_job(self, *, queue_name: JobQueueName = "scrape") -> dict[str, Any] | None:
+    async def pick_next_queued_job(
+        self,
+        *,
+        queue_name: JobQueueName = "scrape",
+        include_runtime_targets: list[str] | tuple[str, ...] | None = None,
+        exclude_runtime_targets: list[str] | tuple[str, ...] | None = None,
+        job_types: list[str] | tuple[str, ...] | None = None,
+    ) -> dict[str, Any] | None:
         database = get_database()
         jobs = database[self._JOBS_COLLECTION]
         normalized_queue = str(queue_name or "scrape").strip().lower() or "scrape"
@@ -496,11 +598,50 @@ class AnalysisJobService:
             }
         else:
             pick_query = {"status": AnalysisJobStatus.QUEUED.value, "queue_name": normalized_queue}
+        normalized_include_runtime_targets = [
+            str(value or "").strip().lower()
+            for value in (include_runtime_targets or [])
+            if str(value or "").strip()
+        ]
+        if normalized_include_runtime_targets:
+            pick_query["runtime_target"] = {"$in": normalized_include_runtime_targets}
+
+        normalized_exclude_runtime_targets = [
+            str(value or "").strip().lower()
+            for value in (exclude_runtime_targets or [])
+            if str(value or "").strip()
+        ]
+        if normalized_exclude_runtime_targets:
+            pick_query["$and"] = pick_query.get("$and", [])
+            pick_query["$and"].append(
+                {
+                    "$or": [
+                        {"runtime_target": {"$exists": False}},
+                        {"runtime_target": None},
+                        {"runtime_target": {"$nin": normalized_exclude_runtime_targets}},
+                    ]
+                }
+            )
+
+        normalized_job_types = [
+            str(value or "").strip().lower()
+            for value in (job_types or [])
+            if str(value or "").strip()
+        ]
+        if normalized_job_types:
+            pick_query["job_type"] = {"$in": normalized_job_types}
         now, start_event, start_progress = build_job_event_and_progress(
             stage="worker_started",
             message="Worker started processing job.",
             status=AnalysisJobStatus.RUNNING,
-            data={"queue_name": normalized_queue},
+            data={
+                "queue_name": normalized_queue,
+                "runtime_target": (
+                    normalized_include_runtime_targets[0]
+                    if len(normalized_include_runtime_targets) == 1
+                    else normalized_include_runtime_targets
+                ),
+            },
         )
         return await jobs.find_one_and_update(
             pick_query,
@@ -566,10 +707,36 @@ class AnalysisJobService:
             task_payload=task_payload,
         )
         payload_data = envelope.payload.model_dump(mode="python")
+        resolved_source = infer_browser_source(
+            queue_name=envelope.queue_name,
+            payload=payload_data,
+            explicit_source=payload_data.get("source"),
+        )
+        resolved_runtime_target = (
+            str(payload_data.get("runtime_target") or "").strip().lower()
+            or default_runtime_target_for_job(queue_name=envelope.queue_name, job_type=envelope.job_type)
+        )
+        resolved_execution_mode = (
+            str(payload_data.get("execution_mode") or "").strip().lower()
+            or DEFAULT_BROWSER_EXECUTION_MODE
+        )
+        resolved_requested_by = str(payload_data.get("requested_by") or "").strip().lower() or "system_handoff"
+        resolved_fallback_policy = (
+            str(payload_data.get("fallback_policy") or "").strip().lower()
+            or default_fallback_policy_for_runtime(resolved_runtime_target)
+        )
+        resolved_human_session_id = str(payload_data.get("human_session_id") or "").strip() or None
+        resolved_source_display_name = (
+            str(payload_data.get("source_display_name") or "").strip()
+            or default_source_display_name(resolved_source)
+        )
         event_data = {
             "queue_name": envelope.queue_name,
             "job_type": envelope.job_type,
             "payload": payload_data,
+            "source": resolved_source,
+            "runtime_target": resolved_runtime_target,
+            "execution_mode": resolved_execution_mode,
         }
         if isinstance(data, dict):
             event_data.update(data)
@@ -588,11 +755,21 @@ class AnalysisJobService:
             "queue_name": envelope.queue_name,
             "job_type": envelope.job_type,
             "payload": payload_data,
+            "source": resolved_source,
+            "runtime_target": resolved_runtime_target,
+            "execution_mode": resolved_execution_mode,
+            "requested_by": resolved_requested_by,
+            "fallback_policy": resolved_fallback_policy,
+            "human_session_id": resolved_human_session_id,
+            "source_display_name": resolved_source_display_name,
             "error": None,
             "result": None,
             "finished_at": None,
             "updated_at": now,
             "progress": handoff_progress,
+            "claimed_by_worker_id": None,
+            "claimed_by_host": None,
+            "worker_runtime": None,
         }
         set_fields.update(legacy_fields)
         await jobs.update_one(
@@ -622,6 +799,8 @@ class AnalysisJobService:
                     "finished_at": finished_at,
                     "updated_at": finished_at,
                     "progress": done_progress,
+                    "claimed_by_worker_id": None,
+                    "claimed_by_host": None,
                 },
                 "$push": {"events": done_event},
             },
@@ -651,6 +830,8 @@ class AnalysisJobService:
                     "finished_at": finished_at,
                     "updated_at": finished_at,
                     "progress": failed_progress,
+                    "claimed_by_worker_id": None,
+                    "claimed_by_host": None,
                 },
                 "$push": {"events": failed_event},
             },
@@ -689,6 +870,8 @@ class AnalysisJobService:
                     "finished_at": now,
                     "updated_at": now,
                     "progress": needs_human_progress,
+                    "claimed_by_worker_id": None,
+                    "claimed_by_host": None,
                 },
                 "$push": {"events": event},
             },
@@ -725,6 +908,44 @@ class AnalysisJobService:
                     continue
                 payload_for_relaunch[str(key)] = value
         legacy_fields = self._extract_legacy_scrape_fields(payload_for_relaunch)
+        resolved_source = infer_browser_source(
+            queue_name=existing.get("queue_name"),
+            payload=payload_for_relaunch,
+            explicit_source=existing.get("source"),
+        )
+        resolved_runtime_target = (
+            str(payload_for_relaunch.get("runtime_target") or "").strip().lower()
+            or str(existing.get("runtime_target") or "").strip().lower()
+            or default_runtime_target_for_job(
+                queue_name=existing.get("queue_name"),
+                job_type=existing.get("job_type"),
+            )
+        )
+        resolved_execution_mode = (
+            str(payload_for_relaunch.get("execution_mode") or "").strip().lower()
+            or str(existing.get("execution_mode") or "").strip().lower()
+            or DEFAULT_BROWSER_EXECUTION_MODE
+        )
+        resolved_requested_by = (
+            str(payload_for_relaunch.get("requested_by") or "").strip().lower()
+            or str(existing.get("requested_by") or "").strip().lower()
+            or "manual_relaunch"
+        )
+        resolved_fallback_policy = (
+            str(payload_for_relaunch.get("fallback_policy") or "").strip().lower()
+            or str(existing.get("fallback_policy") or "").strip().lower()
+            or default_fallback_policy_for_runtime(resolved_runtime_target)
+        )
+        resolved_human_session_id = (
+            str(payload_for_relaunch.get("human_session_id") or "").strip()
+            or str(existing.get("human_session_id") or "").strip()
+            or None
+        )
+        resolved_source_display_name = (
+            str(payload_for_relaunch.get("source_display_name") or "").strip()
+            or str(existing.get("source_display_name") or "").strip()
+            or default_source_display_name(resolved_source)
+        )
         if self._is_active_status(status_before) and not bool(force):
             raise ValueError("Active jobs cannot be relaunched.")
 
@@ -759,6 +980,16 @@ class AnalysisJobService:
                     "cancel_requested": False,
                     "cancel_requested_at": None,
                     "cancel_reason": None,
+                    "source": resolved_source,
+                    "runtime_target": resolved_runtime_target,
+                    "execution_mode": resolved_execution_mode,
+                    "requested_by": resolved_requested_by,
+                    "fallback_policy": resolved_fallback_policy,
+                    "human_session_id": resolved_human_session_id,
+                    "source_display_name": resolved_source_display_name,
+                    "claimed_by_worker_id": None,
+                    "claimed_by_host": None,
+                    "worker_runtime": None,
                 }
             )
             cloned_doc.update(legacy_fields)
@@ -798,6 +1029,16 @@ class AnalysisJobService:
                     "cancel_requested": False,
                     "cancel_requested_at": None,
                     "cancel_reason": None,
+                    "source": resolved_source,
+                    "runtime_target": resolved_runtime_target,
+                    "execution_mode": resolved_execution_mode,
+                    "requested_by": resolved_requested_by,
+                    "fallback_policy": resolved_fallback_policy,
+                    "human_session_id": resolved_human_session_id,
+                    "source_display_name": resolved_source_display_name,
+                    "claimed_by_worker_id": None,
+                    "claimed_by_host": None,
+                    "worker_runtime": None,
                     **legacy_fields,
                 },
                 "$push": {"events": event},
@@ -911,6 +1152,7 @@ class AnalysisJobService:
                 task = AnalyzeBusinessTaskPayload.model_validate(
                     {
                         "name": str(payload.get("name", "")).strip(),
+                        "source": str(payload.get("source") or "").strip() or None,
                         "canonical_name": str(payload.get("canonical_name") or "").strip() or None,
                         "canonical_name_normalized": (
                             str(payload.get("canonical_name_normalized") or "").strip() or None
@@ -920,6 +1162,18 @@ class AnalysisJobService:
                             str(payload.get("source_name_normalized") or "").strip() or None
                         ),
                         "root_business_id": str(payload.get("root_business_id") or "").strip() or None,
+                        "execution_mode": (
+                            str(payload.get("execution_mode") or DEFAULT_BROWSER_EXECUTION_MODE).strip().lower()
+                        ),
+                        "runtime_target": (
+                            str(payload.get("runtime_target") or DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET).strip().lower()
+                        ),
+                        "requested_by": str(payload.get("requested_by") or "").strip().lower() or "internal_api",
+                        "fallback_policy": (
+                            str(payload.get("fallback_policy") or DEFAULT_BROWSER_FALLBACK_POLICY).strip().lower()
+                        ),
+                        "human_session_id": str(payload.get("human_session_id") or "").strip() or None,
+                        "source_display_name": str(payload.get("source_display_name") or "").strip() or None,
                         "force": bool(payload.get("force", False)),
                         "strategy": str(payload.get("strategy") or "").strip() or None,
                         "force_mode": str(payload.get("force_mode") or "").strip() or None,
@@ -984,6 +1238,14 @@ class AnalysisJobService:
                 )
                 return task.model_dump(mode="python")
 
+            if job_type == "geo_grid_study":
+                task = GeoGridStudyTaskPayload.model_validate(
+                    {
+                        "geo_grid_run_id": str(payload.get("geo_grid_run_id") or "").strip(),
+                    }
+                )
+                return task.model_dump(mode="python")
+
             if job_type == "crm_lead_pipeline":
                 task = CRMLeadPipelineTaskPayload.model_validate(
                     {
@@ -1011,11 +1273,18 @@ class AnalysisJobService:
     def _extract_legacy_scrape_fields(self, payload_data: dict[str, Any]) -> dict[str, Any]:
         fields: dict[str, Any] = {}
         payload_name = payload_data.get("name")
+        payload_source = payload_data.get("source")
         payload_canonical_name = payload_data.get("canonical_name")
         payload_canonical_name_normalized = payload_data.get("canonical_name_normalized")
         payload_source_name = payload_data.get("source_name")
         payload_source_name_normalized = payload_data.get("source_name_normalized")
         payload_root_business_id = payload_data.get("root_business_id")
+        payload_runtime_target = payload_data.get("runtime_target")
+        payload_execution_mode = payload_data.get("execution_mode")
+        payload_requested_by = payload_data.get("requested_by")
+        payload_fallback_policy = payload_data.get("fallback_policy")
+        payload_human_session_id = payload_data.get("human_session_id")
+        payload_source_display_name = payload_data.get("source_display_name")
         payload_force = payload_data.get("force")
         payload_strategy = payload_data.get("strategy")
         payload_force_mode = payload_data.get("force_mode")
@@ -1027,6 +1296,8 @@ class AnalysisJobService:
 
         if isinstance(payload_name, str):
             fields["name"] = payload_name
+        if isinstance(payload_source, str):
+            fields["source"] = payload_source.strip()
         if isinstance(payload_canonical_name, str):
             fields["canonical_name"] = payload_canonical_name
         if isinstance(payload_canonical_name_normalized, str):
@@ -1037,6 +1308,18 @@ class AnalysisJobService:
             fields["source_name_normalized"] = payload_source_name_normalized
         if isinstance(payload_root_business_id, str):
             fields["root_business_id"] = payload_root_business_id
+        if isinstance(payload_runtime_target, str):
+            fields["runtime_target"] = payload_runtime_target.strip().lower()
+        if isinstance(payload_execution_mode, str):
+            fields["execution_mode"] = payload_execution_mode.strip().lower()
+        if isinstance(payload_requested_by, str):
+            fields["requested_by"] = payload_requested_by.strip().lower()
+        if isinstance(payload_fallback_policy, str):
+            fields["fallback_policy"] = payload_fallback_policy.strip().lower()
+        if isinstance(payload_human_session_id, str):
+            fields["human_session_id"] = payload_human_session_id.strip()
+        if isinstance(payload_source_display_name, str):
+            fields["source_display_name"] = payload_source_display_name.strip()
         if isinstance(payload_force, bool):
             fields["force"] = payload_force
         if isinstance(payload_strategy, str):

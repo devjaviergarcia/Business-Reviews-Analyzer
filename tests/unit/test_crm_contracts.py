@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from src.workers.contracts import (
+    BenchmarkLocalStudyTaskPayload,
     CRMCampaignDispatchTaskPayload,
     CRMLeadDiscoveryTaskPayload,
     CRMLeadPipelineTaskPayload,
     build_worker_job_envelope,
+    parse_benchmark_local_study_payload,
     parse_crm_campaign_dispatch_payload,
     parse_crm_lead_discovery_payload,
     parse_crm_lead_pipeline_payload,
@@ -75,6 +77,30 @@ def test_parse_crm_campaign_dispatch_payload() -> None:
     assert payload.message_id == "m1"
 
 
+def test_parse_benchmark_local_study_payload() -> None:
+    payload = parse_benchmark_local_study_payload(
+        {
+            "queue_name": "crm",
+            "job_type": "benchmark_local_study",
+            "payload": {
+                "query": "merienda cordoba",
+                "city": "Cordoba",
+                "limit": 250,
+                "source": "AUTO",
+                "title": "Estudio merienda Cordoba",
+                "benchmark_run_id": "run-1",
+            },
+        }
+    )
+
+    assert payload.query == "merienda cordoba"
+    assert payload.city == "Cordoba"
+    assert payload.limit == 250
+    assert payload.source == "auto"
+    assert payload.title == "Estudio merienda Cordoba"
+    assert payload.benchmark_run_id == "run-1"
+
+
 def test_build_worker_job_envelope_crm_types() -> None:
     discovery_env = build_worker_job_envelope(
         queue_name="crm",
@@ -91,6 +117,14 @@ def test_build_worker_job_envelope_crm_types() -> None:
     )
     assert discovery_scrape_env.queue_name == "scrape_google_maps"
     assert discovery_scrape_env.job_type == "crm_lead_discovery"
+
+    benchmark_env = build_worker_job_envelope(
+        queue_name="crm",
+        job_type="benchmark_local_study",
+        task_payload=BenchmarkLocalStudyTaskPayload(query="cafeterias cordoba"),
+    )
+    assert benchmark_env.queue_name == "crm"
+    assert benchmark_env.job_type == "benchmark_local_study"
 
     pipeline_env = build_worker_job_envelope(
         queue_name="crm",

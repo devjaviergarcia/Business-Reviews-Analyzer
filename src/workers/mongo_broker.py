@@ -13,8 +13,20 @@ class MongoJobBroker(WorkerJobBroker):
     def __init__(self, job_service: AnalysisJobService | None = None) -> None:
         self._job_service = job_service or AnalysisJobService()
 
-    async def claim_next_job(self, *, queue_name: str) -> dict[str, Any] | None:
-        return await self._job_service.pick_next_queued_job(queue_name=queue_name)
+    async def claim_next_job(
+        self,
+        *,
+        queue_name: str,
+        include_runtime_targets: list[str] | tuple[str, ...] | None = None,
+        exclude_runtime_targets: list[str] | tuple[str, ...] | None = None,
+        job_types: list[str] | tuple[str, ...] | None = None,
+    ) -> dict[str, Any] | None:
+        return await self._job_service.pick_next_queued_job(
+            queue_name=queue_name,
+            include_runtime_targets=include_runtime_targets,
+            exclude_runtime_targets=exclude_runtime_targets,
+            job_types=job_types,
+        )
 
     async def is_cancel_requested(self, *, job_id: Any) -> bool:
         return await self._job_service.is_job_cancel_requested(job_id=job_id)

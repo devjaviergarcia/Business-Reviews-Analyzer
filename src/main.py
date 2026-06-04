@@ -6,8 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.config import settings
 from src.database import close_mongo_connection, connect_to_mongo
 from src.routers.analysis import router as analysis_router
+from src.routers.browser_runtime import router as browser_runtime_router
 from src.routers.business import router as business_router
 from src.routers.crm import router as crm_router
+from src.routers.editorial import router as editorial_router
 from src.routers.health import router as health_router
 from src.routers.tripadvisor import router as tripadvisor_router
 
@@ -54,6 +56,10 @@ app = FastAPI(
             "name": "CRM",
             "description": "Lead discovery, cadences, campaigns and outreach compliance controls.",
         },
+        {
+            "name": "Browser Runtime",
+            "description": "Local browser runtime workers and live execution status.",
+        },
     ],
     lifespan=lifespan,
 )
@@ -69,5 +75,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(business_router)
 app.include_router(analysis_router)
+app.include_router(browser_runtime_router)
 app.include_router(tripadvisor_router)
 app.include_router(crm_router)
+app.include_router(editorial_router)

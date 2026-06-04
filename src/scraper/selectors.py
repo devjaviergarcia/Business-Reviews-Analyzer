@@ -106,8 +106,8 @@ SELECTOR_PATTERNS: Final[dict[str, tuple[str, ...]]] = {
     ),
     "LISTING_CATEGORIES": (
         "button[jsaction*='.category']",
+        "div.LBgpqf button[jsaction*='.category']",
         "button[jsaction*='pane.wfvdle'][aria-label*='rest' i]",
-        "div.fontBodyMedium button",
     ),
     # Review cards and fields
     "REVIEW_CARDS": (

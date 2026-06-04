@@ -1,0 +1,47 @@
+(Transcrito por TurboScribe. Actualizar a Ilimitado para eliminar este mensaje.)
+
+Google acaba de publicar su primera guía oficial sobre cómo optimizar una web para sus funciones de inteligencia artificial generativa en Search. Es decir, para aparecer en las búsquedas generadas por IA, y dejan un mensaje claro. Para Google, esto sigue siendo SEO, sin siglas nuevas, sin disciplinas aparte, sin reescribir el manual.
+
+https://developers.google.com/search/docs/fundamentals/ai-optimization-guide
+
+Tienes en el enlace el artículo Google Search Central aquí arriba, te lo explico. Durante este último año hemos oído hablar mucho de AEO, GEO, LLMO y otras siglas que parecían que iban a cambiar las reglas del juego. Lo que ha hecho Google es romper el silencio y dejar por escrito que necesito una web para ser mencionada en la AI Overviews.
+
+Lo resumen es generado por IA, que no es arriba de los resultados. Tiene LLMO, su nuevo modo conversacional, esto aplica tanto para el buscador como para Gemini. Y lo primero que dejan claro es que las funciones generativas se apoyen en los mismos sistemas de ranking y calidad de siempre.
+
+La IA no tiene un índice paralelo, tira del índice de Google. Para entender cómo funciona por dentro, hay dos conceptos que conviene tener claro. El primero se llama RAC, generación aumentada por recuperación.
+
+Antes de que la IA te conteste, búsquen el índice de Google páginas relevantes y actualizadas, las lee y genera la respuesta apoyándose en lo que ha encontrado. Por eso los enlaces que aparecen en una respuesta de IA son enlaces a páginas reales. El segundo se llama Query Fanout, que se podría traducir como consulte en Avaniqo.
+
+Cuando preguntas algo, el modelo no lanza una sola búsqueda, lanza varias en paralelo. Si tu consulta es cómo regalar un césped lleno de malas hierbas, por ejemplo, la IA por dentro busca también mejores servicios para césped, eliminar malas hierbas intímicos o cómo prevenir malas hierbas, analizador resultados y lo junta todo en una única respuesta. Esto tiene una consecuencia práctica enorme.
+
+Tu web puede aparecer en una respuesta de IA por una búsqueda lateral que ni siquiera está en la consulta original. No basta con ranquear para una keyword o frase exacta. Hace falta que tu contenido cubre el tema con profundidad, no solo el término concreto.
+
+Aquí entra la optimización del contenido de tu sitio web. La guía insiste en una idea, contenido único, con experiencia propia, que no podría haber escrito cualquiera. La diferencia que ponen ellos es muy clara.
+
+Un artículo titulado, por ejemplo, 7 consejos para compradores de vivienda, es contenido genérico, que cualquiera puede escribir y que importa poco. En cambio, un artículo del tipo, visitar el piso a tres horas distintas, antes de comprarlo, me permitió descubrir un problema de ruidos. Aporta una mirada en primera persona, con criterio, que solo puede contar alguien que lo ha vivido.
+
+Ese es el objetivo. La IA generativa de Google premia el contenido que aporta un punto de vista propio, único, difícilmente replicable. No el que recicla lo que ya está dicho en cientos de sitios web o en el propio entrenamiento del modelo.
+
+Junto a esto, la base técnica no cambia. Para aparecer en las respuestas de IA, tu página tiene que estar indexada, ser rastreable, cargar bien, verse bien en el móvil y tener un HTML razonablemente limpio. Si usas JavaScript, hay que cuidar que el contenido sea accesible para los bots, nada que un SEO mínimamente serio no esté haciendo ya.
+
+En la guía hay un apartado breve pero útil para quien tiene e-commerce o negocio local. Las respuestas de IA de Google pueden incluir productos y fichas de negocio cuando es necesario. Eso pasa por optimizar y alimentar bien dos herramientas.
+
+Merchant Center para productos y Google Business Profile para tu ficha de negocio. Es de las pocas señales que la das directamente a Google con datos estructurados sobre tu negocio y entra en el flujo de IA cuando toca. Google también desvienta mitos y nos dice qué cosas no hacer, cosas que para sus sistemas lo aportan y no son necesarias.
+
+No hace falta crear archivos lms.exe ni mercado especial para IA. No hace falta trocear el contenido en fragmentos pequeños, lo que en el sector se llama chunking, con la idea de que la IA lo entienda mejor. Los sistemas de Google son enormemente eficaces en entender páginas largas, cortas y con varios temas mezclados.
+
+Son muy buenos en eso. No hace falta reescribir el contenido en un estilo distinto para los modelos. Y respecto a los datos estructurados, siguen siendo recomendables para resultados enriquecidos en el buscador, pero no son obligatorios para apreciar respuestas de IA.
+
+Ahora bien, hay un matiz importante. Esta guía habla de Google y aunque cada motor generativo tiene sus propias reglas, los análisis recientes de HR sobre IA y Overviews, SAP GPT, Gemini, Copilot y Perplexity, junto con estudios académicos como el de Pinstone, apuntan una misma idea. Aparecer en respuestas generativas no depende solo de posicionar bien en Google, de hecho, HRFs ha observado que muchas URL citadas por asistentes de IA no que inciden necesariamente con los resultados orgánicos tradicionales del Top 10.
+
+Si tu objetivo es que tu sitio web aparezca en respuestas de LLMS, en general, no solo en Google, conviene trabajar con otros señales. La primera, contenido único, con experiencia propia y profundidad temática, no contenido de que cualquiera puede escribir, sino contenido que tú puedes explicar mejor que nadie. La segunda, estructura clara y la respuesta en la parte superior.
+
+Los sistemas generativos tienden a favorecer páginas que resuelven pronto la intención principal con encabezados jerárquicos, parafos legibles y respuestas fáciles de extraer. La tercera, frescura. HRFs ha analizado la relación entre contenido actualizado y situaciones de IA Overviews, SAP GPT y Preplexity.
+
+Y la actualización del contenido aparece como una variabe relevante, especialmente en consultas donde la información cambia rápido. Y la cuarta señal es la visibilidad fuera de tu web. No basta con tener una página bien optimizada, también importa que tu marca, producto o entidad aparezca mencionada en fuentes que los motores generativos consultan, resumen o citan.
+
+Esto incluye medios, comunidades como Reddit, plataformas sectoriales, comparadores, marketplaces, YouTube, Wikipedia, LinkedIn, o sitios de reseñas como G2 y tu SPYLO, según el tipo de negocio. La guía de Google marca una base sólida y desmiente muchos mitos. Y una vez más nos dice que no hay trucos mágicos, ni para aparecer en Google, ni los buscadores basados en IA.
+
+Así que como siempre ya sabes, ánimo.
+
+(Transcrito por TurboScribe. Actualizar a Ilimitado para eliminar este mensaje.)

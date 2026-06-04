@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     scraper_html_stable_rounds: int = 10
     scraper_html_scroll_min_interval_s: float = 1.0
     scraper_html_scroll_max_interval_s: float = 2.0
+    geo_grid_provider_mode: str = "maps_live"
+    geo_grid_uule_grid_size: int = 0
+    geo_grid_uule_spacing_km: float = 0.4
+    geo_grid_uule_radius_m: int = 1000
+    geo_grid_uule_throttle_ms: int = 1200
+    geo_grid_uule_gl: str = "es"
+    geo_grid_uule_hl: str = "es"
     scraper_tripadvisor_stage_timeout_seconds: int = 120
     scraper_tripadvisor_reviews_time_limit_seconds: float | None = None
     scraper_tripadvisor_start_delay_seconds: float = 15.0
@@ -62,6 +69,11 @@ class Settings(BaseSettings):
     worker_broker_backend: str = "mongo"
     worker_scrape_queue: str = "scrape"
     worker_scrape_source: str = "all"
+    local_browser_worker_id: str = ""
+    local_browser_worker_supported_sources: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["google_maps", "tripadvisor"]
+    )
+    local_browser_worker_heartbeat_seconds: int = 10
     tripadvisor_local_worker_bridge_enabled: bool = False
     tripadvisor_local_worker_bridge_url: str = "http://127.0.0.1:8765"
     tripadvisor_local_worker_bridge_timeout_seconds: float = 5.0
@@ -73,7 +85,8 @@ class Settings(BaseSettings):
     crm_resend_from_email: str = ""
     crm_resend_reply_to: str = ""
     crm_sender_name: str = "Repiq"
-    crm_cta_url: str = "https://www.repiq.ai/demo"
+    crm_cta_url: str = "https://repiq.es/#pre-report-form"
+    crm_onboarding_form_base_url: str = "https://repiq.es/valoracion"
     crm_unsubscribe_url: str = ""
     crm_unsubscribe_secret: str = ""
     crm_scheduler_batch_size: int = 200
@@ -99,6 +112,13 @@ class Settings(BaseSettings):
     @field_validator("analysis_reanalyze_default_batchers", mode="before")
     @classmethod
     def parse_analysis_reanalyze_default_batchers(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("local_browser_worker_supported_sources", mode="before")
+    @classmethod
+    def parse_local_browser_worker_supported_sources(cls, value: object) -> object:
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
@@ -157,6 +177,25 @@ class Settings(BaseSettings):
             allowed_values = ", ".join(sorted(allowed))
             raise ValueError(
                 f"Invalid worker_scrape_source={value!r}. Allowed values: {allowed_values}."
+            )
+        return normalized
+
+    @field_validator("geo_grid_provider_mode", mode="before")
+    @classmethod
+    def parse_geo_grid_provider_mode(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip().lower()
+        return value
+
+    @field_validator("geo_grid_provider_mode")
+    @classmethod
+    def validate_geo_grid_provider_mode(cls, value: str) -> str:
+        normalized = str(value or "").strip().lower()
+        allowed = {"maps_live", "uule"}
+        if normalized not in allowed:
+            allowed_values = ", ".join(sorted(allowed))
+            raise ValueError(
+                f"Invalid geo_grid_provider_mode={value!r}. Allowed values: {allowed_values}."
             )
         return normalized
 

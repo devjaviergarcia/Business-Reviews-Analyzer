@@ -10,7 +10,6 @@ type CRMViewDeps = {
   onJobQueued?: (jobId: string) => void;
 };
 
-type LeadSourceScope = "all" | "google_maps" | "tripadvisor";
 type LeadSortField = "updated_at" | "business_name" | "score" | "status" | "consent_status" | "source";
 type LeadSortDir = "asc" | "desc";
 
@@ -62,6 +61,13 @@ export function createCRMView(deps: CRMViewDeps): ViewModule {
   const leadsStatusFilter = createElement("select", "atom-input") as HTMLSelectElement;
   leadsStatusFilter.innerHTML = [
     '<option value="">Todos los estados</option>',
+    '<option value="prospecto">prospecto</option>',
+    '<option value="contactado">contactado</option>',
+    '<option value="lead_report_sent">lead_report_sent</option>',
+    '<option value="form_1_done">form_1_done</option>',
+    '<option value="full_report_sent">full_report_sent</option>',
+    '<option value="form_2_done">form_2_done</option>',
+    '<option value="cliente">cliente</option>',
     '<option value="new">new</option>',
     '<option value="enriching">enriching</option>',
     '<option value="ready">ready</option>',
@@ -84,6 +90,8 @@ export function createCRMView(deps: CRMViewDeps): ViewModule {
   const leadsSourceFilter = createElement("select", "atom-input") as HTMLSelectElement;
   leadsSourceFilter.innerHTML = [
     '<option value="" selected>Todas las fuentes</option>',
+    '<option value="landing">landing</option>',
+    '<option value="manual">manual</option>',
     '<option value="google_maps_live_discovery">Solo discovery live</option>',
     '<option value="google_maps">google_maps</option>',
     '<option value="tripadvisor">tripadvisor</option>',
@@ -110,12 +118,6 @@ export function createCRMView(deps: CRMViewDeps): ViewModule {
     '<option value="desc" selected>Descendente</option>',
     '<option value="asc">Ascendente</option>',
   ].join("");
-  const pipelineSourceSelect = createElement("select", "atom-input") as HTMLSelectElement;
-  pipelineSourceSelect.innerHTML = [
-    '<option value="google_maps" selected>Pipeline: solo Google Maps</option>',
-    '<option value="all">Pipeline: todas las fuentes</option>',
-    '<option value="tripadvisor">Pipeline: solo Tripadvisor</option>',
-  ].join("");
 
   appendLabeled(leadsControls, "Buscar", leadsSearch);
   appendLabeled(leadsControls, "Estado", leadsStatusFilter);
@@ -124,7 +126,6 @@ export function createCRMView(deps: CRMViewDeps): ViewModule {
   appendLabeled(leadsControls, "Tamaño página", leadsPageSizeSelect);
   appendLabeled(leadsControls, "Ordenar por", leadsSortBy);
   appendLabeled(leadsControls, "Dirección", leadsSortDir);
-  appendLabeled(leadsControls, "Scope pipeline", pipelineSourceSelect);
 
   const leadsActions = createElement("div", "form-actions");
   const leadsRefreshButton = createButton({ label: "Actualizar leads", tone: "turquoise" });
@@ -401,12 +402,12 @@ export function createCRMView(deps: CRMViewDeps): ViewModule {
       const row = createElement("tr");
       const leadId = getLeadId(item);
       const leadName = escapeHtml(String(item.business_name || "(sin nombre)"));
-      const contact = [item.email, item.phone, item.website]
+      const contact = [item.phone, item.website]
         .filter((v) => String(v || "").trim())
         .join(" · ");
       const consentStatus = String(item.legal?.consent_status || "missing");
-      const status = String(item.status || "-");
       const source = String(item.source || "-");
+      const status = String(item.status || "-");
       const score = typeof item.score === "number" ? item.score.toFixed(1) : "-";
       const updatedAt = String(item.updated_at || "").trim();
 
@@ -438,7 +439,10 @@ export function createCRMView(deps: CRMViewDeps): ViewModule {
       });
       const pipelineButton = createButton({ label: "Pipeline", tone: "orange" });
       pipelineButton.addEventListener("click", () => {
-        void launchLeadPipeline(leadId);
+        void launchLeadPipeline({
+          leadId,
+          businessName: String(item.business_name || "").trim(),
+        });
       });
       const grantConsentButton = createButton({ label: "Consent+", tone: "turquoise" });
       grantConsentButton.addEventListener("click", () => {
@@ -511,23 +515,34 @@ export function createCRMView(deps: CRMViewDeps): ViewModule {
     }
   }
 
-  async function launchLeadPipeline(leadId: string): Promise<void> {
-    leadsStatusLabel.textContent = `Lanzando pipeline para ${leadId}...`;
+  async function launchLeadPipeline(payload: { leadId: string; businessName: string }): Promise<void> {
+    const leadId = String(payload.leadId || "").trim();
+    const businessName = String(payload.businessName || "").trim();
+    if (!businessName) {
+      leadsStatusLabel.textContent = `ERROR pipeline: el lead ${leadId || "(sin id)"} no tiene nombre de negocio.`;
+      return;
+    }
+
+    leadsStatusLabel.textContent = `Lanzando pipeline para ${businessName}...`;
     try {
-      const scope = pipelineSourceSelect.value as LeadSourceScope;
-      const sources = scope === "all" ? ["google_maps", "tripadvisor"] : [scope];
-      const response = await deps.apiClient.post<Record<string, unknown>>(
-        `/crm/leads/${encodeURIComponent(leadId)}/pipeline-jobs`,
-        {
-          force: false,
-          sources,
-        }
-      );
-      const crmJobId = String(response.job_id || "").trim();
-      if (crmJobId && deps.onJobQueued) {
-        deps.onJobQueued(crmJobId);
+      const response = await deps.apiClient.post<Record<string, unknown>>(`/business/scrape/jobs`, {
+        name: businessName,
+        force: false,
+      });
+      const queuedJobId = String(response.job_id || response.primary_job_id || "").trim();
+      if (queuedJobId && deps.onJobQueued) {
+        deps.onJobQueued(queuedJobId);
       }
-      leadsStatusLabel.textContent = `Pipeline en cola (${crmJobId || "sin job_id"}).`;
+      if (leadId) {
+        try {
+          await deps.apiClient.patch<Record<string, unknown>>(`/crm/leads/${encodeURIComponent(leadId)}`, {
+            status: "pipeline_queued",
+          });
+        } catch {
+          // El job ya está encolado; si falla el patch de estado no bloqueamos.
+        }
+      }
+      leadsStatusLabel.textContent = `Pipeline en cola para ${businessName} (${queuedJobId || "sin job_id"}).`;
       await refreshLeads();
     } catch (error) {
       leadsStatusLabel.textContent = `ERROR pipeline: ${formatError(error)}`;

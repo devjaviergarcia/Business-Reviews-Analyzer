@@ -91,3 +91,160 @@ class DiscoveryRunRepository(Protocol):
     async def list_runs(self, *, page: int, page_size: int) -> dict[str, Any]: ...
 
     async def get_run(self, *, run_id: str) -> dict[str, Any] | None: ...
+
+
+class BenchmarkRunRepository(Protocol):
+    async def create_run(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+
+    async def mark_running(self, *, benchmark_run_id: str) -> dict[str, Any] | None: ...
+
+    async def finalize(
+        self,
+        *,
+        benchmark_run_id: str,
+        status: str,
+        metrics: dict[str, Any] | None = None,
+        failure_reason: str | None = None,
+    ) -> dict[str, Any] | None: ...
+
+    async def list_runs(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        status_filter: str | None = None,
+        city: str | None = None,
+        category: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    async def get_run(self, *, benchmark_run_id: str) -> dict[str, Any] | None: ...
+
+
+class BenchmarkBusinessRepository(Protocol):
+    async def upsert_business(self, *, benchmark_id: str, payload: dict[str, Any]) -> dict[str, Any]: ...
+
+    async def get_business(self, *, benchmark_business_id: str) -> dict[str, Any] | None: ...
+
+    async def list_businesses(
+        self,
+        *,
+        benchmark_id: str | None,
+        page: int,
+        page_size: int,
+        city: str | None = None,
+        category: str | None = None,
+        q: str | None = None,
+        sort_by: str = "opportunity_score",
+        sort_dir: str = "desc",
+    ) -> dict[str, Any]: ...
+
+
+class CompetitorSetRepository(Protocol):
+    async def upsert_set(
+        self,
+        *,
+        benchmark_id: str,
+        target_business_id: str,
+        competitors: list[dict[str, Any]],
+        selection_version: str = "v1",
+    ) -> dict[str, Any]: ...
+
+    async def get_for_business(self, *, target_business_id: str) -> dict[str, Any] | None: ...
+
+    async def list_by_benchmark(self, *, benchmark_id: str, page: int, page_size: int) -> dict[str, Any]: ...
+
+
+class LeadReportRepository(Protocol):
+    async def upsert_for_business(
+        self,
+        *,
+        benchmark_business_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]: ...
+
+    async def get_for_business(
+        self,
+        *,
+        benchmark_business_id: str,
+        report_type: str = "lead",
+    ) -> dict[str, Any] | None: ...
+
+    async def get_report(self, *, lead_report_id: str) -> dict[str, Any] | None: ...
+
+
+class PaidReportRepository(Protocol):
+    async def upsert_for_business_month(
+        self,
+        *,
+        benchmark_business_id: str,
+        report_month: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]: ...
+
+    async def get_for_business_month(
+        self,
+        *,
+        benchmark_business_id: str,
+        report_month: str,
+    ) -> dict[str, Any] | None: ...
+
+    async def get_report(self, *, paid_report_id: str) -> dict[str, Any] | None: ...
+
+
+class GeoCityRepository(Protocol):
+    async def seed_default_cities(self) -> dict[str, Any]: ...
+
+    async def list_enabled(self) -> list[dict[str, Any]]: ...
+
+    async def get_by_slug(self, *, city_slug: str) -> dict[str, Any] | None: ...
+
+
+class GeoGridRunRepository(Protocol):
+    async def create_run(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+
+    async def set_job_id(self, *, geo_grid_run_id: str, job_id: str | None) -> dict[str, Any] | None: ...
+
+    async def mark_running(self, *, geo_grid_run_id: str) -> dict[str, Any] | None: ...
+
+    async def update_progress(
+        self,
+        *,
+        geo_grid_run_id: str,
+        completed_points: int,
+        completed_units: int,
+        metrics: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None: ...
+
+    async def finalize(
+        self,
+        *,
+        geo_grid_run_id: str,
+        status: str,
+        metrics: dict[str, Any] | None = None,
+        failure_reason: str | None = None,
+    ) -> dict[str, Any] | None: ...
+
+    async def list_runs(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        city_slug: str | None = None,
+        status_filter: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    async def get_run(self, *, geo_grid_run_id: str) -> dict[str, Any] | None: ...
+
+
+class GeoGridResultRepository(Protocol):
+    async def replace_point_results(
+        self,
+        *,
+        geo_grid_run_id: str,
+        city_slug: str,
+        keyword: str,
+        point: dict[str, Any],
+        results: list[dict[str, Any]],
+    ) -> int: ...
+
+    async def list_results(self, *, geo_grid_run_id: str) -> list[dict[str, Any]]: ...

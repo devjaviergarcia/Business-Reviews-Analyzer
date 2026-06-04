@@ -7,13 +7,30 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from src.dependencies import create_business_query_service, create_business_service
+from src.business_catalog import (
+    EnqueueBrowserScrapeJobsUseCase,
+    RelaunchBrowserScrapeJobUseCase,
+)
+from src.dependencies import (
+    create_business_query_service,
+    create_business_service,
+    create_enqueue_browser_scrape_jobs_use_case,
+    create_relaunch_browser_scrape_job_use_case,
+)
 from src.services.business_service import BusinessService
 from src.services.business_query_service import BusinessQueryService
 
 router = APIRouter(prefix="/business")
 BusinessServiceDep = Annotated[BusinessService, Depends(create_business_service)]
 BusinessQueryServiceDep = Annotated[BusinessQueryService, Depends(create_business_query_service)]
+EnqueueBrowserScrapeJobsUseCaseDep = Annotated[
+    EnqueueBrowserScrapeJobsUseCase,
+    Depends(create_enqueue_browser_scrape_jobs_use_case),
+]
+RelaunchBrowserScrapeJobUseCaseDep = Annotated[
+    RelaunchBrowserScrapeJobUseCase,
+    Depends(create_relaunch_browser_scrape_job_use_case),
+]
 
 
 class ScraperParamsRequest(BaseModel):
@@ -100,6 +117,7 @@ class ScrapeBusinessJobsRequest(AnalyzeBusinessRequest):
     sources: list[Literal["google_maps", "tripadvisor"]] | None = None
     google_maps_name: str | None = None
     tripadvisor_name: str | None = None
+    execution_mode: Literal["automatic", "live"] = "automatic"
 
     model_config = ConfigDict(extra="forbid")
 
@@ -127,6 +145,7 @@ class RelaunchScrapeJobRequest(BaseModel):
     restart_from_zero: bool = False
     google_maps_name: str | None = None
     tripadvisor_name: str | None = None
+    execution_mode: Literal["automatic", "live"] | None = None
     scraper_params: ScraperParamsRequest | None = None
 
     model_config = ConfigDict(extra="forbid")
@@ -215,10 +234,13 @@ async def analyze_business(payload: AnalyzeBusinessRequest, service: BusinessSer
 
 
 @router.post("/scrape/jobs", status_code=status.HTTP_202_ACCEPTED, tags=["Scrape"])
-async def enqueue_scrape_jobs(payload: ScrapeBusinessJobsRequest, service: BusinessServiceDep) -> dict:
+async def enqueue_scrape_jobs(
+    payload: ScrapeBusinessJobsRequest,
+    enqueue_browser_scrape_jobs: EnqueueBrowserScrapeJobsUseCaseDep,
+) -> dict:
     scraper_params = payload.scraper_params
     try:
-        return await service.enqueue_business_scrape_jobs(
+        return await enqueue_browser_scrape_jobs.execute(
             name=payload.name,
             force=payload.force,
             strategy=payload.strategy,
@@ -241,6 +263,8 @@ async def enqueue_scrape_jobs(payload: ScrapeBusinessJobsRequest, service: Busin
             sources=payload.sources,
             google_maps_name=payload.google_maps_name,
             tripadvisor_name=payload.tripadvisor_name,
+            execution_mode=payload.execution_mode,
+            requested_by="business_router",
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -362,7 +386,7 @@ async def delete_scrape_job(
 @router.post("/scrape/jobs/{job_id}/relaunch", tags=["Scrape"])
 async def relaunch_scrape_job(
     job_id: str,
-    service: BusinessServiceDep,
+    relaunch_browser_scrape_job: RelaunchBrowserScrapeJobUseCaseDep,
     payload: RelaunchScrapeJobRequest | None = None,
 ) -> dict:
     reason = payload.reason if payload else None
@@ -370,13 +394,14 @@ async def relaunch_scrape_job(
     restart_from_zero = bool(payload.restart_from_zero) if payload else False
     scraper_params = payload.scraper_params if payload else None
     try:
-        return await service.relaunch_scrape_job(
+        return await relaunch_browser_scrape_job.execute(
             job_id=job_id,
             reason=reason,
             force=force,
             restart_from_zero=restart_from_zero,
             google_maps_name=payload.google_maps_name if payload else None,
             tripadvisor_name=payload.tripadvisor_name if payload else None,
+            execution_mode=payload.execution_mode if payload else None,
             interactive_max_rounds=(
                 scraper_params.scraper_interactive_max_rounds if scraper_params else None
             ),

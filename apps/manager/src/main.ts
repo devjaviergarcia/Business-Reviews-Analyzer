@@ -10,11 +10,13 @@ import { createApiView } from "./views/api-view";
 import { createBusinessView } from "./views/business-view";
 import { createCRMView } from "./views/crm-view";
 import { createJobsView } from "./views/jobs-view";
+import { createStudiesView } from "./views/studies-view";
 
 const ACTIVE_JOB_STATUSES = ["running", "queued", "retrying", "partial", "needs_human"] as const;
+const DEFAULT_API_BASE = "http://localhost:8000";
 
 const appRoot = mustElement<HTMLDivElement>("#app");
-const storedBase = localStorage.getItem("bra_api_base") || "http://localhost:8000";
+const storedBase = localStorage.getItem("bra_api_base") || DEFAULT_API_BASE;
 const apiClient = new ApiClient(storedBase);
 
 const shell = createElement("main", "app-shell");
@@ -43,6 +45,13 @@ const views: ViewModule[] = [
       jobsView.selectJob(jobId);
     },
   }),
+  createStudiesView({
+    apiClient,
+    onJobQueued: (jobId) => {
+      setActiveView("jobs");
+      jobsView.selectJob(jobId);
+    },
+  }),
   createApiView({ apiClient }),
 ];
 
@@ -60,6 +69,7 @@ const menu = createSidebarMenu({
     { key: "jobs", label: "Pipeline" },
     { key: "business", label: "Negocios" },
     { key: "crm", label: "CRM" },
+    { key: "studies", label: "Estudios" },
     { key: "api", label: "API" },
   ],
   initial: activeKey,
@@ -197,4 +207,45 @@ function estimateActiveProgress(job: AnalyzeJobItem): number {
 }
 
 setActiveView(activeKey);
-startActiveJobPolling();
+
+async function isHealthReachable(baseUrl: string, timeoutMs = 2500): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/health`, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+async function bootstrapApiBase(): Promise<void> {
+  const currentBase = apiClient.getBaseUrl();
+  if (currentBase === DEFAULT_API_BASE) {
+    return;
+  }
+  const currentOk = await isHealthReachable(currentBase);
+  if (currentOk) {
+    return;
+  }
+  const defaultOk = await isHealthReachable(DEFAULT_API_BASE);
+  if (!defaultOk) {
+    return;
+  }
+  apiClient.setBaseUrl(DEFAULT_API_BASE);
+  localStorage.setItem("bra_api_base", DEFAULT_API_BASE);
+  console.warn(`[manager] API base '${currentBase}' no responde. Fallback a '${DEFAULT_API_BASE}'.`);
+}
+
+async function bootstrap(): Promise<void> {
+  await bootstrapApiBase();
+  setActiveView(activeKey);
+  startActiveJobPolling();
+}
+
+void bootstrap();

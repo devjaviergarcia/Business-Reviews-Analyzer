@@ -6,7 +6,14 @@ from src.workers.contracts import AnalysisJobStatus, JobQueueName, JobType, Work
 
 
 class WorkerJobBroker(Protocol):
-    async def claim_next_job(self, *, queue_name: str) -> dict[str, Any] | None:
+    async def claim_next_job(
+        self,
+        *,
+        queue_name: str,
+        include_runtime_targets: list[str] | tuple[str, ...] | None = None,
+        exclude_runtime_targets: list[str] | tuple[str, ...] | None = None,
+        job_types: list[str] | tuple[str, ...] | None = None,
+    ) -> dict[str, Any] | None:
         """Atomically claim the next queued job for a logical queue."""
 
     async def is_cancel_requested(self, *, job_id: Any) -> bool:

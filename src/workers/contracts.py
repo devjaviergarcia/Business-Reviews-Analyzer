@@ -6,6 +6,16 @@ from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from src.job_runtime.browser_job_contracts import (
+    DEFAULT_BROWSER_EXECUTION_MODE,
+    DEFAULT_BROWSER_FALLBACK_POLICY,
+    DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
+    BrowserExecutionMode,
+    BrowserFallbackPolicy,
+    BrowserJobSource,
+    BrowserRuntimeTarget,
+)
+
 
 class AnalysisJobStatus(str, Enum):
     QUEUED = "queued"
@@ -25,6 +35,8 @@ JobType = Literal[
     "analysis_generate",
     "report_generate",
     "crm_lead_discovery",
+    "geo_grid_study",
+    "benchmark_local_study",
     "crm_lead_pipeline",
     "crm_campaign_dispatch",
 ]
@@ -56,11 +68,18 @@ class JobProgressState(BaseModel):
 
 class AnalyzeBusinessTaskPayload(BaseModel):
     name: str
+    source: BrowserJobSource | None = None
     canonical_name: str | None = None
     canonical_name_normalized: str | None = None
     source_name: str | None = None
     source_name_normalized: str | None = None
     root_business_id: str | None = None
+    execution_mode: BrowserExecutionMode = DEFAULT_BROWSER_EXECUTION_MODE
+    runtime_target: BrowserRuntimeTarget = DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET
+    requested_by: str = "internal_api"
+    fallback_policy: BrowserFallbackPolicy = DEFAULT_BROWSER_FALLBACK_POLICY
+    human_session_id: str | None = None
+    source_display_name: str | None = None
     force: bool = False
     strategy: str | None = None
     force_mode: str | None = None
@@ -83,9 +102,12 @@ class AnalyzeBusinessTaskPayload(BaseModel):
     @field_validator(
         "canonical_name",
         "canonical_name_normalized",
+        "source",
         "source_name",
         "source_name_normalized",
         "root_business_id",
+        "human_session_id",
+        "source_display_name",
         mode="before",
     )
     @classmethod
@@ -94,6 +116,30 @@ class AnalyzeBusinessTaskPayload(BaseModel):
             return None
         cleaned = str(value).strip()
         return cleaned or None
+
+    @field_validator("requested_by", mode="before")
+    @classmethod
+    def normalize_requested_by(cls, value: object) -> object:
+        cleaned = str(value or "").strip().lower().replace(" ", "_")
+        return cleaned or "internal_api"
+
+    @field_validator("execution_mode", mode="before")
+    @classmethod
+    def normalize_execution_mode(cls, value: object) -> object:
+        cleaned = str(value or DEFAULT_BROWSER_EXECUTION_MODE).strip().lower()
+        return cleaned or DEFAULT_BROWSER_EXECUTION_MODE
+
+    @field_validator("runtime_target", mode="before")
+    @classmethod
+    def normalize_runtime_target(cls, value: object) -> object:
+        cleaned = str(value or DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET).strip().lower()
+        return cleaned or DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET
+
+    @field_validator("fallback_policy", mode="before")
+    @classmethod
+    def normalize_fallback_policy(cls, value: object) -> object:
+        cleaned = str(value or DEFAULT_BROWSER_FALLBACK_POLICY).strip().lower()
+        return cleaned or DEFAULT_BROWSER_FALLBACK_POLICY
 
     @field_validator("strategy", mode="before")
     @classmethod
@@ -330,6 +376,64 @@ class CRMLeadDiscoveryTaskPayload(BaseModel):
         return min(parsed, 5000)
 
 
+class BenchmarkLocalStudyTaskPayload(BaseModel):
+    query: str
+    city: str | None = None
+    category: str | None = None
+    limit: int = 100
+    source: str = "auto_live_google_maps"
+    title: str | None = None
+    benchmark_run_id: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("query")
+    @classmethod
+    def validate_query(cls, value: str) -> str:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            raise ValueError("query cannot be empty.")
+        return cleaned
+
+    @field_validator("city", "category", "title", "benchmark_run_id", mode="before")
+    @classmethod
+    def normalize_optional_text(cls, value: object) -> object:
+        if value is None:
+            return None
+        cleaned = str(value).strip()
+        return cleaned or None
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def normalize_source(cls, value: object) -> object:
+        cleaned = str(value or "").strip().lower()
+        return cleaned or "auto_live_google_maps"
+
+    @field_validator("limit", mode="before")
+    @classmethod
+    def normalize_limit(cls, value: object) -> object:
+        if value is None or value == "":
+            return 100
+        parsed = int(value)
+        if parsed < 1:
+            raise ValueError("limit must be >= 1.")
+        return min(parsed, 5000)
+
+
+class GeoGridStudyTaskPayload(BaseModel):
+    geo_grid_run_id: str
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("geo_grid_run_id")
+    @classmethod
+    def validate_geo_grid_run_id(cls, value: str) -> str:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            raise ValueError("geo_grid_run_id cannot be empty.")
+        return cleaned
+
+
 class CRMLeadPipelineTaskPayload(BaseModel):
     lead_id: str
     force: bool = False
@@ -396,6 +500,22 @@ class CRMLeadDiscoveryJobEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class BenchmarkLocalStudyJobEnvelope(BaseModel):
+    queue_name: Literal["crm"] = "crm"
+    job_type: Literal["benchmark_local_study"] = "benchmark_local_study"
+    payload: BenchmarkLocalStudyTaskPayload
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class GeoGridStudyJobEnvelope(BaseModel):
+    queue_name: Literal["scrape_google_maps"] = "scrape_google_maps"
+    job_type: Literal["geo_grid_study"] = "geo_grid_study"
+    payload: GeoGridStudyTaskPayload
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class CRMLeadPipelineJobEnvelope(BaseModel):
     queue_name: Literal["crm"] = "crm"
     job_type: Literal["crm_lead_pipeline"] = "crm_lead_pipeline"
@@ -417,6 +537,8 @@ WorkerTaskPayload = (
     | AnalysisGenerateTaskPayload
     | ReportGenerateTaskPayload
     | CRMLeadDiscoveryTaskPayload
+    | GeoGridStudyTaskPayload
+    | BenchmarkLocalStudyTaskPayload
     | CRMLeadPipelineTaskPayload
     | CRMCampaignDispatchTaskPayload
 )
@@ -438,11 +560,18 @@ def parse_analyze_business_payload(job_doc: Mapping[str, Any]) -> AnalyzeBusines
     return AnalyzeBusinessTaskPayload.model_validate(
         {
             "name": str(job_doc.get("name", "")).strip(),
+            "source": str(job_doc.get("source") or "").strip() or None,
             "canonical_name": str(job_doc.get("canonical_name") or "").strip() or None,
             "canonical_name_normalized": str(job_doc.get("canonical_name_normalized") or "").strip() or None,
             "source_name": str(job_doc.get("source_name") or "").strip() or None,
             "source_name_normalized": str(job_doc.get("source_name_normalized") or "").strip() or None,
             "root_business_id": str(job_doc.get("root_business_id") or "").strip() or None,
+            "execution_mode": str(job_doc.get("execution_mode") or DEFAULT_BROWSER_EXECUTION_MODE),
+            "runtime_target": str(job_doc.get("runtime_target") or DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET),
+            "requested_by": str(job_doc.get("requested_by") or "").strip().lower() or "internal_api",
+            "fallback_policy": str(job_doc.get("fallback_policy") or DEFAULT_BROWSER_FALLBACK_POLICY),
+            "human_session_id": str(job_doc.get("human_session_id") or "").strip() or None,
+            "source_display_name": str(job_doc.get("source_display_name") or "").strip() or None,
             "force": bool(job_doc.get("force", False)),
             "strategy": str(job_doc.get("strategy") or "").strip() or None,
             "force_mode": str(job_doc.get("force_mode") or "").strip() or None,
@@ -542,6 +671,50 @@ def parse_crm_lead_discovery_payload(job_doc: Mapping[str, Any]) -> CRMLeadDisco
     )
 
 
+def parse_benchmark_local_study_payload(job_doc: Mapping[str, Any]) -> BenchmarkLocalStudyTaskPayload:
+    raw_payload = job_doc.get("payload")
+    if isinstance(raw_payload, dict):
+        envelope = BenchmarkLocalStudyJobEnvelope.model_validate(
+            {
+                "queue_name": str(job_doc.get("queue_name") or "crm"),
+                "job_type": str(job_doc.get("job_type") or "benchmark_local_study"),
+                "payload": raw_payload,
+            }
+        )
+        return envelope.payload
+
+    return BenchmarkLocalStudyTaskPayload.model_validate(
+        {
+            "query": str(job_doc.get("query", "")).strip(),
+            "city": str(job_doc.get("city") or "").strip() or None,
+            "category": str(job_doc.get("category") or "").strip() or None,
+            "limit": job_doc.get("limit"),
+            "source": str(job_doc.get("source") or "auto_live_google_maps"),
+            "title": str(job_doc.get("title") or "").strip() or None,
+            "benchmark_run_id": str(job_doc.get("benchmark_run_id") or "").strip() or None,
+        }
+    )
+
+
+def parse_geo_grid_study_payload(job_doc: Mapping[str, Any]) -> GeoGridStudyTaskPayload:
+    raw_payload = job_doc.get("payload")
+    if isinstance(raw_payload, dict):
+        envelope = GeoGridStudyJobEnvelope.model_validate(
+            {
+                "queue_name": str(job_doc.get("queue_name") or "scrape_google_maps"),
+                "job_type": str(job_doc.get("job_type") or "geo_grid_study"),
+                "payload": raw_payload,
+            }
+        )
+        return envelope.payload
+
+    return GeoGridStudyTaskPayload.model_validate(
+        {
+            "geo_grid_run_id": str(job_doc.get("geo_grid_run_id") or "").strip(),
+        }
+    )
+
+
 def parse_crm_lead_pipeline_payload(job_doc: Mapping[str, Any]) -> CRMLeadPipelineTaskPayload:
     raw_payload = job_doc.get("payload")
     if isinstance(raw_payload, dict):
@@ -595,6 +768,8 @@ def build_worker_job_envelope(
     | AnalysisGenerateJobEnvelope
     | ReportGenerateJobEnvelope
     | CRMLeadDiscoveryJobEnvelope
+    | GeoGridStudyJobEnvelope
+    | BenchmarkLocalStudyJobEnvelope
     | CRMLeadPipelineJobEnvelope
     | CRMCampaignDispatchJobEnvelope
 ):
@@ -639,6 +814,24 @@ def build_worker_job_envelope(
             payload=task_payload,
         )
 
+    if normalized_queue == "crm" and normalized_job_type == "benchmark_local_study":
+        if not isinstance(task_payload, BenchmarkLocalStudyTaskPayload):
+            raise TypeError("Expected BenchmarkLocalStudyTaskPayload for crm/benchmark_local_study.")
+        return BenchmarkLocalStudyJobEnvelope(
+            queue_name="crm",
+            job_type="benchmark_local_study",
+            payload=task_payload,
+        )
+
+    if normalized_queue == "scrape_google_maps" and normalized_job_type == "geo_grid_study":
+        if not isinstance(task_payload, GeoGridStudyTaskPayload):
+            raise TypeError("Expected GeoGridStudyTaskPayload for scrape_google_maps/geo_grid_study.")
+        return GeoGridStudyJobEnvelope(
+            queue_name="scrape_google_maps",
+            job_type="geo_grid_study",
+            payload=task_payload,
+        )
+
     if normalized_queue == "crm" and normalized_job_type == "crm_lead_pipeline":
         if not isinstance(task_payload, CRMLeadPipelineTaskPayload):
             raise TypeError("Expected CRMLeadPipelineTaskPayload for crm/crm_lead_pipeline.")
@@ -664,6 +857,13 @@ class AnalysisJobQueueDocument(BaseModel):
     queue_name: JobQueueName = "scrape"
     job_type: JobType = "business_analyze"
     payload: dict[str, Any] = Field(default_factory=dict)
+    source: str | None = None
+    runtime_target: str | None = None
+    execution_mode: str | None = None
+    requested_by: str | None = None
+    fallback_policy: str | None = None
+    human_session_id: str | None = None
+    source_display_name: str | None = None
     name: str | None = None
     name_normalized: str | None = None
     canonical_name: str | None = None
@@ -686,6 +886,9 @@ class AnalysisJobQueueDocument(BaseModel):
     cancel_requested_at: datetime | None = None
     cancel_reason: str | None = None
     attempts: int = 0
+    claimed_by_worker_id: str | None = None
+    claimed_by_host: str | None = None
+    worker_runtime: str | None = None
     error: str | None = None
     result: dict[str, Any] | None = None
     created_at: datetime

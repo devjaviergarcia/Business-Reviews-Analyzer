@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import csv
 import html
 import json
@@ -8,6 +9,8 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin
+from urllib.request import Request, urlopen
 
 from src.pipeline.report_rendering import ReportRenderingSectionsMixin
 
@@ -23,6 +26,8 @@ class StructuredReportRenderer(ReportRenderingSectionsMixin):
         "#C23B18",
         "#64748B",
     )
+    _EMBEDDED_FONT_CSS_CACHE: str | None = None
+    _EMBEDDED_FONT_CSS_FAILED = False
 
     def __init__(self, *, artifacts_root: str | Path = "artifacts/reports") -> None:
         self.artifacts_root = Path(artifacts_root)
@@ -217,6 +222,94 @@ class StructuredReportRenderer(ReportRenderingSectionsMixin):
             finally:
                 await browser.close()
 
+    def _load_embedded_font_css(self) -> str:
+        cls = type(self)
+        if cls._EMBEDDED_FONT_CSS_CACHE is not None:
+            return cls._EMBEDDED_FONT_CSS_CACHE
+        if cls._EMBEDDED_FONT_CSS_FAILED:
+            return ""
+
+        css_urls = [
+            "https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&display=swap",
+            "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap",
+        ]
+        embedded_blocks: list[str] = []
+        for css_url in css_urls:
+            css_text = self._download_text(css_url)
+            if not css_text:
+                continue
+            embedded_blocks.append(self._embed_font_urls(css_text=css_text, base_url=css_url))
+
+        merged = "\n".join(block for block in embedded_blocks if block.strip())
+        if merged.strip():
+            cls._EMBEDDED_FONT_CSS_CACHE = merged
+            return merged
+        cls._EMBEDDED_FONT_CSS_FAILED = True
+        return ""
+
+    def _embed_font_urls(self, *, css_text: str, base_url: str) -> str:
+        pattern = re.compile(r"url\\((['\"]?)([^)'\"]+)\\1\\)")
+
+        def _replace(match: re.Match[str]) -> str:
+            raw_url = str(match.group(2) or "").strip()
+            if not raw_url or raw_url.startswith("data:"):
+                return match.group(0)
+            resolved = urljoin(base_url, raw_url)
+            binary = self._download_binary(resolved)
+            if not binary:
+                return match.group(0)
+            mime = self._font_mime_from_url(resolved)
+            encoded = base64.b64encode(binary).decode("ascii")
+            return f'url("data:{mime};base64,{encoded}")'
+
+        return pattern.sub(_replace, css_text)
+
+    def _download_text(self, url: str) -> str:
+        request = Request(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
+                )
+            },
+        )
+        try:
+            with urlopen(request, timeout=10) as response:  # noqa: S310
+                return response.read().decode("utf-8", errors="ignore")
+        except Exception:
+            return ""
+
+    def _download_binary(self, url: str) -> bytes:
+        request = Request(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
+                )
+            },
+        )
+        try:
+            with urlopen(request, timeout=10) as response:  # noqa: S310
+                return bytes(response.read())
+        except Exception:
+            return b""
+
+    def _font_mime_from_url(self, value: str) -> str:
+        clean = str(value).split("?", 1)[0].strip().lower()
+        if clean.endswith(".woff2"):
+            return "font/woff2"
+        if clean.endswith(".woff"):
+            return "font/woff"
+        if clean.endswith(".ttf"):
+            return "font/ttf"
+        if clean.endswith(".otf"):
+            return "font/otf"
+        if clean.endswith(".eot"):
+            return "application/vnd.ms-fontobject"
+        return "font/woff2"
+
     def _build_html(self, *, report_payload: dict[str, Any], intro_context_text: str) -> str:
         business_name = str(report_payload.get("business_name", "") or "").strip() or "Business"
         generated_at = str(report_payload.get("generated_at", "") or "")
@@ -335,6 +428,8 @@ class StructuredReportRenderer(ReportRenderingSectionsMixin):
             if rendered.strip():
                 body_parts.append(rendered)
 
+        font_face_css = self._load_embedded_font_css()
+
         return f"""<!doctype html>
 <html lang="es">
   <head>
@@ -342,7 +437,7 @@ class StructuredReportRenderer(ReportRenderingSectionsMixin):
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Reporte reputación - {html.escape(business_name)}</title>
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+      {font_face_css}
       :root {{
         --bg: #F4F2EC;
         --text: #161616;
@@ -851,6 +946,8 @@ class StructuredReportRenderer(ReportRenderingSectionsMixin):
                 "</article>"
             )
 
+        font_face_css = self._load_embedded_font_css()
+
         return f"""<!doctype html>
 <html lang="es">
   <head>
@@ -858,7 +955,7 @@ class StructuredReportRenderer(ReportRenderingSectionsMixin):
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Preview de reputación - {html.escape(business_name)}</title>
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+      {font_face_css}
       :root {{
         --bg: #F4F2EC;
         --panel: #FFFFFF;
@@ -1030,6 +1127,8 @@ class StructuredReportRenderer(ReportRenderingSectionsMixin):
                 ]
             )
 
+        font_face_css = self._load_embedded_font_css()
+
         return f"""<!doctype html>
 <html lang="es">
   <head>
@@ -1037,7 +1136,7 @@ class StructuredReportRenderer(ReportRenderingSectionsMixin):
     <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Anexos del reporte - {html.escape(business_name)}</title>
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+      {font_face_css}
       :root {{
         --bg: #F4F2EC;
         --text: #161616;

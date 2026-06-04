@@ -395,7 +395,7 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     void relaunchCurrentDrawerNode({ restartFromZero: true });
   });
   drawerLaunchLiveButton.addEventListener("click", () => {
-    void launchTripadvisorLiveSession();
+    void launchCurrentScrapeJobLive();
   });
   drawerDeleteButton.addEventListener("click", () => {
     void deleteCurrentDrawerNodeJob();
@@ -1378,13 +1378,13 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     drawerTransitions.textContent = transitions.join("\n");
 
     drawerManualButton.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
-    drawerLaunchLiveButton.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
+    drawerLaunchLiveButton.classList.toggle("hidden", node.key === "analysis" || node.key === "report");
     drawerRelaunchConfigTitle.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
     drawerRelaunchConfig.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
     drawerRelaunchFromZeroButton.classList.toggle("hidden", node.key === "analysis" || node.key === "report");
     drawerRelaunchButton.toggleAttribute("disabled", !node.jobId);
     drawerRelaunchFromZeroButton.toggleAttribute("disabled", !node.jobId || node.key === "analysis" || node.key === "report");
-    drawerLaunchLiveButton.toggleAttribute("disabled", node.key !== "scrape_tripadvisor" || !node.jobId);
+    drawerLaunchLiveButton.toggleAttribute("disabled", (node.key === "analysis" || node.key === "report") || !node.jobId);
     drawerDeleteButton.toggleAttribute("disabled", !node.jobId);
     drawerOutputButton.toggleAttribute("disabled", !node.outputUrl);
     drawerCopyJobButton.toggleAttribute("disabled", !node.jobId);
@@ -1595,48 +1595,41 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     }
   }
 
-  async function launchTripadvisorLiveSession(): Promise<void> {
+  async function launchCurrentScrapeJobLive(): Promise<void> {
     const node = getDrawerNode();
-    if (!node || node.key !== "scrape_tripadvisor") {
-      drawerActionStatus.textContent = "Lanzar Live solo aplica a TripAdvisor.";
+    if (!node || (node.key !== "scrape_tripadvisor" && node.key !== "scrape_google_maps")) {
+      drawerActionStatus.textContent = "Lanzar Live solo aplica a nodos de scrape.";
       return;
     }
-    const fallbackTripadvisorJobId =
-      String(selectedBusinessGroup?.jobsBySource.tripadvisor?.job_id || "").trim() || null;
-    const replayJobId = String(node.jobId || "").trim() || fallbackTripadvisorJobId;
+    const sourceLabel = node.key === "scrape_tripadvisor" ? "TripAdvisor" : "Google Maps";
+    const replayJobId = String(node.jobId || "").trim();
     if (!replayJobId) {
-      drawerActionStatus.textContent =
-        "No hay job_id de TripAdvisor para lanzar Live en modo replay.";
+      drawerActionStatus.textContent = `No hay job_id de ${sourceLabel} para lanzar Live.`;
       return;
     }
-    drawerActionStatus.textContent = "Lanzando sesión live de TripAdvisor (replay del job completo)...";
+    drawerActionStatus.textContent = `Relanzando ${sourceLabel} en modo live...`;
     try {
-      const payload = {
-        reason: `ui_live_replay:${replayJobId}:${node.status || "unknown"}`,
-        display: ":0",
-        job_id: replayJobId,
-      };
-      const response = await deps.apiClient.post<{
-        ok?: boolean;
-        skipped?: boolean;
-        reason?: string;
-        already_running?: boolean;
-        mode?: string;
-        job_id?: string | null;
-        log_file?: string;
-        live_session?: { pid?: number | null };
-      }>("/tripadvisor/live-session/launch", payload);
-      if (response?.ok === false || response?.skipped) {
-        drawerActionStatus.textContent = `No disponible: ${response?.reason || "bridge_disabled"}.`;
-        return;
-      }
-      const pid = response?.live_session?.pid;
-      const mode = String(response?.mode || "").trim();
-      const logFile = String(response?.log_file || "").trim();
-      if (response?.already_running) {
-        drawerActionStatus.textContent = `Sesión live ya en ejecución${pid ? ` (pid=${pid})` : ""}${mode ? ` [modo=${mode}]` : ""}.`;
-      } else {
-        drawerActionStatus.textContent = `Sesión live lanzada${pid ? ` (pid=${pid})` : ""}${mode ? ` [modo=${mode}]` : ""}. ${logFile ? `Log: ${logFile}` : ""}`.trim();
+      const relaunchOverrides = buildRelaunchOverridesForNode(node);
+      const response = await deps.apiClient.post<{ job_id?: string | null }>(
+        `/business/scrape/jobs/${encodeURIComponent(replayJobId)}/relaunch`,
+        {
+          reason: `ui_live_relaunch:${replayJobId}:${node.status || "unknown"}`,
+          execution_mode: "live",
+          ...relaunchOverrides,
+        }
+      );
+      const relaunchedJobId = String(response?.job_id || replayJobId).trim() || replayJobId;
+      drawerActionStatus.textContent = `${sourceLabel} relanzado en modo live: ${relaunchedJobId}`;
+      await loadJobsList();
+      const group = getRenderableBusinessGroups().find(
+        (item) =>
+          String(item.jobsBySource.google_maps?.job_id || "").trim() === relaunchedJobId ||
+          String(item.jobsBySource.tripadvisor?.job_id || "").trim() === relaunchedJobId ||
+          String(item.jobsBySource.google_maps?.job_id || "").trim() === replayJobId ||
+          String(item.jobsBySource.tripadvisor?.job_id || "").trim() === replayJobId
+      );
+      if (group) {
+        await loadSelectedBusiness(group.key);
       }
     } catch (error) {
       drawerActionStatus.textContent = `ERROR: ${formatError(error)}`;

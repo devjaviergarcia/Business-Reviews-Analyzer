@@ -13,6 +13,7 @@ from typing import Any
 from src.config import settings
 from src.database import close_mongo_connection, connect_to_mongo
 from src.dependencies import create_business_service, create_crm_service, create_worker_job_broker
+from src.job_runtime.browser_job_contracts import DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET
 from src.services.business_service import (
     BusinessService,
     ScrapeBotDetectedError,
@@ -27,6 +28,7 @@ from src.workers.contracts import (
     AnalysisJobStatus,
     parse_analyze_business_payload,
     parse_crm_lead_discovery_payload,
+    parse_geo_grid_study_payload,
 )
 
 LOGGER = logging.getLogger("scraper_worker")
@@ -92,7 +94,7 @@ class ScraperWorker(QueuedJobWorkerBase):
                         singleton_token,
                     )
                     break
-                job = await self._job_broker.claim_next_job(queue_name=self.queue_name)
+                job = await self._claim_next_job()
                 if not job:
                     idle_ticks += 1
                     if idle_ticks % self._idle_log_every_ticks == 0:
@@ -132,6 +134,12 @@ class ScraperWorker(QueuedJobWorkerBase):
                 reason="worker_shutdown",
             )
             await close_mongo_connection()
+
+    async def _claim_next_job(self) -> dict | None:
+        return await self._job_broker.claim_next_job(
+            queue_name=self.queue_name,
+            exclude_runtime_targets=[DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET],
+        )
 
     def _resolve_queue_name(self, queue_name: str) -> str:
         normalized_queue = str(queue_name or "").strip().lower()
@@ -346,6 +354,9 @@ class ScraperWorker(QueuedJobWorkerBase):
         job_type = str(job.get("job_type") or "").strip().lower() or "unknown"
         if job_type == "crm_lead_discovery":
             await self._process_crm_discovery_job(job)
+            return
+        if job_type == "geo_grid_study":
+            await self._process_geo_grid_study_job(job)
             return
         if job_type != "business_analyze":
             job_id = job.get("_id")
@@ -767,6 +778,42 @@ class ScraperWorker(QueuedJobWorkerBase):
             await self._job_broker.mark_failed(job_id=job_id, error=str(exc))
             LOGGER.exception(
                 "CRM discovery job failed on scrape worker id=%s queue=%s error=%s",
+                job_id,
+                self.queue_name,
+                exc,
+            )
+
+    async def _process_geo_grid_study_job(self, job: dict[str, Any]) -> None:
+        job_id = job.get("_id")
+        try:
+            await self._job_broker.append_event(
+                job_id=job_id,
+                stage="geo_grid_worker_started",
+                message="GeoGrid study started on scrape_google_maps worker.",
+                status=AnalysisJobStatus.RUNNING,
+                data={
+                    "queue_name": self.queue_name,
+                    "job_type": "geo_grid_study",
+                },
+            )
+            payload = parse_geo_grid_study_payload(job)
+            result = await self._crm_service.process_geo_grid_study_task(task_payload=payload, job_id=job_id)
+            await self._job_broker.append_event(
+                job_id=job_id,
+                stage="geo_grid_worker_completed",
+                message="GeoGrid study completed on scrape_google_maps worker.",
+                status=AnalysisJobStatus.RUNNING,
+                data={
+                    "queue_name": self.queue_name,
+                    "job_type": "geo_grid_study",
+                    "result": result,
+                },
+            )
+            await self._job_broker.mark_done(job_id=job_id, result=result)
+        except Exception as exc:  # noqa: BLE001
+            await self._job_broker.mark_failed(job_id=job_id, error=str(exc))
+            LOGGER.exception(
+                "GeoGrid study job failed on scrape worker id=%s queue=%s error=%s",
                 job_id,
                 self.queue_name,
                 exc,
