@@ -1,13 +1,8 @@
-from .section_generators import (
-    AnnexSummarySectionGenerator,
-    CustomerProfileSectionGenerator,
-    ExecutiveSummarySectionGenerator,
-    ReputationScoreSectionGenerator,
-    ActionPlanSectionGenerator,
-    SourceComparisonSectionGenerator,
-    SourceNarrativeSectionGenerator,
-    build_section_generators,
-)
+from .action_annex_sections import ActionPlanSectionGenerator, AnnexSummarySectionGenerator
+from .customer_sections import CustomerProfileSectionGenerator
+from .executive_sections import ExecutiveSummarySectionGenerator, ReputationScoreSectionGenerator
+from .section_generators import build_section_generators
+from .source_sections import SourceComparisonSectionGenerator, SourceNarrativeSectionGenerator
 
 __all__ = [
     "ExecutiveSummarySectionGenerator",

@@ -4,27 +4,37 @@ from src.business_catalog import (
     EnqueueBrowserScrapeJobsUseCase,
     RelaunchBrowserScrapeJobUseCase,
 )
-from src.crm.bulk_delete_crm_leads_use_case import BulkDeleteCRMLeadsUseCase
-from src.crm.create_crm_campaign_use_case import CreateCRMCampaignUseCase
-from src.crm.create_crm_report_feedback_use_case import CreateCRMReportFeedbackUseCase
-from src.crm.create_crm_lead_use_case import CreateCRMLeadUseCase
-from src.crm.create_crm_report_request_use_case import CreateCRMReportRequestUseCase
-from src.crm.handle_resend_webhook_use_case import HandleResendWebhookUseCase
-from src.crm.get_crm_lead_use_case import GetCRMLeadUseCase
-from src.crm.enqueue_benchmark_study_job_use_case import EnqueueBenchmarkStudyJobUseCase
-from src.crm.enqueue_crm_lead_discovery_job_use_case import EnqueueCRMLeadDiscoveryJobUseCase
-from src.crm.enqueue_crm_lead_pipeline_job_use_case import EnqueueCRMLeadPipelineJobUseCase
-from src.crm.enqueue_due_campaign_dispatch_jobs_use_case import EnqueueDueCampaignDispatchJobsUseCase
-from src.crm.enqueue_geo_grid_study_job_use_case import EnqueueGeoGridStudyJobUseCase
-from src.crm.launch_crm_campaign_use_case import LaunchCRMCampaignUseCase
-from src.crm.list_crm_campaigns_use_case import ListCRMCampaignsUseCase
-from src.crm.list_crm_events_use_case import ListCRMEventsUseCase
-from src.crm.list_crm_leads_use_case import ListCRMLeadsUseCase
-from src.crm.list_crm_messages_use_case import ListCRMMessagesUseCase
-from src.crm.list_crm_report_requests_use_case import ListCRMReportRequestsUseCase
-from src.crm.process_pending_crm_report_requests_use_case import ProcessPendingCRMReportRequestsUseCase
-from src.crm.retry_crm_report_request_use_case import RetryCRMReportRequestUseCase
-from src.crm.update_crm_lead_use_case import UpdateCRMLeadUseCase
+from src.crm.leads.bulk_delete_crm_leads_use_case import BulkDeleteCRMLeadsUseCase
+from src.crm.campaigns.create_crm_campaign_use_case import CreateCRMCampaignUseCase
+from src.crm.report_requests.create_crm_report_feedback_use_case import CreateCRMReportFeedbackUseCase
+from src.crm.leads.create_crm_lead_use_case import CreateCRMLeadUseCase
+from src.crm.report_requests.create_crm_report_request_use_case import CreateCRMReportRequestUseCase
+from src.crm.studies.generate_crm_lead_report_use_case import GenerateCRMLeadReportUseCase
+from src.crm.studies.generate_crm_paid_report_use_case import GenerateCRMPaidReportUseCase
+from src.crm.studies.generate_crm_public_study_use_case import GenerateCRMPublicStudyUseCase
+from src.crm.campaigns.handle_resend_webhook_use_case import HandleResendWebhookUseCase
+from src.crm.studies.get_crm_discovery_run_use_case import GetCRMDiscoveryRunUseCase
+from src.crm.leads.get_crm_lead_use_case import GetCRMLeadUseCase
+from src.crm.studies.get_crm_geo_grid_run_use_case import GetCRMGeoGridRunUseCase
+from src.crm.studies.get_crm_geo_grid_stats_use_case import GetCRMGeoGridStatsUseCase
+from src.crm.studies.enqueue_benchmark_study_job_use_case import EnqueueBenchmarkStudyJobUseCase
+from src.crm.leads.enqueue_crm_lead_discovery_job_use_case import EnqueueCRMLeadDiscoveryJobUseCase
+from src.crm.leads.enqueue_crm_lead_pipeline_job_use_case import EnqueueCRMLeadPipelineJobUseCase
+from src.crm.campaigns.enqueue_due_campaign_dispatch_jobs_use_case import EnqueueDueCampaignDispatchJobsUseCase
+from src.crm.studies.enqueue_geo_grid_study_job_use_case import EnqueueGeoGridStudyJobUseCase
+from src.crm.campaigns.launch_crm_campaign_use_case import LaunchCRMCampaignUseCase
+from src.crm.campaigns.list_crm_campaigns_use_case import ListCRMCampaignsUseCase
+from src.crm.studies.list_crm_discovery_runs_use_case import ListCRMDiscoveryRunsUseCase
+from src.crm.campaigns.list_crm_events_use_case import ListCRMEventsUseCase
+from src.crm.studies.list_crm_geo_cities_use_case import ListCRMGeoCitiesUseCase
+from src.crm.studies.list_crm_geo_grid_results_use_case import ListCRMGeoGridResultsUseCase
+from src.crm.studies.list_crm_geo_grid_runs_use_case import ListCRMGeoGridRunsUseCase
+from src.crm.leads.list_crm_leads_use_case import ListCRMLeadsUseCase
+from src.crm.campaigns.list_crm_messages_use_case import ListCRMMessagesUseCase
+from src.crm.report_requests.list_crm_report_requests_use_case import ListCRMReportRequestsUseCase
+from src.crm.report_requests.process_pending_crm_report_requests_use_case import ProcessPendingCRMReportRequestsUseCase
+from src.crm.report_requests.retry_crm_report_request_use_case import RetryCRMReportRequestUseCase
+from src.crm.leads.update_crm_lead_use_case import UpdateCRMLeadUseCase
 from src.platform.application_root import get_application_root
 from src.pipeline.llm_analyzer import ReviewLLMAnalyzer
 from src.pipeline.preprocessor import ReviewPreprocessor
@@ -118,6 +128,18 @@ def create_create_crm_report_feedback_use_case() -> CreateCRMReportFeedbackUseCa
     return get_application_root().create_crm_report_feedback
 
 
+def create_generate_crm_lead_report_use_case() -> GenerateCRMLeadReportUseCase:
+    return get_application_root().generate_crm_lead_report
+
+
+def create_generate_crm_paid_report_use_case() -> GenerateCRMPaidReportUseCase:
+    return get_application_root().generate_crm_paid_report
+
+
+def create_generate_crm_public_study_use_case() -> GenerateCRMPublicStudyUseCase:
+    return get_application_root().generate_crm_public_study
+
+
 def create_create_crm_lead_use_case() -> CreateCRMLeadUseCase:
     return get_application_root().create_crm_lead
 
@@ -164,6 +186,34 @@ def create_list_crm_messages_use_case() -> ListCRMMessagesUseCase:
 
 def create_list_crm_events_use_case() -> ListCRMEventsUseCase:
     return get_application_root().list_crm_events
+
+
+def create_list_crm_discovery_runs_use_case() -> ListCRMDiscoveryRunsUseCase:
+    return get_application_root().list_crm_discovery_runs
+
+
+def create_get_crm_discovery_run_use_case() -> GetCRMDiscoveryRunUseCase:
+    return get_application_root().get_crm_discovery_run
+
+
+def create_list_crm_geo_cities_use_case() -> ListCRMGeoCitiesUseCase:
+    return get_application_root().list_crm_geo_cities
+
+
+def create_list_crm_geo_grid_runs_use_case() -> ListCRMGeoGridRunsUseCase:
+    return get_application_root().list_crm_geo_grid_runs
+
+
+def create_get_crm_geo_grid_run_use_case() -> GetCRMGeoGridRunUseCase:
+    return get_application_root().get_crm_geo_grid_run
+
+
+def create_list_crm_geo_grid_results_use_case() -> ListCRMGeoGridResultsUseCase:
+    return get_application_root().list_crm_geo_grid_results
+
+
+def create_get_crm_geo_grid_stats_use_case() -> GetCRMGeoGridStatsUseCase:
+    return get_application_root().get_crm_geo_grid_stats
 
 
 def create_retry_crm_report_request_use_case() -> RetryCRMReportRequestUseCase:

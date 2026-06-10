@@ -19,13 +19,13 @@ from src.job_runtime.browser_job_contracts import (
 )
 from src.job_runtime.local_browser_job_coordinator import LocalBrowserJobCoordinator
 from src.scraping_google_maps.google_maps_browser_adapter import GoogleMapsBrowserAdapter
-from src.scraping_tripadvisor.tripadvisor_browser_adapter import TripadvisorBrowserAdapter
-from src.services.analysis_job_service import AnalysisJobService
-from src.services.business_service import (
-    BusinessService,
+from src.scraping_shared.browser_scrape_errors import (
     ScrapeBotDetectedError,
     ScrapeNeedsHumanInterventionError,
 )
+from src.scraping_tripadvisor.tripadvisor_browser_adapter import TripadvisorBrowserAdapter
+from src.services.analysis_job_service import AnalysisJobService
+from src.services.business_service import BusinessService
 from src.services.crm_service import CRMService
 from src.workers.contracts import (
     AnalysisGenerateTaskPayload,

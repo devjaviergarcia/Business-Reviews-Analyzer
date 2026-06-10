@@ -19,6 +19,12 @@ class _FakeJobService:
         name_normalized: str | None = None,
         queue_name: str = "scrape",
         job_type: str = "business_analyze",
+        source: str | None = None,
+        runtime_target: str | None = None,
+        execution_mode: str | None = None,
+        requested_by: str | None = None,
+        fallback_policy: str | None = None,
+        source_display_name: str | None = None,
     ) -> dict[str, Any]:
         payload = task_payload.model_dump(mode="python")
         self.calls.append(
@@ -27,6 +33,12 @@ class _FakeJobService:
                 "name_normalized": name_normalized,
                 "queue_name": queue_name,
                 "job_type": job_type,
+                "source": source,
+                "runtime_target": runtime_target,
+                "execution_mode": execution_mode,
+                "requested_by": requested_by,
+                "fallback_policy": fallback_policy,
+                "source_display_name": source_display_name,
             }
         )
         return {

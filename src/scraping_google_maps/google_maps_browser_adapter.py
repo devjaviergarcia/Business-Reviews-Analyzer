@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.scraping_shared.browser_scrape_adapter import ProgressCallback
-from src.services.business_service import BusinessService
 from src.workers.contracts import AnalyzeBusinessTaskPayload
+
+if TYPE_CHECKING:
+    from src.services.business_service import BusinessService
 
 
 class GoogleMapsBrowserAdapter:
     source = "google_maps"
 
-    def __init__(self, *, business_service: BusinessService) -> None:
+    def __init__(self, *, business_service: "BusinessService") -> None:
         self._business_service = business_service
 
     async def run_scrape(
@@ -37,4 +39,3 @@ class GoogleMapsBrowserAdapter:
             source_job_id=str(job_id),
             progress_callback=progress_callback,
         )
-

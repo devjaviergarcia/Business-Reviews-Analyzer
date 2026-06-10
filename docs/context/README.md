@@ -1,19 +1,9 @@
-# Contexto del Proyecto
+# Contexto histórico
 
-Documentación contextual para producto, arquitectura y scaffold del código.
+La documentación canónica de arquitectura, flujos y distribución del repositorio ya no vive aquí.
 
-## Entradas clave
+Consulta el archivo raíz:
 
-- `context_dictionary.md`
-- `project_objective.md`
-- `phases/`
-- `architecture/README.md`
-- `architecture/scaffold_context.md` (generado)
-- `architecture/scaffold_context_input.md` (intermedio, editable)
-- `architecture/scaffold_version.json` (generado)
+- [`README.md`](../../README.md)
 
-Regeneración:
-
-```bash
-uv run python scripts/generate_context_docs.py
-```
+Este directorio queda como material histórico y auxiliar.

@@ -1,57 +1,79 @@
 """CRM domain package."""
 
-from src.crm.bulk_delete_crm_leads_use_case import BulkDeleteCRMLeadsUseCase
-from src.crm.create_crm_campaign_use_case import CreateCRMCampaignUseCase
-from src.crm.create_crm_lead_use_case import CreateCRMLeadUseCase
-from src.crm.create_crm_report_feedback_use_case import CreateCRMReportFeedbackUseCase
-from src.crm.handle_resend_webhook_use_case import HandleResendWebhookUseCase
-from src.crm.get_crm_lead_use_case import GetCRMLeadUseCase
-from src.crm.enqueue_crm_lead_discovery_job_use_case import EnqueueCRMLeadDiscoveryJobUseCase
-from src.crm.enqueue_crm_lead_pipeline_job_use_case import EnqueueCRMLeadPipelineJobUseCase
-from src.crm.enqueue_benchmark_study_job_use_case import EnqueueBenchmarkStudyJobUseCase
-from src.crm.enqueue_due_campaign_dispatch_jobs_use_case import EnqueueDueCampaignDispatchJobsUseCase
-from src.crm.enqueue_geo_grid_study_job_use_case import EnqueueGeoGridStudyJobUseCase
-from src.crm.create_crm_report_request_use_case import CreateCRMReportRequestUseCase
-from src.crm.launch_crm_campaign_use_case import LaunchCRMCampaignUseCase
-from src.crm.list_crm_campaigns_use_case import ListCRMCampaignsUseCase
-from src.crm.list_crm_events_use_case import ListCRMEventsUseCase
-from src.crm.list_crm_leads_use_case import ListCRMLeadsUseCase
-from src.crm.list_crm_messages_use_case import ListCRMMessagesUseCase
-from src.crm.list_crm_report_requests_use_case import ListCRMReportRequestsUseCase
-from src.crm.process_pending_crm_report_requests_use_case import ProcessPendingCRMReportRequestsUseCase
-from src.crm.retry_crm_report_request_use_case import RetryCRMReportRequestUseCase
-from src.crm.process_benchmark_study_task_use_case import ProcessBenchmarkStudyTaskUseCase
-from src.crm.process_campaign_dispatch_task_use_case import ProcessCampaignDispatchTaskUseCase
-from src.crm.process_crm_lead_discovery_task_use_case import ProcessCRMLeadDiscoveryTaskUseCase
-from src.crm.process_crm_lead_pipeline_task_use_case import ProcessCRMLeadPipelineTaskUseCase
-from src.crm.process_geo_grid_study_task_use_case import ProcessGeoGridStudyTaskUseCase
-from src.crm.update_crm_lead_use_case import UpdateCRMLeadUseCase
+from src.crm.leads import BulkDeleteCRMLeadsUseCase
+from src.crm.leads import CreateCRMLeadUseCase
+from src.crm.leads import EnqueueCRMLeadDiscoveryJobUseCase
+from src.crm.leads import EnqueueCRMLeadPipelineJobUseCase
+from src.crm.leads import GetCRMLeadUseCase
+from src.crm.leads import ListCRMLeadsUseCase
+from src.crm.leads import ProcessCRMLeadDiscoveryTaskUseCase
+from src.crm.leads import ProcessCRMLeadPipelineTaskUseCase
+from src.crm.leads import SyncCRMLeadPipelineRefsUseCase
+from src.crm.leads import UpdateCRMLeadUseCase
+from src.crm.campaigns import CreateCRMCampaignUseCase
+from src.crm.campaigns import EnqueueDueCampaignDispatchJobsUseCase
+from src.crm.campaigns import HandleResendWebhookUseCase
+from src.crm.campaigns import LaunchCRMCampaignUseCase
+from src.crm.campaigns import ListCRMCampaignsUseCase
+from src.crm.campaigns import ListCRMEventsUseCase
+from src.crm.campaigns import ListCRMMessagesUseCase
+from src.crm.campaigns import ProcessCampaignDispatchTaskUseCase
+from src.crm.report_requests import CreateCRMReportFeedbackUseCase
+from src.crm.report_requests import CreateCRMReportRequestUseCase
+from src.crm.report_requests import ListCRMReportRequestsUseCase
+from src.crm.report_requests import ProcessPendingCRMReportRequestsUseCase
+from src.crm.report_requests import RetryCRMReportRequestUseCase
+from src.crm.studies import EnqueueBenchmarkStudyJobUseCase
+from src.crm.studies import EnqueueGeoGridStudyJobUseCase
+from src.crm.studies import GenerateCRMLeadReportUseCase
+from src.crm.studies import GenerateCRMPaidReportUseCase
+from src.crm.studies import GenerateCRMPublicStudyUseCase
+from src.crm.studies import GetCRMDiscoveryRunUseCase
+from src.crm.studies import GetCRMGeoGridRunUseCase
+from src.crm.studies import GetCRMGeoGridStatsUseCase
+from src.crm.studies import ListCRMDiscoveryRunsUseCase
+from src.crm.studies import ListCRMGeoCitiesUseCase
+from src.crm.studies import ListCRMGeoGridResultsUseCase
+from src.crm.studies import ListCRMGeoGridRunsUseCase
+from src.crm.studies import ProcessBenchmarkStudyTaskUseCase
+from src.crm.studies import ProcessGeoGridStudyTaskUseCase
 
 __all__ = [
     "BulkDeleteCRMLeadsUseCase",
-    "CreateCRMCampaignUseCase",
-    "CreateCRMReportFeedbackUseCase",
     "CreateCRMLeadUseCase",
-    "CreateCRMReportRequestUseCase",
-    "GetCRMLeadUseCase",
-    "HandleResendWebhookUseCase",
-    "EnqueueBenchmarkStudyJobUseCase",
     "EnqueueCRMLeadDiscoveryJobUseCase",
     "EnqueueCRMLeadPipelineJobUseCase",
+    "GetCRMLeadUseCase",
+    "ListCRMLeadsUseCase",
+    "ProcessCRMLeadDiscoveryTaskUseCase",
+    "ProcessCRMLeadPipelineTaskUseCase",
+    "SyncCRMLeadPipelineRefsUseCase",
+    "UpdateCRMLeadUseCase",
+    "CreateCRMCampaignUseCase",
     "EnqueueDueCampaignDispatchJobsUseCase",
-    "EnqueueGeoGridStudyJobUseCase",
+    "HandleResendWebhookUseCase",
     "LaunchCRMCampaignUseCase",
     "ListCRMCampaignsUseCase",
     "ListCRMEventsUseCase",
-    "ListCRMLeadsUseCase",
     "ListCRMMessagesUseCase",
+    "ProcessCampaignDispatchTaskUseCase",
+    "CreateCRMReportFeedbackUseCase",
+    "CreateCRMReportRequestUseCase",
     "ListCRMReportRequestsUseCase",
     "ProcessPendingCRMReportRequestsUseCase",
-    "ProcessBenchmarkStudyTaskUseCase",
-    "ProcessCampaignDispatchTaskUseCase",
-    "ProcessCRMLeadDiscoveryTaskUseCase",
-    "ProcessCRMLeadPipelineTaskUseCase",
-    "ProcessGeoGridStudyTaskUseCase",
     "RetryCRMReportRequestUseCase",
-    "UpdateCRMLeadUseCase",
+    "EnqueueBenchmarkStudyJobUseCase",
+    "EnqueueGeoGridStudyJobUseCase",
+    "GenerateCRMLeadReportUseCase",
+    "GenerateCRMPaidReportUseCase",
+    "GenerateCRMPublicStudyUseCase",
+    "GetCRMDiscoveryRunUseCase",
+    "GetCRMGeoGridRunUseCase",
+    "GetCRMGeoGridStatsUseCase",
+    "ListCRMDiscoveryRunsUseCase",
+    "ListCRMGeoCitiesUseCase",
+    "ListCRMGeoGridResultsUseCase",
+    "ListCRMGeoGridRunsUseCase",
+    "ProcessBenchmarkStudyTaskUseCase",
+    "ProcessGeoGridStudyTaskUseCase",
 ]

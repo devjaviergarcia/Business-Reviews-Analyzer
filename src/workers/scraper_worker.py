@@ -14,11 +14,11 @@ from src.config import settings
 from src.database import close_mongo_connection, connect_to_mongo
 from src.dependencies import create_business_service, create_crm_service, create_worker_job_broker
 from src.job_runtime.browser_job_contracts import DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET
-from src.services.business_service import (
-    BusinessService,
+from src.scraping_shared.browser_scrape_errors import (
     ScrapeBotDetectedError,
     ScrapeNeedsHumanInterventionError,
 )
+from src.services.business_service import BusinessService
 from src.services.crm_service import CRMService
 from src.services.tripadvisor_session_service import TripadvisorSessionService
 from src.workers.base_queue_worker import QueuedJobWorkerBase

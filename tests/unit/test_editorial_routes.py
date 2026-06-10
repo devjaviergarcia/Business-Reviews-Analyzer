@@ -27,4 +27,5 @@ def test_five_support_articles_exist_and_link_to_report() -> None:
     for slug in slugs:
         html = get_editorial_page_html(slug)
         assert "utm_source=seo" in html
-        assert "/solicitud?" in html
+        assert "https://repiq.es/?utm_source=seo" in html
+        assert "#pre-report-form" in html

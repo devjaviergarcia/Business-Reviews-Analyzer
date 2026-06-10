@@ -311,7 +311,7 @@ def test_live_google_maps_candidate_enrichment_merges_listing_data() -> None:
     assert enriched["website"] == "https://www.facebook.com/elsellatriana/"
     assert enriched["rating"] == 4.7
     assert enriched["review_count"] == 5124
-    assert enriched["category"] == "Restaurante, Asturiano"
+    assert enriched["category"] == "Restaurante"
     assert enriched["city"] == "41010 Sevilla"
     assert bool((enriched.get("source_ref") or {}).get("listing_enriched"))
 

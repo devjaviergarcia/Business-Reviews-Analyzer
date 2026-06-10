@@ -8,32 +8,43 @@ from src.business_catalog import (
     RelaunchBrowserScrapeJobUseCase,
 )
 from src.browser_runtime.local_browser_worker_registry import LocalBrowserWorkerRegistry
-from src.crm.bulk_delete_crm_leads_use_case import BulkDeleteCRMLeadsUseCase
-from src.crm.create_crm_campaign_use_case import CreateCRMCampaignUseCase
-from src.crm.create_crm_report_feedback_use_case import CreateCRMReportFeedbackUseCase
-from src.crm.create_crm_lead_use_case import CreateCRMLeadUseCase
-from src.crm.create_crm_report_request_use_case import CreateCRMReportRequestUseCase
-from src.crm.handle_resend_webhook_use_case import HandleResendWebhookUseCase
-from src.crm.get_crm_lead_use_case import GetCRMLeadUseCase
-from src.crm.enqueue_benchmark_study_job_use_case import EnqueueBenchmarkStudyJobUseCase
-from src.crm.enqueue_crm_lead_discovery_job_use_case import EnqueueCRMLeadDiscoveryJobUseCase
-from src.crm.enqueue_crm_lead_pipeline_job_use_case import EnqueueCRMLeadPipelineJobUseCase
-from src.crm.enqueue_due_campaign_dispatch_jobs_use_case import EnqueueDueCampaignDispatchJobsUseCase
-from src.crm.enqueue_geo_grid_study_job_use_case import EnqueueGeoGridStudyJobUseCase
-from src.crm.launch_crm_campaign_use_case import LaunchCRMCampaignUseCase
-from src.crm.list_crm_campaigns_use_case import ListCRMCampaignsUseCase
-from src.crm.list_crm_events_use_case import ListCRMEventsUseCase
-from src.crm.list_crm_leads_use_case import ListCRMLeadsUseCase
-from src.crm.list_crm_messages_use_case import ListCRMMessagesUseCase
-from src.crm.list_crm_report_requests_use_case import ListCRMReportRequestsUseCase
-from src.crm.process_benchmark_study_task_use_case import ProcessBenchmarkStudyTaskUseCase
-from src.crm.process_campaign_dispatch_task_use_case import ProcessCampaignDispatchTaskUseCase
-from src.crm.process_crm_lead_discovery_task_use_case import ProcessCRMLeadDiscoveryTaskUseCase
-from src.crm.process_pending_crm_report_requests_use_case import ProcessPendingCRMReportRequestsUseCase
-from src.crm.process_crm_lead_pipeline_task_use_case import ProcessCRMLeadPipelineTaskUseCase
-from src.crm.process_geo_grid_study_task_use_case import ProcessGeoGridStudyTaskUseCase
-from src.crm.retry_crm_report_request_use_case import RetryCRMReportRequestUseCase
-from src.crm.update_crm_lead_use_case import UpdateCRMLeadUseCase
+from src.crm.leads.bulk_delete_crm_leads_use_case import BulkDeleteCRMLeadsUseCase
+from src.crm.campaigns.create_crm_campaign_use_case import CreateCRMCampaignUseCase
+from src.crm.report_requests.create_crm_report_feedback_use_case import CreateCRMReportFeedbackUseCase
+from src.crm.leads.create_crm_lead_use_case import CreateCRMLeadUseCase
+from src.crm.report_requests.create_crm_report_request_use_case import CreateCRMReportRequestUseCase
+from src.crm.studies.generate_crm_lead_report_use_case import GenerateCRMLeadReportUseCase
+from src.crm.studies.generate_crm_paid_report_use_case import GenerateCRMPaidReportUseCase
+from src.crm.studies.generate_crm_public_study_use_case import GenerateCRMPublicStudyUseCase
+from src.crm.campaigns.handle_resend_webhook_use_case import HandleResendWebhookUseCase
+from src.crm.studies.get_crm_discovery_run_use_case import GetCRMDiscoveryRunUseCase
+from src.crm.leads.get_crm_lead_use_case import GetCRMLeadUseCase
+from src.crm.studies.get_crm_geo_grid_run_use_case import GetCRMGeoGridRunUseCase
+from src.crm.studies.get_crm_geo_grid_stats_use_case import GetCRMGeoGridStatsUseCase
+from src.crm.studies.enqueue_benchmark_study_job_use_case import EnqueueBenchmarkStudyJobUseCase
+from src.crm.leads.enqueue_crm_lead_discovery_job_use_case import EnqueueCRMLeadDiscoveryJobUseCase
+from src.crm.leads.enqueue_crm_lead_pipeline_job_use_case import EnqueueCRMLeadPipelineJobUseCase
+from src.crm.campaigns.enqueue_due_campaign_dispatch_jobs_use_case import EnqueueDueCampaignDispatchJobsUseCase
+from src.crm.studies.enqueue_geo_grid_study_job_use_case import EnqueueGeoGridStudyJobUseCase
+from src.crm.campaigns.launch_crm_campaign_use_case import LaunchCRMCampaignUseCase
+from src.crm.campaigns.list_crm_campaigns_use_case import ListCRMCampaignsUseCase
+from src.crm.studies.list_crm_discovery_runs_use_case import ListCRMDiscoveryRunsUseCase
+from src.crm.campaigns.list_crm_events_use_case import ListCRMEventsUseCase
+from src.crm.studies.list_crm_geo_cities_use_case import ListCRMGeoCitiesUseCase
+from src.crm.studies.list_crm_geo_grid_results_use_case import ListCRMGeoGridResultsUseCase
+from src.crm.studies.list_crm_geo_grid_runs_use_case import ListCRMGeoGridRunsUseCase
+from src.crm.leads.list_crm_leads_use_case import ListCRMLeadsUseCase
+from src.crm.campaigns.list_crm_messages_use_case import ListCRMMessagesUseCase
+from src.crm.report_requests.list_crm_report_requests_use_case import ListCRMReportRequestsUseCase
+from src.crm.studies.process_benchmark_study_task_use_case import ProcessBenchmarkStudyTaskUseCase
+from src.crm.campaigns.process_campaign_dispatch_task_use_case import ProcessCampaignDispatchTaskUseCase
+from src.crm.leads.process_crm_lead_discovery_task_use_case import ProcessCRMLeadDiscoveryTaskUseCase
+from src.crm.report_requests.process_pending_crm_report_requests_use_case import ProcessPendingCRMReportRequestsUseCase
+from src.crm.leads.process_crm_lead_pipeline_task_use_case import ProcessCRMLeadPipelineTaskUseCase
+from src.crm.studies.process_geo_grid_study_task_use_case import ProcessGeoGridStudyTaskUseCase
+from src.crm.report_requests.retry_crm_report_request_use_case import RetryCRMReportRequestUseCase
+from src.crm.leads.sync_crm_lead_pipeline_refs_use_case import SyncCRMLeadPipelineRefsUseCase
+from src.crm.leads.update_crm_lead_use_case import UpdateCRMLeadUseCase
 from src.job_runtime.local_browser_job_coordinator import LocalBrowserJobCoordinator
 from src.pipeline.llm_analyzer import ReviewLLMAnalyzer
 from src.pipeline.preprocessor import ReviewPreprocessor
@@ -81,13 +92,9 @@ class ApplicationRoot:
         crm: CRMService,
     ) -> EnqueueCRMLeadDiscoveryJobUseCase:
         return EnqueueCRMLeadDiscoveryJobUseCase(
-            job_service=self.analysis_jobs,
             ensure_indexes=crm.ensure_indexes,
-            create_discovery_run=crm._discovery_run_repository.create_run,
-            append_discovery_run_step=crm._discovery_run_repository.append_step,
-            use_discovery_v2=bool(crm._use_discovery_v2),
-            live_google_discovery_sources=crm._LIVE_GOOGLE_DISCOVERY_SOURCES,
-            live_google_discovery_aliases=crm._LIVE_GOOGLE_DISCOVERY_ALIASES,
+            lead_job_enqueue_runtime=crm._lead_job_enqueue_runtime,
+            use_discovery_v2=lambda: bool(crm._use_discovery_v2),
         )
 
     def _build_enqueue_geo_grid_study_job_use_case(
@@ -95,12 +102,8 @@ class ApplicationRoot:
         crm: CRMService,
     ) -> EnqueueGeoGridStudyJobUseCase:
         return EnqueueGeoGridStudyJobUseCase(
-            job_service=self.analysis_jobs,
             ensure_indexes=crm.ensure_indexes,
-            get_geo_city_by_slug=crm._geo_city_repository.get_by_slug,
-            create_geo_grid_run=crm._geo_grid_run_repository.create_run,
-            set_geo_grid_run_job_id=crm._geo_grid_run_repository.set_job_id,
-            record_event=crm._record_event,
+            study_job_enqueue_runtime=crm._study_job_enqueue_runtime,
         )
 
     def _build_enqueue_crm_lead_pipeline_job_use_case(
@@ -108,13 +111,8 @@ class ApplicationRoot:
         crm: CRMService,
     ) -> EnqueueCRMLeadPipelineJobUseCase:
         return EnqueueCRMLeadPipelineJobUseCase(
-            job_service=self.analysis_jobs,
             ensure_indexes=crm.ensure_indexes,
-            parse_object_id=crm._parse_object_id,
-            now_utc=crm._now_utc,
-            sanitize_payload=crm._sanitize_payload,
-            record_event=crm._record_event,
-            leads_collection_name=crm._LEADS_COLLECTION,
+            lead_job_enqueue_runtime=crm._lead_job_enqueue_runtime,
         )
 
     def _build_enqueue_benchmark_study_job_use_case(
@@ -122,12 +120,8 @@ class ApplicationRoot:
         crm: CRMService,
     ) -> EnqueueBenchmarkStudyJobUseCase:
         return EnqueueBenchmarkStudyJobUseCase(
-            job_service=self.analysis_jobs,
             ensure_indexes=crm.ensure_indexes,
-            create_benchmark_run=crm._benchmark_run_repository.create_run,
-            record_event=crm._record_event,
-            sanitize_payload=crm._sanitize_payload,
-            live_google_discovery_aliases=crm._LIVE_GOOGLE_DISCOVERY_ALIASES,
+            study_job_enqueue_runtime=crm._study_job_enqueue_runtime,
         )
 
     def _build_create_crm_report_request_use_case(
@@ -162,6 +156,33 @@ class ApplicationRoot:
             report_feedback_collection_name=crm._REPORT_FEEDBACK_COLLECTION,
             report_requests_collection_name=crm._REPORT_REQUESTS_COLLECTION,
             leads_collection_name=crm._LEADS_COLLECTION,
+        )
+
+    def _build_generate_crm_lead_report_use_case(
+        self,
+        crm: CRMService,
+    ) -> GenerateCRMLeadReportUseCase:
+        return GenerateCRMLeadReportUseCase(
+            ensure_indexes=crm.ensure_indexes,
+            benchmark_report_runtime=crm._benchmark_report_runtime,
+        )
+
+    def _build_generate_crm_paid_report_use_case(
+        self,
+        crm: CRMService,
+    ) -> GenerateCRMPaidReportUseCase:
+        return GenerateCRMPaidReportUseCase(
+            ensure_indexes=crm.ensure_indexes,
+            benchmark_report_runtime=crm._benchmark_report_runtime,
+        )
+
+    def _build_generate_crm_public_study_use_case(
+        self,
+        crm: CRMService,
+    ) -> GenerateCRMPublicStudyUseCase:
+        return GenerateCRMPublicStudyUseCase(
+            ensure_indexes=crm.ensure_indexes,
+            benchmark_report_runtime=crm._benchmark_report_runtime,
         )
 
     def _build_create_crm_lead_use_case(
@@ -222,12 +243,7 @@ class ApplicationRoot:
     ) -> CreateCRMCampaignUseCase:
         return CreateCRMCampaignUseCase(
             ensure_indexes=crm.ensure_indexes,
-            resolve_cadence_template=crm._resolve_cadence_template,
-            now_utc=crm._now_utc,
-            record_event=crm._record_event,
-            serialize_mongo_doc=crm._serialize_mongo_doc,
-            sanitize_payload=crm._sanitize_payload,
-            campaigns_collection_name=crm._CAMPAIGNS_COLLECTION,
+            campaign_workflow_runtime=crm._campaign_workflow_runtime,
         )
 
     def _build_launch_crm_campaign_use_case(
@@ -237,19 +253,7 @@ class ApplicationRoot:
     ) -> LaunchCRMCampaignUseCase:
         return LaunchCRMCampaignUseCase(
             ensure_indexes=crm.ensure_indexes,
-            parse_object_id=crm._parse_object_id,
-            resolve_cadence_template=crm._resolve_cadence_template,
-            build_campaign_lead_query=crm._build_campaign_lead_query,
-            load_suppressed_emails=crm._load_suppressed_emails,
-            now_utc=crm._now_utc,
-            normalize_email=crm._normalize_email,
-            build_mini_report_for_lead=crm._build_mini_report_for_lead,
-            render_cadence_step=crm._render_cadence_step,
-            record_event=crm._record_event,
-            enqueue_due_campaign_dispatch_jobs=enqueue_due_campaign_dispatch_jobs.execute,
-            campaigns_collection_name=crm._CAMPAIGNS_COLLECTION,
-            leads_collection_name=crm._LEADS_COLLECTION,
-            messages_collection_name=crm._MESSAGES_COLLECTION,
+            campaign_workflow_runtime=crm._campaign_workflow_runtime,
         )
 
     def _build_handle_resend_webhook_use_case(
@@ -297,13 +301,14 @@ class ApplicationRoot:
     def _build_get_crm_lead_use_case(
         self,
         crm: CRMService,
+        sync_crm_lead_pipeline_refs: SyncCRMLeadPipelineRefsUseCase,
     ) -> GetCRMLeadUseCase:
         return GetCRMLeadUseCase(
             ensure_indexes=crm.ensure_indexes,
             use_repo_v2=bool(crm._use_repo_v2),
             lead_repository=crm._lead_repository,
             parse_object_id=crm._parse_object_id,
-            sync_lead_pipeline_refs=crm.sync_lead_pipeline_refs,
+            sync_lead_pipeline_refs=sync_crm_lead_pipeline_refs.execute,
             serialize_mongo_doc=crm._serialize_mongo_doc,
             sanitize_payload=crm._sanitize_payload,
             leads_collection_name=crm._LEADS_COLLECTION,
@@ -344,6 +349,93 @@ class ApplicationRoot:
             events_collection_name=crm._EVENTS_COLLECTION,
         )
 
+    def _build_list_crm_discovery_runs_use_case(
+        self,
+        crm: CRMService,
+    ) -> ListCRMDiscoveryRunsUseCase:
+        return ListCRMDiscoveryRunsUseCase(
+            ensure_indexes=crm.ensure_indexes,
+            discovery_run_repository=crm._discovery_run_repository,
+            sanitize_payload=crm._sanitize_payload,
+        )
+
+    def _build_get_crm_discovery_run_use_case(
+        self,
+        crm: CRMService,
+    ) -> GetCRMDiscoveryRunUseCase:
+        return GetCRMDiscoveryRunUseCase(
+            ensure_indexes=crm.ensure_indexes,
+            discovery_run_repository=crm._discovery_run_repository,
+            sanitize_payload=crm._sanitize_payload,
+        )
+
+    def _build_list_crm_geo_cities_use_case(
+        self,
+        crm: CRMService,
+    ) -> ListCRMGeoCitiesUseCase:
+        return ListCRMGeoCitiesUseCase(
+            ensure_indexes=crm.ensure_indexes,
+            geo_city_repository=crm._geo_city_repository,
+            sanitize_payload=crm._sanitize_payload,
+        )
+
+    def _build_list_crm_geo_grid_runs_use_case(
+        self,
+        crm: CRMService,
+    ) -> ListCRMGeoGridRunsUseCase:
+        return ListCRMGeoGridRunsUseCase(
+            ensure_indexes=crm.ensure_indexes,
+            geo_grid_run_repository=crm._geo_grid_run_repository,
+            sanitize_payload=crm._sanitize_payload,
+        )
+
+    def _build_get_crm_geo_grid_run_use_case(
+        self,
+        crm: CRMService,
+    ) -> GetCRMGeoGridRunUseCase:
+        return GetCRMGeoGridRunUseCase(
+            ensure_indexes=crm.ensure_indexes,
+            geo_grid_run_repository=crm._geo_grid_run_repository,
+            sanitize_payload=crm._sanitize_payload,
+        )
+
+    def _build_list_crm_geo_grid_results_use_case(
+        self,
+        crm: CRMService,
+    ) -> ListCRMGeoGridResultsUseCase:
+        return ListCRMGeoGridResultsUseCase(
+            ensure_indexes=crm.ensure_indexes,
+            geo_grid_run_repository=crm._geo_grid_run_repository,
+            geo_grid_result_repository=crm._geo_grid_result_repository,
+            sanitize_payload=crm._sanitize_payload,
+        )
+
+    def _build_get_crm_geo_grid_stats_use_case(
+        self,
+        crm: CRMService,
+    ) -> GetCRMGeoGridStatsUseCase:
+        return GetCRMGeoGridStatsUseCase(
+            ensure_indexes=crm.ensure_indexes,
+            geo_grid_run_repository=crm._geo_grid_run_repository,
+            geo_grid_result_repository=crm._geo_grid_result_repository,
+            build_geo_grid_stats=crm._build_geo_grid_stats,
+            sanitize_payload=crm._sanitize_payload,
+        )
+
+    def _build_sync_crm_lead_pipeline_refs_use_case(
+        self,
+        crm: CRMService,
+    ) -> SyncCRMLeadPipelineRefsUseCase:
+        return SyncCRMLeadPipelineRefsUseCase(
+            ensure_indexes=crm.ensure_indexes,
+            parse_object_id=crm._parse_object_id,
+            now_utc=crm._now_utc,
+            serialize_mongo_doc=crm._serialize_mongo_doc,
+            sanitize_payload=crm._sanitize_payload,
+            leads_collection_name=crm._LEADS_COLLECTION,
+            jobs_collection_name=crm._JOBS_COLLECTION,
+        )
+
     def _build_process_crm_lead_pipeline_task_use_case(
         self,
         crm: CRMService,
@@ -365,7 +457,7 @@ class ApplicationRoot:
     ) -> ProcessCRMLeadDiscoveryTaskUseCase:
         return ProcessCRMLeadDiscoveryTaskUseCase(
             ensure_indexes=crm.ensure_indexes,
-            use_discovery_v2=bool(crm._use_discovery_v2),
+            use_discovery_v2=lambda: bool(crm._use_discovery_v2),
             discovery_run_repository=crm._discovery_run_repository,
             discover_candidates_for_orchestrator=crm._discover_candidates_for_orchestrator,
             upsert_lead_candidate=crm._upsert_lead_candidate,
@@ -394,14 +486,7 @@ class ApplicationRoot:
     ) -> ProcessGeoGridStudyTaskUseCase:
         return ProcessGeoGridStudyTaskUseCase(
             ensure_indexes=crm.ensure_indexes,
-            geo_grid_run_repository=crm._geo_grid_run_repository,
-            geo_city_repository=crm._geo_city_repository,
-            geo_grid_result_repository=crm._geo_grid_result_repository,
-            record_event=crm._record_event,
-            sanitize_payload=crm._sanitize_payload,
-            discover_geo_grid_point_results=crm._discover_geo_grid_point_results,
-            discover_geo_grid_point_results_uule=crm._discover_geo_grid_point_results_uule,
-            scraper_factory=BusinessService.build_default_scraper,
+            geo_grid_study_runtime=crm._geo_grid_study_runtime,
         )
 
     def _build_enqueue_due_campaign_dispatch_jobs_use_case(
@@ -410,9 +495,7 @@ class ApplicationRoot:
     ) -> EnqueueDueCampaignDispatchJobsUseCase:
         return EnqueueDueCampaignDispatchJobsUseCase(
             ensure_indexes=crm.ensure_indexes,
-            now_utc=crm._now_utc,
-            job_service=self.analysis_jobs,
-            messages_collection_name=crm._MESSAGES_COLLECTION,
+            campaign_workflow_runtime=crm._campaign_workflow_runtime,
         )
 
     def _build_process_campaign_dispatch_task_use_case(
@@ -514,6 +597,7 @@ class ApplicationRoot:
         )
         enqueue_benchmark_study_job = self._build_enqueue_benchmark_study_job_use_case(service)
         enqueue_due_campaign_dispatch_jobs = self._build_enqueue_due_campaign_dispatch_jobs_use_case(service)
+        sync_crm_lead_pipeline_refs = self._build_sync_crm_lead_pipeline_refs_use_case(service)
         return service.attach_crm_queue_use_cases(
             enqueue_crm_lead_discovery_job_use_case=self._build_enqueue_crm_lead_discovery_job_use_case(service),
             enqueue_crm_lead_pipeline_job_use_case=self._build_enqueue_crm_lead_pipeline_job_use_case(service),
@@ -523,6 +607,9 @@ class ApplicationRoot:
                 enqueue_benchmark_study_job,
             ),
             create_crm_report_feedback_use_case=self._build_create_crm_report_feedback_use_case(service),
+            generate_crm_lead_report_use_case=self._build_generate_crm_lead_report_use_case(service),
+            generate_crm_paid_report_use_case=self._build_generate_crm_paid_report_use_case(service),
+            generate_crm_public_study_use_case=self._build_generate_crm_public_study_use_case(service),
             create_crm_lead_use_case=self._build_create_crm_lead_use_case(service),
             update_crm_lead_use_case=self._build_update_crm_lead_use_case(service),
             bulk_delete_crm_leads_use_case=self._build_bulk_delete_crm_leads_use_case(service),
@@ -534,10 +621,21 @@ class ApplicationRoot:
             handle_resend_webhook_use_case=self._build_handle_resend_webhook_use_case(service),
             list_crm_report_requests_use_case=self._build_list_crm_report_requests_use_case(service),
             list_crm_leads_use_case=self._build_list_crm_leads_use_case(service),
-            get_crm_lead_use_case=self._build_get_crm_lead_use_case(service),
+            get_crm_lead_use_case=self._build_get_crm_lead_use_case(
+                service,
+                sync_crm_lead_pipeline_refs,
+            ),
             list_crm_campaigns_use_case=self._build_list_crm_campaigns_use_case(service),
             list_crm_messages_use_case=self._build_list_crm_messages_use_case(service),
             list_crm_events_use_case=self._build_list_crm_events_use_case(service),
+            list_crm_discovery_runs_use_case=self._build_list_crm_discovery_runs_use_case(service),
+            get_crm_discovery_run_use_case=self._build_get_crm_discovery_run_use_case(service),
+            list_crm_geo_cities_use_case=self._build_list_crm_geo_cities_use_case(service),
+            list_crm_geo_grid_runs_use_case=self._build_list_crm_geo_grid_runs_use_case(service),
+            get_crm_geo_grid_run_use_case=self._build_get_crm_geo_grid_run_use_case(service),
+            list_crm_geo_grid_results_use_case=self._build_list_crm_geo_grid_results_use_case(service),
+            get_crm_geo_grid_stats_use_case=self._build_get_crm_geo_grid_stats_use_case(service),
+            sync_crm_lead_pipeline_refs_use_case=sync_crm_lead_pipeline_refs,
             enqueue_geo_grid_study_job_use_case=self._build_enqueue_geo_grid_study_job_use_case(service),
             process_crm_lead_discovery_task_use_case=self._build_process_crm_lead_discovery_task_use_case(service),
             process_benchmark_study_task_use_case=self._build_process_benchmark_study_task_use_case(service),
@@ -610,6 +708,24 @@ class ApplicationRoot:
         return use_case
 
     @cached_property
+    def generate_crm_lead_report(self) -> GenerateCRMLeadReportUseCase:
+        use_case = self.crm.generate_crm_lead_report_use_case
+        assert use_case is not None
+        return use_case
+
+    @cached_property
+    def generate_crm_paid_report(self) -> GenerateCRMPaidReportUseCase:
+        use_case = self.crm.generate_crm_paid_report_use_case
+        assert use_case is not None
+        return use_case
+
+    @cached_property
+    def generate_crm_public_study(self) -> GenerateCRMPublicStudyUseCase:
+        use_case = self.crm.generate_crm_public_study_use_case
+        assert use_case is not None
+        return use_case
+
+    @cached_property
     def create_crm_lead(self) -> CreateCRMLeadUseCase:
         use_case = self.crm.create_crm_lead_use_case
         assert use_case is not None
@@ -678,6 +794,54 @@ class ApplicationRoot:
     @cached_property
     def list_crm_events(self) -> ListCRMEventsUseCase:
         use_case = self.crm.list_crm_events_use_case
+        assert use_case is not None
+        return use_case
+
+    @cached_property
+    def list_crm_discovery_runs(self) -> ListCRMDiscoveryRunsUseCase:
+        use_case = self.crm.list_crm_discovery_runs_use_case
+        assert use_case is not None
+        return use_case
+
+    @cached_property
+    def get_crm_discovery_run(self) -> GetCRMDiscoveryRunUseCase:
+        use_case = self.crm.get_crm_discovery_run_use_case
+        assert use_case is not None
+        return use_case
+
+    @cached_property
+    def list_crm_geo_cities(self) -> ListCRMGeoCitiesUseCase:
+        use_case = self.crm.list_crm_geo_cities_use_case
+        assert use_case is not None
+        return use_case
+
+    @cached_property
+    def list_crm_geo_grid_runs(self) -> ListCRMGeoGridRunsUseCase:
+        use_case = self.crm.list_crm_geo_grid_runs_use_case
+        assert use_case is not None
+        return use_case
+
+    @cached_property
+    def get_crm_geo_grid_run(self) -> GetCRMGeoGridRunUseCase:
+        use_case = self.crm.get_crm_geo_grid_run_use_case
+        assert use_case is not None
+        return use_case
+
+    @cached_property
+    def list_crm_geo_grid_results(self) -> ListCRMGeoGridResultsUseCase:
+        use_case = self.crm.list_crm_geo_grid_results_use_case
+        assert use_case is not None
+        return use_case
+
+    @cached_property
+    def get_crm_geo_grid_stats(self) -> GetCRMGeoGridStatsUseCase:
+        use_case = self.crm.get_crm_geo_grid_stats_use_case
+        assert use_case is not None
+        return use_case
+
+    @cached_property
+    def sync_crm_lead_pipeline_refs(self) -> SyncCRMLeadPipelineRefsUseCase:
+        use_case = self.crm.sync_crm_lead_pipeline_refs_use_case
         assert use_case is not None
         return use_case
 

@@ -5,34 +5,49 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.crm.bulk_delete_crm_leads_use_case import BulkDeleteCRMLeadsUseCase
-from src.crm.create_crm_campaign_use_case import CreateCRMCampaignUseCase
-from src.crm.create_crm_report_feedback_use_case import CreateCRMReportFeedbackUseCase
-from src.crm.create_crm_lead_use_case import CreateCRMLeadUseCase
-from src.crm.create_crm_report_request_use_case import CreateCRMReportRequestUseCase
-from src.crm.handle_resend_webhook_use_case import HandleResendWebhookUseCase
-from src.crm.get_crm_lead_use_case import GetCRMLeadUseCase
-from src.crm.enqueue_crm_lead_discovery_job_use_case import EnqueueCRMLeadDiscoveryJobUseCase
-from src.crm.enqueue_crm_lead_pipeline_job_use_case import EnqueueCRMLeadPipelineJobUseCase
-from src.crm.enqueue_due_campaign_dispatch_jobs_use_case import EnqueueDueCampaignDispatchJobsUseCase
-from src.crm.enqueue_geo_grid_study_job_use_case import EnqueueGeoGridStudyJobUseCase
-from src.crm.launch_crm_campaign_use_case import LaunchCRMCampaignUseCase
-from src.crm.list_crm_campaigns_use_case import ListCRMCampaignsUseCase
-from src.crm.list_crm_events_use_case import ListCRMEventsUseCase
-from src.crm.list_crm_leads_use_case import ListCRMLeadsUseCase
-from src.crm.list_crm_messages_use_case import ListCRMMessagesUseCase
-from src.crm.list_crm_report_requests_use_case import ListCRMReportRequestsUseCase
-from src.crm.process_pending_crm_report_requests_use_case import ProcessPendingCRMReportRequestsUseCase
-from src.crm.retry_crm_report_request_use_case import RetryCRMReportRequestUseCase
-from src.crm.update_crm_lead_use_case import UpdateCRMLeadUseCase
+from src.crm.leads.bulk_delete_crm_leads_use_case import BulkDeleteCRMLeadsUseCase
+from src.crm.campaigns.create_crm_campaign_use_case import CreateCRMCampaignUseCase
+from src.crm.report_requests.create_crm_report_feedback_use_case import CreateCRMReportFeedbackUseCase
+from src.crm.leads.create_crm_lead_use_case import CreateCRMLeadUseCase
+from src.crm.report_requests.create_crm_report_request_use_case import CreateCRMReportRequestUseCase
+from src.crm.studies.generate_crm_lead_report_use_case import GenerateCRMLeadReportUseCase
+from src.crm.studies.generate_crm_paid_report_use_case import GenerateCRMPaidReportUseCase
+from src.crm.studies.generate_crm_public_study_use_case import GenerateCRMPublicStudyUseCase
+from src.crm.campaigns.handle_resend_webhook_use_case import HandleResendWebhookUseCase
+from src.crm.studies.get_crm_discovery_run_use_case import GetCRMDiscoveryRunUseCase
+from src.crm.leads.get_crm_lead_use_case import GetCRMLeadUseCase
+from src.crm.studies.get_crm_geo_grid_run_use_case import GetCRMGeoGridRunUseCase
+from src.crm.studies.get_crm_geo_grid_stats_use_case import GetCRMGeoGridStatsUseCase
+from src.crm.leads.enqueue_crm_lead_discovery_job_use_case import EnqueueCRMLeadDiscoveryJobUseCase
+from src.crm.leads.enqueue_crm_lead_pipeline_job_use_case import EnqueueCRMLeadPipelineJobUseCase
+from src.crm.campaigns.enqueue_due_campaign_dispatch_jobs_use_case import EnqueueDueCampaignDispatchJobsUseCase
+from src.crm.studies.enqueue_geo_grid_study_job_use_case import EnqueueGeoGridStudyJobUseCase
+from src.crm.campaigns.launch_crm_campaign_use_case import LaunchCRMCampaignUseCase
+from src.crm.campaigns.list_crm_campaigns_use_case import ListCRMCampaignsUseCase
+from src.crm.studies.list_crm_discovery_runs_use_case import ListCRMDiscoveryRunsUseCase
+from src.crm.campaigns.list_crm_events_use_case import ListCRMEventsUseCase
+from src.crm.studies.list_crm_geo_cities_use_case import ListCRMGeoCitiesUseCase
+from src.crm.studies.list_crm_geo_grid_results_use_case import ListCRMGeoGridResultsUseCase
+from src.crm.studies.list_crm_geo_grid_runs_use_case import ListCRMGeoGridRunsUseCase
+from src.crm.leads.list_crm_leads_use_case import ListCRMLeadsUseCase
+from src.crm.campaigns.list_crm_messages_use_case import ListCRMMessagesUseCase
+from src.crm.report_requests.list_crm_report_requests_use_case import ListCRMReportRequestsUseCase
+from src.crm.report_requests.process_pending_crm_report_requests_use_case import ProcessPendingCRMReportRequestsUseCase
+from src.crm.report_requests.retry_crm_report_request_use_case import RetryCRMReportRequestUseCase
+from src.crm.leads.update_crm_lead_use_case import UpdateCRMLeadUseCase
 from src.dependencies import (
     create_bulk_delete_crm_leads_use_case,
     create_create_crm_campaign_use_case,
-    create_crm_service,
     create_create_crm_lead_use_case,
     create_create_crm_report_feedback_use_case,
     create_create_crm_report_request_use_case,
+    create_generate_crm_lead_report_use_case,
+    create_generate_crm_paid_report_use_case,
+    create_generate_crm_public_study_use_case,
+    create_get_crm_discovery_run_use_case,
     create_get_crm_lead_use_case,
+    create_get_crm_geo_grid_run_use_case,
+    create_get_crm_geo_grid_stats_use_case,
     create_handle_resend_webhook_use_case,
     create_enqueue_crm_lead_discovery_job_use_case,
     create_enqueue_crm_lead_pipeline_job_use_case,
@@ -40,7 +55,11 @@ from src.dependencies import (
     create_enqueue_geo_grid_study_job_use_case,
     create_launch_crm_campaign_use_case,
     create_list_crm_campaigns_use_case,
+    create_list_crm_discovery_runs_use_case,
     create_list_crm_events_use_case,
+    create_list_crm_geo_cities_use_case,
+    create_list_crm_geo_grid_results_use_case,
+    create_list_crm_geo_grid_runs_use_case,
     create_list_crm_leads_use_case,
     create_list_crm_messages_use_case,
     create_list_crm_report_requests_use_case,
@@ -48,10 +67,8 @@ from src.dependencies import (
     create_retry_crm_report_request_use_case,
     create_update_crm_lead_use_case,
 )
-from src.services.crm_service import CRMService
 
 router = APIRouter(prefix="/crm")
-CRMServiceDep = Annotated[CRMService, Depends(create_crm_service)]
 EnqueueCRMLeadDiscoveryJobUseCaseDep = Annotated[
     EnqueueCRMLeadDiscoveryJobUseCase,
     Depends(create_enqueue_crm_lead_discovery_job_use_case),
@@ -75,6 +92,18 @@ CreateCRMReportRequestUseCaseDep = Annotated[
 CreateCRMReportFeedbackUseCaseDep = Annotated[
     CreateCRMReportFeedbackUseCase,
     Depends(create_create_crm_report_feedback_use_case),
+]
+GenerateCRMLeadReportUseCaseDep = Annotated[
+    GenerateCRMLeadReportUseCase,
+    Depends(create_generate_crm_lead_report_use_case),
+]
+GenerateCRMPaidReportUseCaseDep = Annotated[
+    GenerateCRMPaidReportUseCase,
+    Depends(create_generate_crm_paid_report_use_case),
+]
+GenerateCRMPublicStudyUseCaseDep = Annotated[
+    GenerateCRMPublicStudyUseCase,
+    Depends(create_generate_crm_public_study_use_case),
 ]
 RetryCRMReportRequestUseCaseDep = Annotated[
     RetryCRMReportRequestUseCase,
@@ -131,6 +160,34 @@ ListCRMMessagesUseCaseDep = Annotated[
 ListCRMEventsUseCaseDep = Annotated[
     ListCRMEventsUseCase,
     Depends(create_list_crm_events_use_case),
+]
+ListCRMDiscoveryRunsUseCaseDep = Annotated[
+    ListCRMDiscoveryRunsUseCase,
+    Depends(create_list_crm_discovery_runs_use_case),
+]
+GetCRMDiscoveryRunUseCaseDep = Annotated[
+    GetCRMDiscoveryRunUseCase,
+    Depends(create_get_crm_discovery_run_use_case),
+]
+ListCRMGeoCitiesUseCaseDep = Annotated[
+    ListCRMGeoCitiesUseCase,
+    Depends(create_list_crm_geo_cities_use_case),
+]
+ListCRMGeoGridRunsUseCaseDep = Annotated[
+    ListCRMGeoGridRunsUseCase,
+    Depends(create_list_crm_geo_grid_runs_use_case),
+]
+GetCRMGeoGridRunUseCaseDep = Annotated[
+    GetCRMGeoGridRunUseCase,
+    Depends(create_get_crm_geo_grid_run_use_case),
+]
+ListCRMGeoGridResultsUseCaseDep = Annotated[
+    ListCRMGeoGridResultsUseCase,
+    Depends(create_list_crm_geo_grid_results_use_case),
+]
+GetCRMGeoGridStatsUseCaseDep = Annotated[
+    GetCRMGeoGridStatsUseCase,
+    Depends(create_get_crm_geo_grid_stats_use_case),
 ]
 
 
@@ -634,20 +691,23 @@ async def list_crm_events(
 
 @router.get("/discovery-runs", tags=["CRM"])
 async def list_crm_discovery_runs(
-    service: CRMServiceDep,
+    list_crm_discovery_runs_use_case: ListCRMDiscoveryRunsUseCaseDep,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
 ) -> dict[str, Any]:
     try:
-        return await service.list_discovery_runs(page=page, page_size=page_size)
+        return await list_crm_discovery_runs_use_case.execute(page=page, page_size=page_size)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/discovery-runs/{discovery_run_id}", tags=["CRM"])
-async def get_crm_discovery_run(discovery_run_id: str, service: CRMServiceDep) -> dict[str, Any]:
+async def get_crm_discovery_run(
+    discovery_run_id: str,
+    get_crm_discovery_run_use_case: GetCRMDiscoveryRunUseCaseDep,
+) -> dict[str, Any]:
     try:
-        return await service.get_discovery_run(discovery_run_id=discovery_run_id)
+        return await get_crm_discovery_run_use_case.execute(discovery_run_id=discovery_run_id)
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except ValueError as exc:
@@ -655,9 +715,9 @@ async def get_crm_discovery_run(discovery_run_id: str, service: CRMServiceDep) -
 
 
 @router.get("/geo-cities", tags=["CRM"])
-async def list_crm_geo_cities(service: CRMServiceDep) -> list[dict[str, Any]]:
+async def list_crm_geo_cities(list_crm_geo_cities_use_case: ListCRMGeoCitiesUseCaseDep) -> list[dict[str, Any]]:
     try:
-        return await service.list_geo_cities()
+        return await list_crm_geo_cities_use_case.execute()
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -686,14 +746,14 @@ async def enqueue_crm_geo_grid_study(
 
 @router.get("/geo-grid-runs", tags=["CRM"])
 async def list_crm_geo_grid_runs(
-    service: CRMServiceDep,
+    list_crm_geo_grid_runs_use_case: ListCRMGeoGridRunsUseCaseDep,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     city_slug: str | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias="status"),
 ) -> dict[str, Any]:
     try:
-        return await service.list_geo_grid_runs(
+        return await list_crm_geo_grid_runs_use_case.execute(
             page=page,
             page_size=page_size,
             city_slug=city_slug,
@@ -704,9 +764,12 @@ async def list_crm_geo_grid_runs(
 
 
 @router.get("/geo-grid-runs/{geo_grid_run_id}", tags=["CRM"])
-async def get_crm_geo_grid_run(geo_grid_run_id: str, service: CRMServiceDep) -> dict[str, Any]:
+async def get_crm_geo_grid_run(
+    geo_grid_run_id: str,
+    get_crm_geo_grid_run_use_case: GetCRMGeoGridRunUseCaseDep,
+) -> dict[str, Any]:
     try:
-        return await service.get_geo_grid_run(geo_grid_run_id=geo_grid_run_id)
+        return await get_crm_geo_grid_run_use_case.execute(geo_grid_run_id=geo_grid_run_id)
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except ValueError as exc:
@@ -714,9 +777,12 @@ async def get_crm_geo_grid_run(geo_grid_run_id: str, service: CRMServiceDep) -> 
 
 
 @router.get("/geo-grid-runs/{geo_grid_run_id}/results", tags=["CRM"])
-async def list_crm_geo_grid_results(geo_grid_run_id: str, service: CRMServiceDep) -> list[dict[str, Any]]:
+async def list_crm_geo_grid_results(
+    geo_grid_run_id: str,
+    list_crm_geo_grid_results_use_case: ListCRMGeoGridResultsUseCaseDep,
+) -> list[dict[str, Any]]:
     try:
-        return await service.list_geo_grid_results(geo_grid_run_id=geo_grid_run_id)
+        return await list_crm_geo_grid_results_use_case.execute(geo_grid_run_id=geo_grid_run_id)
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except ValueError as exc:
@@ -724,9 +790,12 @@ async def list_crm_geo_grid_results(geo_grid_run_id: str, service: CRMServiceDep
 
 
 @router.get("/geo-grid-runs/{geo_grid_run_id}/stats", tags=["CRM"])
-async def get_crm_geo_grid_stats(geo_grid_run_id: str, service: CRMServiceDep) -> dict[str, Any]:
+async def get_crm_geo_grid_stats(
+    geo_grid_run_id: str,
+    get_crm_geo_grid_stats_use_case: GetCRMGeoGridStatsUseCaseDep,
+) -> dict[str, Any]:
     try:
-        return await service.get_geo_grid_stats(geo_grid_run_id=geo_grid_run_id)
+        return await get_crm_geo_grid_stats_use_case.execute(geo_grid_run_id=geo_grid_run_id)
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except ValueError as exc:
@@ -737,10 +806,10 @@ async def get_crm_geo_grid_stats(geo_grid_run_id: str, service: CRMServiceDep) -
 async def generate_crm_lead_report(
     benchmark_business_id: str,
     payload: CRMLeadReportGenerateRequest,
-    service: CRMServiceDep,
+    generate_crm_lead_report_use_case: GenerateCRMLeadReportUseCaseDep,
 ) -> dict[str, Any]:
     try:
-        return await service.generate_lead_report_for_benchmark_business(
+        return await generate_crm_lead_report_use_case.execute(
             benchmark_business_id=benchmark_business_id,
             cta=payload.cta,
         )
@@ -754,10 +823,10 @@ async def generate_crm_lead_report(
 async def generate_crm_paid_report(
     benchmark_business_id: str,
     payload: CRMPaidReportGenerateRequest,
-    service: CRMServiceDep,
+    generate_crm_paid_report_use_case: GenerateCRMPaidReportUseCaseDep,
 ) -> dict[str, Any]:
     try:
-        return await service.generate_paid_report_for_benchmark_business(
+        return await generate_crm_paid_report_use_case.execute(
             benchmark_business_id=benchmark_business_id,
             report_month=payload.report_month,
             history=payload.history,
@@ -773,10 +842,10 @@ async def generate_crm_paid_report(
 async def generate_crm_public_study(
     benchmark_run_id: str,
     payload: CRMPublicStudyGenerateRequest,
-    service: CRMServiceDep,
+    generate_crm_public_study_use_case: GenerateCRMPublicStudyUseCaseDep,
 ) -> dict[str, Any]:
     try:
-        return await service.generate_public_study_for_benchmark_run(
+        return await generate_crm_public_study_use_case.execute(
             benchmark_run_id=benchmark_run_id,
             cta=payload.cta,
         )
