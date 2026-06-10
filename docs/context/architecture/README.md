@@ -1,7 +1,12 @@
-# Arquitectura histórica
+# Architecture notes
 
-La descripción canónica y actualizada de la arquitectura del proyecto vive en:
+The canonical long-form architecture document now lives in:
 
-- [`README.md`](../../../README.md)
+- [`docs/README.md`](../../README.md)
 
-Este archivo queda solo como referencia histórica.
+Use that file as the main architectural map.
+
+Use these additional entrypoints when needed:
+
+- [`README.md`](../../../README.md) for setup and build
+- [`SCRAPERS.md`](../../../SCRAPERS.md) for scraper pipelines

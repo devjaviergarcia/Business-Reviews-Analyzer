@@ -1,9 +1,16 @@
-# Contexto histórico
+# Project context
 
-La documentación canónica de arquitectura, flujos y distribución del repositorio ya no vive aquí.
+This folder contains supporting context documents.
 
-Consulta el archivo raíz:
+Primary entrypoints:
 
-- [`README.md`](../../README.md)
+- [`docs/README.md`](../README.md) for the full project map
+- [`README.md`](../../README.md) for quick setup
+- [`SCRAPERS.md`](../../SCRAPERS.md) for scraper-specific reading
 
-Este directorio queda como material histórico y auxiliar.
+This directory currently groups:
+
+- context notes
+- project objective
+- context dictionary
+- architecture support material
