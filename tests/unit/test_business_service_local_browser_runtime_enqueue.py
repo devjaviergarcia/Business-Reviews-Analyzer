@@ -49,20 +49,30 @@ class _FakeJobService:
         }
 
 
-class _FakeLocalWorkerControlService:
-    def __init__(self, result: dict[str, Any] | None = None) -> None:
+class _FakeLocalBrowserWorkerRegistry:
+    def __init__(self, workers: list[dict[str, Any]] | None = None) -> None:
         self.calls: list[dict[str, Any]] = []
-        self._result = result or {"ok": True, "worker": {"running": True}}
+        self._workers = workers or []
 
-    async def ensure_started(self, *, use_xvfb: bool = True, reason: str = "") -> dict[str, Any]:
-        self.calls.append({"use_xvfb": use_xvfb, "reason": reason})
-        return self._result
+    async def list_live_workers(
+        self,
+        *,
+        supported_sources: tuple[str, ...] | list[str] | None = None,
+        stale_after_seconds: int = 30,
+    ) -> list[dict[str, Any]]:
+        self.calls.append(
+            {
+                "supported_sources": list(supported_sources or []),
+                "stale_after_seconds": stale_after_seconds,
+            }
+        )
+        return list(self._workers)
 
 
 def _build_service(
     *,
     job_service: _FakeJobService,
-    control_service: _FakeLocalWorkerControlService,
+    local_browser_worker_registry: _FakeLocalBrowserWorkerRegistry,
 ) -> BusinessService:
     return BusinessService(
         scraper=object(),
@@ -71,11 +81,11 @@ def _build_service(
         llm_analyzer=object(),
         job_service=job_service,
         query_service=object(),
-        tripadvisor_local_worker_control_service=control_service,
+        local_browser_worker_registry=local_browser_worker_registry,
     )
 
 
-def test_enqueue_tripadvisor_autostarts_local_worker_when_enabled(
+def test_enqueue_tripadvisor_still_queues_when_no_local_runtime_is_active(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from src import config as config_module
@@ -90,12 +100,17 @@ def test_enqueue_tripadvisor_autostarts_local_worker_when_enabled(
         "tripadvisor_local_worker_bridge_enabled",
         True,
     )
+    monkeypatch.setattr(
+        config_module.settings,
+        "local_browser_worker_heartbeat_seconds",
+        10,
+    )
 
     fake_job_service = _FakeJobService()
-    fake_control_service = _FakeLocalWorkerControlService()
+    fake_registry = _FakeLocalBrowserWorkerRegistry()
     service = _build_service(
         job_service=fake_job_service,
-        control_service=fake_control_service,
+        local_browser_worker_registry=fake_registry,
     )
 
     result = asyncio.run(
@@ -105,81 +120,48 @@ def test_enqueue_tripadvisor_autostarts_local_worker_when_enabled(
         )
     )
 
-    assert len(fake_control_service.calls) == 1
-    assert fake_control_service.calls[0]["use_xvfb"] is True
+    assert len(fake_registry.calls) == 1
+    assert fake_registry.calls[0]["supported_sources"] == ["tripadvisor"]
     assert len(fake_job_service.calls) == 1
     assert fake_job_service.calls[0]["queue_name"] == "scrape_tripadvisor"
-    assert fake_job_service.calls[0]["payload"]["canonical_name"] == "Godeo"
-    assert fake_job_service.calls[0]["payload"]["source_name"] == "Godeo"
-    assert fake_job_service.calls[0]["payload"]["canonical_name_normalized"] == "godeo"
     assert result["primary_source"] == "tripadvisor"
+    assert result["local_browser_runtime"]["available"] is False
+    assert result["local_browser_runtime"]["missing_sources"] == ["tripadvisor"]
+    assert "will remain pending" in result["local_browser_runtime"]["message"].lower()
 
 
-def test_enqueue_tripadvisor_skips_autostart_when_disabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from src import config as config_module
-
-    monkeypatch.setattr(
-        config_module.settings,
-        "tripadvisor_local_worker_autostart_on_enqueue",
-        False,
-    )
-    monkeypatch.setattr(
-        config_module.settings,
-        "tripadvisor_local_worker_bridge_enabled",
-        True,
-    )
-
+def test_enqueue_tripadvisor_reports_available_local_runtime_when_worker_exists() -> None:
     fake_job_service = _FakeJobService()
-    fake_control_service = _FakeLocalWorkerControlService()
+    fake_registry = _FakeLocalBrowserWorkerRegistry(
+        workers=[
+            {
+                "worker_id": "local-browser:test",
+                "state": "idle",
+                "supported_sources": ["google_maps", "tripadvisor"],
+                "host_name": "test-host",
+                "pid": 4242,
+                "last_seen_at": "2026-06-10T10:00:00Z",
+                "current_job_id": None,
+                "current_source": None,
+                "current_execution_mode": None,
+            }
+        ]
+    )
     service = _build_service(
         job_service=fake_job_service,
-        control_service=fake_control_service,
+        local_browser_worker_registry=fake_registry,
     )
 
-    asyncio.run(
+    result = asyncio.run(
         service.enqueue_business_scrape_jobs(
             name="Godeo",
             sources=["tripadvisor"],
         )
     )
 
-    assert len(fake_control_service.calls) == 0
     assert len(fake_job_service.calls) == 1
+    assert result["local_browser_runtime"]["available"] is True
+    assert result["local_browser_runtime"]["available_sources"] == ["tripadvisor"]
+    assert result["local_browser_runtime"]["worker_count"] == 1
+    assert result["local_browser_runtime"]["workers"][0]["worker_id"] == "local-browser:test"
 
-
-def test_enqueue_tripadvisor_fails_when_autostart_enabled_but_bridge_disabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from src import config as config_module
-
-    monkeypatch.setattr(
-        config_module.settings,
-        "tripadvisor_local_worker_autostart_on_enqueue",
-        True,
-    )
-    monkeypatch.setattr(
-        config_module.settings,
-        "tripadvisor_local_worker_bridge_enabled",
-        False,
-    )
-
-    fake_job_service = _FakeJobService()
-    fake_control_service = _FakeLocalWorkerControlService()
-    service = _build_service(
-        job_service=fake_job_service,
-        control_service=fake_control_service,
-    )
-
-    with pytest.raises(RuntimeError) as exc_info:
-        asyncio.run(
-            service.enqueue_business_scrape_jobs(
-                name="Godeo",
-                sources=["tripadvisor"],
-            )
-        )
-
-    assert "bridge is disabled" in str(exc_info.value).lower()
-    assert len(fake_job_service.calls) == 0
-    assert len(fake_control_service.calls) == 0

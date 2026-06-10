@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import asyncio
-import time
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 from pymongo import ReturnDocument
 
+from src.browser_runtime.local_browser_worker_registry import LocalBrowserWorkerRegistry
 from src.config import settings
 from src.job_runtime.browser_job_contracts import (
     DEFAULT_BROWSER_EXECUTION_MODE,
@@ -26,7 +25,7 @@ class BrowserJobControlRuntime:
         *,
         database_factory: DatabaseFactory,
         job_service: Any,
-        tripadvisor_local_worker_control_service: Any,
+        local_browser_worker_registry: LocalBrowserWorkerRegistry,
         validate_business_name: Callable[[str], str],
         normalize_text: Callable[[str], str],
         resolve_reviews_strategy: Callable[[str | None], str],
@@ -40,7 +39,7 @@ class BrowserJobControlRuntime:
     ) -> None:
         self._database_factory = database_factory
         self._job_service = job_service
-        self._tripadvisor_local_worker_control_service = tripadvisor_local_worker_control_service
+        self._local_browser_worker_registry = local_browser_worker_registry
         self._validate_business_name = validate_business_name
         self._normalize_text = normalize_text
         self._resolve_reviews_strategy = resolve_reviews_strategy
@@ -97,27 +96,66 @@ class BrowserJobControlRuntime:
             raise RuntimeError("Failed to create or fetch root business while enqueueing scrape jobs.")
         return business_doc
 
-    async def ensure_tripadvisor_worker_started_on_enqueue(self, *, selected_sources: tuple[str, ...]) -> None:
-        if "tripadvisor" not in selected_sources:
-            return
-        if not settings.tripadvisor_local_worker_autostart_on_enqueue:
-            return
-        if not settings.tripadvisor_local_worker_bridge_enabled:
-            raise RuntimeError(
-                "Tripadvisor local worker autostart is enabled, but bridge is disabled. "
-                "Set TRIPADVISOR_LOCAL_WORKER_BRIDGE_ENABLED=true."
+    async def inspect_local_browser_runtime_on_enqueue(
+        self,
+        *,
+        selected_sources: tuple[str, ...],
+    ) -> dict[str, Any]:
+        required_sources = [
+            str(source).strip().lower()
+            for source in selected_sources
+            if str(source).strip()
+        ]
+        stale_after_seconds = max(30, int(settings.local_browser_worker_heartbeat_seconds) * 3)
+        live_workers = await self._local_browser_worker_registry.list_live_workers(
+            supported_sources=required_sources,
+            stale_after_seconds=stale_after_seconds,
+        )
+
+        available_sources: set[str] = set()
+        worker_summaries: list[dict[str, Any]] = []
+        for worker in live_workers:
+            supported = [
+                str(item).strip().lower()
+                for item in (worker.get("supported_sources") or [])
+                if str(item).strip()
+            ]
+            available_sources.update(item for item in supported if item in required_sources)
+            worker_summaries.append(
+                {
+                    "worker_id": worker.get("worker_id"),
+                    "state": worker.get("state"),
+                    "supported_sources": supported,
+                    "host_name": worker.get("host_name"),
+                    "pid": worker.get("pid"),
+                    "last_seen_at": worker.get("last_seen_at"),
+                    "current_job_id": worker.get("current_job_id"),
+                    "current_source": worker.get("current_source"),
+                    "current_execution_mode": worker.get("current_execution_mode"),
+                }
             )
-        bridge_result = await self._tripadvisor_local_worker_control_service.ensure_started(
-            use_xvfb=True,
-            reason="business_scrape_jobs_enqueue",
-        )
-        worker_payload = bridge_result.get("worker")
-        if isinstance(worker_payload, dict) and worker_payload.get("running") is True:
-            return
-        raise RuntimeError(
-            "Tripadvisor local worker bridge did not confirm a running worker. "
-            f"Bridge response: {bridge_result}"
-        )
+
+        missing_sources = [source for source in required_sources if source not in available_sources]
+        available = not missing_sources
+        if available:
+            message = "Compatible local browser runtime worker detected."
+        else:
+            missing = ", ".join(missing_sources) or "required sources"
+            message = (
+                "No active local browser runtime worker currently advertises support for "
+                f"{missing}. Jobs can still be queued and will remain pending until a compatible "
+                "local browser runtime worker starts."
+            )
+        return {
+            "available": available,
+            "required_sources": required_sources,
+            "available_sources": sorted(available_sources),
+            "missing_sources": missing_sources,
+            "worker_count": len(worker_summaries),
+            "stale_after_seconds": stale_after_seconds,
+            "workers": worker_summaries,
+            "message": message,
+        }
 
     async def enqueue_business_scrape_jobs(  # noqa: PLR0913
         self,
@@ -142,7 +180,9 @@ class BrowserJobControlRuntime:
         selected_strategy = self._resolve_reviews_strategy(strategy)
         selected_force_mode = self._resolve_force_mode(force_mode)
         selected_sources = self._resolve_scrape_sources(sources)
-        await self.ensure_tripadvisor_worker_started_on_enqueue(selected_sources=selected_sources)
+        runtime_availability = await self.inspect_local_browser_runtime_on_enqueue(
+            selected_sources=selected_sources,
+        )
         root_business_doc = await self.ensure_root_business_on_enqueue(
             canonical_name=business_name,
             canonical_name_normalized=canonical_name_normalized,
@@ -222,6 +262,7 @@ class BrowserJobControlRuntime:
                 "business_id": root_business_id,
                 "execution_mode": normalized_execution_mode,
                 "runtime_target": DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
+                "local_browser_runtime": runtime_availability,
                 "sources_requested": list(selected_sources),
                 "source_names": source_names,
                 "jobs_by_source": jobs_by_source,

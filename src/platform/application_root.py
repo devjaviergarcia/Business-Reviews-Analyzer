@@ -71,7 +71,7 @@ class ApplicationRoot:
             resolve_reviews_strategy=business._resolve_reviews_strategy,
             resolve_force_mode=business._resolve_force_mode,
             resolve_scrape_sources=business._resolve_scrape_sources,
-            ensure_tripadvisor_worker_started_on_enqueue=business._ensure_tripadvisor_worker_started_on_enqueue,
+            inspect_local_browser_runtime_on_enqueue=business._inspect_local_browser_runtime_on_enqueue,
             ensure_root_business_on_enqueue=business._ensure_root_business_on_enqueue,
         )
 
@@ -582,7 +582,7 @@ class ApplicationRoot:
             llm_analyzer=self.review_llm,
             job_service=self.analysis_jobs,
             query_service=self.business_query,
-            tripadvisor_local_worker_control_service=self.legacy_tripadvisor_bridge,
+            local_browser_worker_registry=self.local_browser_registry,
         )
         return service.attach_browser_scrape_job_use_cases(
             enqueue_browser_scrape_jobs_use_case=self._build_enqueue_browser_scrape_jobs_use_case(service),

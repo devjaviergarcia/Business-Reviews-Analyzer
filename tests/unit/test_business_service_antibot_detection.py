@@ -15,7 +15,7 @@ def _build_service() -> BusinessService:
         query_service=Mock(),
         analyze_use_case=Mock(),
         reanalyze_use_case=Mock(),
-        tripadvisor_local_worker_control_service=Mock(),
+        local_browser_worker_registry=Mock(),
     )
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from src.browser_runtime.local_browser_worker_registry import LocalBrowserWorkerRegistry
 from src.business_catalog import (
     BrowserJobControlRuntime,
     BusinessArtifactRuntime,
@@ -41,7 +42,6 @@ from src.services.business_service_facets import (
     BusinessServiceSummaryFacet,
 )
 from src.services.reanalyze_use_case import ReanalyzeUseCase
-from src.services.tripadvisor_local_worker_control_service import TripadvisorLocalWorkerControlService
 
 
 class BusinessService(
@@ -153,7 +153,7 @@ class BusinessService(
         query_service: BusinessQueryService | None = None,
         analyze_use_case: AnalyzeBusinessUseCase | None = None,
         reanalyze_use_case: ReanalyzeUseCase | None = None,
-        tripadvisor_local_worker_control_service: TripadvisorLocalWorkerControlService | None = None,
+        local_browser_worker_registry: LocalBrowserWorkerRegistry | None = None,
     ) -> None:
         self._configure_business_foundation(
             scraper=scraper,
@@ -163,7 +163,7 @@ class BusinessService(
             report_builder=report_builder,
             job_service=job_service,
             query_service=query_service,
-            tripadvisor_local_worker_control_service=tripadvisor_local_worker_control_service,
+            local_browser_worker_registry=local_browser_worker_registry,
         )
         self._configure_business_analysis_context(
             analyze_use_case=analyze_use_case,
@@ -183,7 +183,7 @@ class BusinessService(
         report_builder: AdvancedBusinessReportBuilder | None,
         job_service: AnalysisJobService | None,
         query_service: BusinessQueryService | None,
-        tripadvisor_local_worker_control_service: TripadvisorLocalWorkerControlService | None,
+        local_browser_worker_registry: LocalBrowserWorkerRegistry | None,
     ) -> None:
         self.scraper = scraper or type(self).build_default_scraper()
         self.tripadvisor_scraper = tripadvisor_scraper or type(self).build_default_tripadvisor_scraper()
@@ -192,9 +192,7 @@ class BusinessService(
         self.report_builder = report_builder or AdvancedBusinessReportBuilder()
         self.job_service = job_service or AnalysisJobService()
         self.query_service = query_service or BusinessQueryService()
-        self.tripadvisor_local_worker_control_service = (
-            tripadvisor_local_worker_control_service or TripadvisorLocalWorkerControlService()
-        )
+        self.local_browser_worker_registry = local_browser_worker_registry or LocalBrowserWorkerRegistry()
 
     def _configure_business_analysis_context(
         self,
@@ -280,7 +278,7 @@ class BusinessService(
         self._browser_job_control_runtime = BrowserJobControlRuntime(
             database_factory=lambda: get_database(),
             job_service=self.job_service,
-            tripadvisor_local_worker_control_service=self.tripadvisor_local_worker_control_service,
+            local_browser_worker_registry=self.local_browser_worker_registry,
             validate_business_name=self._validate_business_name,
             normalize_text=self._normalize_text,
             resolve_reviews_strategy=self._resolve_reviews_strategy,

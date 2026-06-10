@@ -68,12 +68,12 @@ class BusinessServiceJobsFacet:
             canonical_name_normalized=canonical_name_normalized,
         )
 
-    async def _ensure_tripadvisor_worker_started_on_enqueue(
+    async def _inspect_local_browser_runtime_on_enqueue(
         self,
         *,
         selected_sources: tuple[str, ...],
-    ) -> None:
-        await self._browser_job_control_runtime.ensure_tripadvisor_worker_started_on_enqueue(
+    ) -> dict[str, Any]:
+        return await self._browser_job_control_runtime.inspect_local_browser_runtime_on_enqueue(
             selected_sources=selected_sources,
         )
 

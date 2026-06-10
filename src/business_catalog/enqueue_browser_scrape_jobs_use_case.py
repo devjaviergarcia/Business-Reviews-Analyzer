@@ -22,7 +22,7 @@ class EnqueueBrowserScrapeJobsUseCase:
         resolve_reviews_strategy: Callable[[str | None], str],
         resolve_force_mode: Callable[[str | None], str | None],
         resolve_scrape_sources: Callable[[tuple[str, ...] | list[str] | None], tuple[str, ...]],
-        ensure_tripadvisor_worker_started_on_enqueue: Callable[[tuple[str, ...]], Awaitable[None]],
+        inspect_local_browser_runtime_on_enqueue: Callable[[tuple[str, ...]], Awaitable[dict[str, Any]]],
         ensure_root_business_on_enqueue: Callable[..., Awaitable[dict[str, Any]]],
     ) -> None:
         self._job_service = job_service
@@ -31,7 +31,7 @@ class EnqueueBrowserScrapeJobsUseCase:
         self._resolve_reviews_strategy = resolve_reviews_strategy
         self._resolve_force_mode = resolve_force_mode
         self._resolve_scrape_sources = resolve_scrape_sources
-        self._ensure_tripadvisor_worker_started_on_enqueue = ensure_tripadvisor_worker_started_on_enqueue
+        self._inspect_local_browser_runtime_on_enqueue = inspect_local_browser_runtime_on_enqueue
         self._ensure_root_business_on_enqueue = ensure_root_business_on_enqueue
 
     async def execute(
@@ -57,7 +57,9 @@ class EnqueueBrowserScrapeJobsUseCase:
         selected_strategy = self._resolve_reviews_strategy(strategy)
         selected_force_mode = self._resolve_force_mode(force_mode)
         selected_sources = self._resolve_scrape_sources(sources)
-        await self._ensure_tripadvisor_worker_started_on_enqueue(selected_sources=selected_sources)
+        runtime_availability = await self._inspect_local_browser_runtime_on_enqueue(
+            selected_sources=selected_sources,
+        )
         root_business_doc = await self._ensure_root_business_on_enqueue(
             canonical_name=business_name,
             canonical_name_normalized=canonical_name_normalized,
@@ -143,6 +145,7 @@ class EnqueueBrowserScrapeJobsUseCase:
             "business_id": root_business_id,
             "execution_mode": normalized_execution_mode,
             "runtime_target": DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
+            "local_browser_runtime": runtime_availability,
             "sources_requested": list(selected_sources),
             "source_names": source_names,
             "jobs_by_source": jobs_by_source,

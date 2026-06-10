@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import socket
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from src.database import get_database
@@ -52,11 +52,33 @@ class LocalBrowserWorkerRegistry:
         database = get_database()
         collection = database[self._collection_name]
         docs = await collection.find({}).sort([("last_seen_at", -1), ("worker_id", 1)]).to_list(length=100)
-        items: list[dict[str, Any]] = []
-        for doc in docs:
-            payload = dict(doc)
-            payload["worker_id"] = str(payload.get("worker_id") or payload.get("_id") or "")
-            payload.pop("_id", None)
-            items.append(payload)
-        return items
+        return [self._serialize_worker_doc(doc) for doc in docs]
 
+    async def list_live_workers(
+        self,
+        *,
+        supported_sources: Iterable[str] | None = None,
+        stale_after_seconds: int = 30,
+    ) -> list[dict[str, Any]]:
+        database = get_database()
+        collection = database[self._collection_name]
+        normalized_sources = [
+            str(item).strip().lower()
+            for item in (supported_sources or [])
+            if str(item).strip()
+        ]
+        threshold = datetime.now(timezone.utc) - timedelta(seconds=max(1, int(stale_after_seconds)))
+        query: dict[str, Any] = {
+            "last_seen_at": {"$gte": threshold},
+            "state": {"$ne": "stopped"},
+        }
+        if normalized_sources:
+            query["supported_sources"] = {"$in": normalized_sources}
+        docs = await collection.find(query).sort([("last_seen_at", -1), ("worker_id", 1)]).to_list(length=100)
+        return [self._serialize_worker_doc(doc) for doc in docs]
+
+    def _serialize_worker_doc(self, doc: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(doc)
+        payload["worker_id"] = str(payload.get("worker_id") or payload.get("_id") or "")
+        payload.pop("_id", None)
+        return payload
