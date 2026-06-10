@@ -20,6 +20,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config import settings
+from src.browser_runtime.browser_profiles import (
+    BrowserProfile,
+    build_browser_profile_stealth_script,
+    build_playwright_context_options,
+    select_stable_browser_profile,
+)
 from src.scraper.tripadvisor import TripadvisorScraper
 
 
@@ -67,6 +73,16 @@ def _parse_args() -> argparse.Namespace:
         "--user-agent",
         default="",
         help="Optional explicit user-agent. Empty means use browser default.",
+    )
+    parser.add_argument(
+        "--browser-profile-id",
+        default="",
+        help="Optional explicit browser profile id from src/browser_runtime/browser_profiles.py.",
+    )
+    parser.add_argument(
+        "--browser-profile-key",
+        default="",
+        help="Stable key used to select the same browser profile for the same live job/session.",
     )
     parser.add_argument(
         "--tripadvisor-query",
@@ -136,7 +152,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--exit-after-tripadvisor-flow",
         action="store_true",
-        help="Exit session automatically once Tripadvisor flow finishes (success or failure).",
+        help=(
+            "Exit session automatically when Tripadvisor flow succeeds. "
+            "If the flow fails, keep the live session open after an in-place retry."
+        ),
     )
     parser.add_argument(
         "--tripadvisor-output-json",
@@ -231,13 +250,13 @@ def _resolve_user_data_dir(user_data_dir: str) -> Path:
     return path.resolve()
 
 
-def _build_chromium_args(headless: bool) -> list[str]:
+def _build_chromium_args(headless: bool, *, browser_profile: BrowserProfile) -> list[str]:
     args = [
         "--disable-blink-features=AutomationControlled",
         "--deny-permission-prompts",
         "--disable-geolocation",
-        "--window-size=1920,1080",
-        "--lang=es-ES",
+        f"--window-size={browser_profile.viewport.width},{browser_profile.viewport.height}",
+        f"--lang={browser_profile.locale}",
     ]
     if headless and settings.scraper_harden_headless:
         args.extend(
@@ -260,14 +279,8 @@ def _build_chromium_args(headless: bool) -> list[str]:
     return deduped
 
 
-def _stealth_init_script() -> str:
-    return """
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        Object.defineProperty(navigator, 'languages', { get: () => ['es-ES', 'es', 'en-US', 'en'] });
-        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4] });
-        Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
-        window.chrome = window.chrome || { runtime: {} };
-    """
+def _stealth_init_script(browser_profile: BrowserProfile) -> str:
+    return build_browser_profile_stealth_script(browser_profile)
 
 
 def _block_geolocation_init_script() -> str:
@@ -310,12 +323,13 @@ async def _launch_incognito_context(
     *,
     channel: str | None,
     executable_path: str | None,
+    browser_profile: BrowserProfile,
     user_agent: str | None,
 ) -> tuple[Browser, BrowserContext]:
     launch_options = {
         "headless": False,
         "slow_mo": settings.scraper_slow_mo_ms,
-        "args": _build_chromium_args(headless=False),
+        "args": _build_chromium_args(headless=False, browser_profile=browser_profile),
     }
     if executable_path:
         launch_options["executable_path"] = executable_path
@@ -330,11 +344,7 @@ async def _launch_incognito_context(
         launch_options.pop("channel", None)
         browser = await playwright.chromium.launch(**launch_options)
 
-    context_options: dict[str, object] = {
-        "viewport": {"width": 1366, "height": 900},
-        "locale": "es-ES",
-        "timezone_id": "Europe/Madrid",
-    }
+    context_options: dict[str, object] = build_playwright_context_options(browser_profile)
     if user_agent:
         context_options["user_agent"] = user_agent
     context = await browser.new_context(**context_options)
@@ -347,16 +357,15 @@ async def _launch_persistent_context(
     channel: str | None,
     executable_path: str | None,
     profile_dir: Path,
+    browser_profile: BrowserProfile,
     user_agent: str | None,
 ) -> tuple[Browser | None, BrowserContext]:
     launch_options: dict[str, object] = {
         "user_data_dir": str(profile_dir),
         "headless": False,
         "slow_mo": settings.scraper_slow_mo_ms,
-        "viewport": {"width": 1366, "height": 900},
-        "locale": "es-ES",
-        "timezone_id": "Europe/Madrid",
-        "args": _build_chromium_args(headless=False),
+        "args": _build_chromium_args(headless=False, browser_profile=browser_profile),
+        **build_playwright_context_options(browser_profile),
     }
     if user_agent:
         launch_options["user_agent"] = user_agent
@@ -587,6 +596,66 @@ async def _run_tripadvisor_search_flow(
         }
 
 
+async def _retry_tripadvisor_flow_in_same_page(
+    *,
+    page: Page,
+    target_url: str,
+) -> Page:
+    retry_page = page
+    if retry_page.is_closed():
+        context = retry_page.context
+        open_pages = [item for item in context.pages if not item.is_closed()]
+        retry_page = open_pages[-1] if open_pages else await context.new_page()
+
+    reopen_url = retry_page.url if _is_tripadvisor_context(retry_page.url) else target_url
+    reopen_url = _normalize_url(reopen_url)
+
+    print("Tripadvisor flow: waiting 2.0s before retrying in the same live session...")
+    await asyncio.sleep(2.0)
+    print(f"Tripadvisor flow: reopening current page at {reopen_url}")
+    await retry_page.goto(reopen_url, wait_until="domcontentloaded")
+    await retry_page.wait_for_timeout(1200)
+    return retry_page
+
+
+async def _run_tripadvisor_flow_with_same_page_retry(
+    *,
+    page: Page,
+    query: str,
+    source_url: str,
+    reviews_pages: int,
+    reviews_pages_percent: float | None,
+    skip_reviews: bool,
+    start_delay_seconds: float,
+) -> tuple[Page, dict[str, object], bool]:
+    capture = await _run_tripadvisor_search_flow(
+        page,
+        query,
+        source_url,
+        reviews_pages=reviews_pages,
+        reviews_pages_percent=reviews_pages_percent,
+        skip_reviews=skip_reviews,
+        start_delay_seconds=start_delay_seconds,
+    )
+    if bool(capture.get("success")):
+        return page, capture, False
+
+    retry_page = await _retry_tripadvisor_flow_in_same_page(
+        page=page,
+        target_url=source_url,
+    )
+    retry_capture = await _run_tripadvisor_search_flow(
+        retry_page,
+        query,
+        source_url,
+        reviews_pages=reviews_pages,
+        reviews_pages_percent=reviews_pages_percent,
+        skip_reviews=skip_reviews,
+        start_delay_seconds=0.0,
+    )
+    return retry_page, retry_capture, True
+
+
 def _write_tripadvisor_capture_json(
     *,
     output_path: str,
@@ -677,6 +746,12 @@ async def main() -> None:
     use_stealth = not args.no_stealth
     target_url = _normalize_url(args.url)
     use_persistent = bool(args.persistent) and not bool(args.incognito)
+    browser_source = "tripadvisor" if _is_tripadvisor_context(target_url) else "google_maps"
+    browser_profile = select_stable_browser_profile(
+        source=browser_source,
+        stable_key=(args.browser_profile_key or "").strip() or (args.tripadvisor_query or "").strip() or target_url,
+        explicit_profile_id=(args.browser_profile_id or "").strip() or None,
+    )
 
     playwright: Playwright | None = None
     browser: Browser | None = None
@@ -692,6 +767,7 @@ async def main() -> None:
     tripadvisor_flow_capture: dict[str, object] | None = None
     capture_json_written = False
     output_capture_path = str(args.tripadvisor_output_json or "").strip()
+    exit_after_tripadvisor_flow = bool(args.exit_after_tripadvisor_flow)
 
     try:
         playwright = await async_playwright().start()
@@ -703,6 +779,7 @@ async def main() -> None:
                 channel=channel,
                 executable_path=executable_path,
                 profile_dir=profile_dir,
+                browser_profile=browser_profile,
                 user_agent=user_agent,
             )
             print(f"Mode: persistent profile ({profile_dir})")
@@ -711,18 +788,27 @@ async def main() -> None:
                 playwright,
                 channel=channel,
                 executable_path=executable_path,
+                browser_profile=browser_profile,
                 user_agent=user_agent,
             )
             print("Mode: incognito (fresh context, no saved cookies).")
+        print(
+            "Browser profile: "
+            f"{browser_profile.profile_id} "
+            f"(locale={browser_profile.locale}, platform={browser_profile.navigator_platform}, "
+            f"viewport={browser_profile.viewport.width}x{browser_profile.viewport.height})"
+        )
 
         if use_stealth:
-            await context.add_init_script(_stealth_init_script())
+            await context.add_init_script(_stealth_init_script(browser_profile))
         await context.add_init_script(_block_geolocation_init_script())
 
         context.set_default_timeout(settings.scraper_timeout_ms)
         page = context.pages[0] if context.pages else await context.new_page()
         print(f"Opening URL: {target_url}")
         await page.goto(target_url, wait_until="domcontentloaded")
+        if _is_tripadvisor_context(target_url):
+            await page.wait_for_timeout(900)
 
         tripadvisor_enabled = not args.no_tripadvisor_flow
         manual_trigger_mode = args.tripadvisor_trigger == "manual"
@@ -803,15 +889,19 @@ async def main() -> None:
                     if query:
                         tripadvisor_flow_started = True
                         print("Tripadvisor detected after manual trigger. Starting flow now...")
-                        tripadvisor_flow_capture = await _run_tripadvisor_search_flow(
-                            page,
-                            query,
-                            page.url,
+                        page, tripadvisor_flow_capture, retried_in_same_session = await _run_tripadvisor_flow_with_same_page_retry(
+                            page=page,
+                            query=query,
+                            source_url=page.url,
                             reviews_pages=args.tripadvisor_reviews_pages,
                             reviews_pages_percent=args.tripadvisor_pages_percent,
                             skip_reviews=args.skip_tripadvisor_reviews,
                             start_delay_seconds=args.tripadvisor_start_delay_seconds,
                         )
+                        if retried_in_same_session:
+                            print(
+                                "Tripadvisor flow: retry in the same needs_human session finished."
+                            )
                         tripadvisor_flow_completed = bool(tripadvisor_flow_capture.get("success"))
                         tripadvisor_flow_finished = True
 
@@ -827,15 +917,19 @@ async def main() -> None:
                     if query:
                         tripadvisor_flow_started = True
                         print("Tripadvisor auto timer reached. Starting flow now...")
-                        tripadvisor_flow_capture = await _run_tripadvisor_search_flow(
-                            page,
-                            query,
-                            page.url if str(page.url or "").strip() else target_url,
+                        page, tripadvisor_flow_capture, retried_in_same_session = await _run_tripadvisor_flow_with_same_page_retry(
+                            page=page,
+                            query=query,
+                            source_url=page.url if str(page.url or "").strip() else target_url,
                             reviews_pages=args.tripadvisor_reviews_pages,
                             reviews_pages_percent=args.tripadvisor_pages_percent,
                             skip_reviews=args.skip_tripadvisor_reviews,
                             start_delay_seconds=0.0,
                         )
+                        if retried_in_same_session:
+                            print(
+                                "Tripadvisor flow: retry in the same needs_human session finished."
+                            )
                         tripadvisor_flow_completed = bool(tripadvisor_flow_capture.get("success"))
                         tripadvisor_flow_finished = True
 
@@ -870,14 +964,16 @@ async def main() -> None:
                     )
                     capture_json_written = True
 
-                if args.exit_after_tripadvisor_flow and tripadvisor_flow_finished:
+                if exit_after_tripadvisor_flow and tripadvisor_flow_finished:
                     if tripadvisor_flow_completed:
                         live_exit_reason = "tripadvisor-flow-complete"
                         print("Tripadvisor flow completed. Closing live session automatically.")
-                    else:
-                        live_exit_reason = "tripadvisor-flow-failed"
-                        print("Tripadvisor flow failed. Closing live session automatically.")
-                    break
+                        break
+                    print(
+                        "Tripadvisor flow still failed after in-place retry. "
+                        "Keeping the needs_human session open on the same browser."
+                    )
+                    exit_after_tripadvisor_flow = False
                 now = monotonic()
                 if now - last_status_log >= 10:
                     if tripadvisor_enabled and not tripadvisor_flow_started and manual_trigger_mode:
@@ -900,7 +996,10 @@ async def main() -> None:
                     elif tripadvisor_flow_started and not tripadvisor_flow_finished:
                         print("Tripadvisor flow started. Waiting for completion...")
                     elif tripadvisor_flow_finished and not tripadvisor_flow_completed:
-                        print("Tripadvisor flow ended with failure. Close browser to finish session.")
+                        print(
+                            "Tripadvisor flow ended with failure after in-place retry. "
+                            "Session remains open for manual recovery."
+                        )
                     elif tripadvisor_flow_finished and tripadvisor_flow_completed:
                         print("Tripadvisor flow completed. Close browser to finish session.")
                     last_status_log = now
@@ -920,6 +1019,8 @@ async def main() -> None:
                 pass
         try:
             if context is not None:
+                if _is_tripadvisor_context(target_url):
+                    await asyncio.sleep(1.0)
                 await context.close()
         except Exception:
             pass

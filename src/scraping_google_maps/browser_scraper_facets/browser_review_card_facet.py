@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from playwright.async_api import Locator
+
+from src.scraping_google_maps.selectors import SELECTOR_PATTERNS
 
 
 class GoogleMapsBrowserReviewCardFacet:

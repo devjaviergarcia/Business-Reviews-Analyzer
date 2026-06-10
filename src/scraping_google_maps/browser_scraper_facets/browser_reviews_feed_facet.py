@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.scraping_google_maps.selectors import SELECTOR_PATTERNS
+
 
 class GoogleMapsBrowserReviewsFeedFacet:
 

@@ -179,6 +179,7 @@ class TripadvisorBusinessPageScraper:
             "Starting browser and scraper.",
             {
                 "source": "tripadvisor",
+                "browser_profile_id": getattr(self._scraper, "_browser_profile_id", None),
                 "stage_timeout_seconds": runtime.stage_timeout_seconds,
                 "start_delay_seconds": runtime.start_delay_seconds,
                 "start_delay_min_seconds": settings.scraper_tripadvisor_start_delay_min_seconds,

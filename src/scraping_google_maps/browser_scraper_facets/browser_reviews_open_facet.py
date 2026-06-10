@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from time import monotonic
 from typing import Any, Awaitable, Callable
+
+from src.scraping_google_maps.selectors import SELECTOR_PATTERNS
 
 
 class GoogleMapsBrowserReviewsOpenFacet:

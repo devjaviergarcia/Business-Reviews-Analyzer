@@ -869,6 +869,7 @@ cmd_replay_headfull() {
     --persistent
     --profile-dir "$DEFAULT_PROFILE_DIR"
     --tripadvisor-query "$query_name"
+    --browser-profile-key "$job_id"
     --tripadvisor-trigger auto
     --exit-after-tripadvisor-flow
     --max-pages "0"

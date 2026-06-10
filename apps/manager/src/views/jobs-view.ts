@@ -1379,6 +1379,8 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
 
     drawerManualButton.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
     drawerLaunchLiveButton.classList.toggle("hidden", node.key === "analysis" || node.key === "report");
+    drawerLaunchLiveButton.textContent =
+      node.key === "scrape_tripadvisor" ? "Abrir Needs Human TA" : "Lanzar Live";
     drawerRelaunchConfigTitle.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
     drawerRelaunchConfig.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
     drawerRelaunchFromZeroButton.classList.toggle("hidden", node.key === "analysis" || node.key === "report");
@@ -1606,6 +1608,30 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     if (!replayJobId) {
       drawerActionStatus.textContent = `No hay job_id de ${sourceLabel} para lanzar Live.`;
       return;
+    }
+    if (node.key === "scrape_tripadvisor") {
+      drawerActionStatus.textContent = "Abriendo sesión needs_human de TripAdvisor...";
+      try {
+        const response = await deps.apiClient.post<{
+          ok?: boolean;
+          already_running?: boolean;
+          live_session?: { state?: string; pid?: number | null } | null;
+        }>("/tripadvisor/live-session/launch", {
+          reason: `ui_needs_human_tripadvisor:${replayJobId}:${node.status || "unknown"}`,
+          job_id: replayJobId,
+        });
+        const alreadyRunning = Boolean(response?.already_running);
+        const liveState = String(response?.live_session?.state || "").trim() || "unknown";
+        const livePid = response?.live_session?.pid ?? null;
+        drawerActionStatus.textContent = alreadyRunning
+          ? `La sesión live de TripAdvisor ya estaba abierta${livePid ? ` (pid ${livePid})` : ""}.`
+          : `Sesión needs_human de TripAdvisor abierta${livePid ? ` (pid ${livePid})` : ""}. Estado: ${liveState}.`;
+        await loadTripadvisorSessionState();
+        return;
+      } catch (error) {
+        drawerActionStatus.textContent = `ERROR: ${formatError(error)}`;
+        return;
+      }
     }
     drawerActionStatus.textContent = `Relanzando ${sourceLabel} en modo live...`;
     try {

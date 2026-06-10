@@ -73,8 +73,10 @@ class BusinessServiceScrapingFacet:
         interactive_max_rounds: int | None = None,
         html_scroll_max_rounds: int | None = None,
         html_stable_rounds: int | None = None,
+        browser_profile_id: str | None = None,
         progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> tuple[dict, list[dict]]:
+        self.scraper.use_browser_profile(explicit_profile_id=browser_profile_id)
         return await self._google_maps_business_page_scraper.scrape_business_page(
             business_name,
             strategy=strategy,
@@ -113,8 +115,10 @@ class BusinessServiceScrapingFacet:
         *,
         max_pages: int | None = None,
         pages_percent: float | None = None,
+        browser_profile_id: str | None = None,
         progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        self.tripadvisor_scraper.use_browser_profile(explicit_profile_id=browser_profile_id)
         return await self._tripadvisor_business_page_scraper.scrape_business_page(
             business_name,
             max_pages=max_pages,

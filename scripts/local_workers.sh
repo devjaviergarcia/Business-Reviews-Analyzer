@@ -50,6 +50,7 @@ Selectors:
 Managed processes:
   manager-ui
   local-browser-runtime
+  tripadvisor-live-bridge
   supabase-queue
   report-requests
   analysis
@@ -97,6 +98,7 @@ worker_names() {
   cat <<'EOFN'
 manager-ui
 local-browser-runtime
+tripadvisor-live-bridge
 supabase-queue
 report-requests
 analysis
@@ -118,6 +120,7 @@ worker_description() {
   case "$1" in
     manager-ui) echo "Frontend preview server for apps/manager" ;;
     local-browser-runtime) echo "Local Playwright runtime for browser-driven jobs" ;;
+    tripadvisor-live-bridge) echo "TripAdvisor live-session bridge for needs_human replay" ;;
     supabase-queue) echo "Supabase form/job pull worker" ;;
     report-requests) echo "Pending report-request processor" ;;
     analysis) echo "Classic analysis queue worker" ;;
@@ -131,6 +134,7 @@ worker_description() {
 worker_endpoint() {
   case "$1" in
     manager-ui) printf 'http://127.0.0.1:%s\n' "$MANAGER_PORT" ;;
+    tripadvisor-live-bridge) printf 'http://127.0.0.1:8765\n' ;;
     *) return 1 ;;
   esac
 }
@@ -143,6 +147,7 @@ worker_patterns() {
         "vite preview --host $MANAGER_HOST --port $MANAGER_PORT"
       ;;
     local-browser-runtime) printf '%s\n' "scripts/run_local_browser_runtime_worker.py" ;;
+    tripadvisor-live-bridge) printf '%s\n' "scripts/tripadvisor_local_worker_bridge.py" ;;
     supabase-queue) printf '%s\n' "scripts/run_supabase_queue_worker.py" ;;
     report-requests) printf '%s\n' "scripts/run_report_requests_worker.py" ;;
     analysis) printf '%s\n' "src.workers.analysis_worker" ;;
@@ -162,6 +167,9 @@ worker_command() {
       ;;
     local-browser-runtime)
       printf 'cd %q && export PYTHONPATH=%q${PYTHONPATH:+:$PYTHONPATH} && exec %q -u scripts/run_local_browser_runtime_worker.py' "$REPO_ROOT" "$REPO_ROOT" "$python_bin"
+      ;;
+    tripadvisor-live-bridge)
+      printf 'cd %q && export PYTHONPATH=%q${PYTHONPATH:+:$PYTHONPATH} && exec %q -u scripts/tripadvisor_local_worker_bridge.py --host 127.0.0.1 --port 8765' "$REPO_ROOT" "$REPO_ROOT" "$python_bin"
       ;;
     supabase-queue)
       printf 'cd %q && export PYTHONPATH=%q${PYTHONPATH:+:$PYTHONPATH} && exec %q -u scripts/run_supabase_queue_worker.py' "$REPO_ROOT" "$REPO_ROOT" "$python_bin"
@@ -276,7 +284,7 @@ expand_selectors() {
         seen["manager-ui"]=1
         ;;
       host)
-        for name in local-browser-runtime supabase-queue report-requests; do
+        for name in local-browser-runtime tripadvisor-live-bridge supabase-queue report-requests; do
           seen["$name"]=1
         done
         ;;
@@ -443,7 +451,7 @@ status_worker() {
 cmd_list() {
   echo "Profiles:"
   echo "  front -> manager-ui"
-  echo "  host  -> local-browser-runtime, supabase-queue, report-requests"
+  echo "  host  -> local-browser-runtime, tripadvisor-live-bridge, supabase-queue, report-requests"
   echo "  queue -> analysis, report, crm, scraper"
   echo "  all   -> every managed process"
   echo

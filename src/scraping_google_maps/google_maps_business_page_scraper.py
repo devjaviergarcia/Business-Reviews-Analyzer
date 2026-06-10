@@ -68,7 +68,10 @@ class GoogleMapsBusinessPageScraper:
             progress_callback,
             "scraper_starting",
             "Starting browser and scraper.",
-            {"strategy": strategy},
+            {
+                "strategy": strategy,
+                "browser_profile_id": getattr(self._scraper, "_browser_profile_id", None),
+            },
         )
         await self._scraper.start()
         try:

@@ -8,6 +8,7 @@ from typing import Any, Awaitable, Callable
 from bson import ObjectId
 from pymongo import ReturnDocument
 
+from src.browser_runtime.browser_profiles import select_stable_browser_profile
 from src.database import get_database
 from src.models.business import Listing
 from src.pipeline.preprocessor import ReviewPreprocessor
@@ -23,6 +24,7 @@ class BusinessScrapePipelineRequest:
     selected_force_mode: str
     selected_sources: tuple[str, ...]
     normalized_source_job_id: str | None
+    normalized_browser_profile_id: str
     effective_tripadvisor_max_pages: int | None
     effective_tripadvisor_pages_percent: float | None
     canonical_name_normalized: str
@@ -178,6 +180,7 @@ class BusinessScrapePipelineRunner:
                 "tripadvisor_max_pages": request.effective_tripadvisor_max_pages,
                 "tripadvisor_pages_percent": request.effective_tripadvisor_pages_percent,
                 "sources": list(request.selected_sources),
+                "browser_profile_id": request.normalized_browser_profile_id,
             },
         )
 
@@ -262,6 +265,10 @@ class BusinessScrapePipelineRunner:
         selected_force_mode = self._resolve_force_mode(force_mode)
         selected_sources = self._resolve_scrape_sources(sources)
         normalized_source_job_id = str(source_job_id or "").strip() or None
+        stable_browser_profile = select_stable_browser_profile(
+            source="browser_scrape",
+            stable_key=normalized_source_job_id or canonical_business_name,
+        )
         effective_tripadvisor_max_pages = self._resolve_optional_int_override(
             value=tripadvisor_max_pages,
             fallback=25,
@@ -293,6 +300,7 @@ class BusinessScrapePipelineRunner:
             selected_force_mode=selected_force_mode,
             selected_sources=selected_sources,
             normalized_source_job_id=normalized_source_job_id,
+            normalized_browser_profile_id=stable_browser_profile.profile_id,
             effective_tripadvisor_max_pages=effective_tripadvisor_max_pages,
             effective_tripadvisor_pages_percent=effective_tripadvisor_pages_percent,
             canonical_name_normalized=canonical_name_normalized,
@@ -512,6 +520,7 @@ class BusinessScrapePipelineRunner:
                     interactive_max_rounds=request.interactive_max_rounds,
                     html_scroll_max_rounds=request.html_scroll_max_rounds,
                     html_stable_rounds=request.html_stable_rounds,
+                    browser_profile_id=request.normalized_browser_profile_id,
                     progress_callback=self._build_source_progress_callback(
                         progress_callback=progress_callback,
                         source="google_maps",
@@ -524,6 +533,7 @@ class BusinessScrapePipelineRunner:
                     request.source_business_name,
                     max_pages=request.effective_tripadvisor_max_pages,
                     pages_percent=request.effective_tripadvisor_pages_percent,
+                    browser_profile_id=request.normalized_browser_profile_id,
                     progress_callback=self._build_source_progress_callback(
                         progress_callback=progress_callback,
                         source="tripadvisor",

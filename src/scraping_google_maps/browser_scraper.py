@@ -6,6 +6,11 @@ from typing import Any
 
 from playwright.async_api import Page
 
+from src.browser_runtime.browser_profiles import (
+    BrowserProfile,
+    resolve_browser_profile,
+    select_stable_browser_profile,
+)
 from src.scraping_google_maps.browser_scraper_facets import (
     GoogleMapsBrowserLifecycleFacet,
     GoogleMapsBrowserListingFacet,
@@ -53,6 +58,8 @@ class GoogleMapsScraper(
         extra_chromium_args: list[str] | None = None,
         incognito: bool = False,
         reviews_strategy: str = "interactive",
+        browser_profile_id: str | None = None,
+        browser_profile_stable_key: str | None = None,
     ) -> None:
         self._page = page
         self._external_page = page is not None
@@ -73,6 +80,8 @@ class GoogleMapsScraper(
         self._incognito = incognito
         self._project_root = Path(__file__).resolve().parents[2]
         self._reviews_strategy = self._resolve_reviews_strategy(reviews_strategy)
+        self._browser_profile_id: str | None = None
+        self._browser_profile: BrowserProfile = resolve_browser_profile()
 
         self._playwright = None
         self._browser = None
@@ -86,8 +95,22 @@ class GoogleMapsScraper(
             "review_count": 0,
         }
         self._rng = random.Random()
-        self._default_user_agent = (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/133.0.0.0 Safari/537.36"
+        self.use_browser_profile(
+            explicit_profile_id=browser_profile_id,
+            stable_key=browser_profile_stable_key,
         )
+
+    def use_browser_profile(
+        self,
+        *,
+        explicit_profile_id: str | None = None,
+        stable_key: str | None = None,
+    ) -> str:
+        profile = select_stable_browser_profile(
+            source="google_maps",
+            stable_key=stable_key,
+            explicit_profile_id=explicit_profile_id,
+        )
+        self._browser_profile = profile
+        self._browser_profile_id = profile.profile_id
+        return profile.profile_id

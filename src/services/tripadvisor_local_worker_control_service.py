@@ -69,12 +69,6 @@ class TripadvisorLocalWorkerControlService:
         )
 
     async def status(self) -> dict[str, Any]:
-        if not self._enabled:
-            return {
-                "ok": False,
-                "skipped": True,
-                "reason": "bridge_disabled",
-            }
         if not self._bridge_url:
             raise RuntimeError(
                 "Tripadvisor local worker bridge URL is empty. "
@@ -88,12 +82,6 @@ class TripadvisorLocalWorkerControlService:
         )
 
     async def live_session_status(self) -> dict[str, Any]:
-        if not self._enabled:
-            return {
-                "ok": False,
-                "skipped": True,
-                "reason": "bridge_disabled",
-            }
         if not self._bridge_url:
             raise RuntimeError(
                 "Tripadvisor local worker bridge URL is empty. "
@@ -114,12 +102,6 @@ class TripadvisorLocalWorkerControlService:
         profile_dir: str | None = None,
         job_id: str | None = None,
     ) -> dict[str, Any]:
-        if not self._enabled:
-            return {
-                "ok": False,
-                "skipped": True,
-                "reason": "bridge_disabled",
-            }
         if not self._bridge_url:
             raise RuntimeError(
                 "Tripadvisor local worker bridge URL is empty. "
@@ -142,12 +124,6 @@ class TripadvisorLocalWorkerControlService:
         )
 
     async def live_session_log_tail(self, *, max_chars: int = 6000) -> dict[str, Any]:
-        if not self._enabled:
-            return {
-                "ok": False,
-                "skipped": True,
-                "reason": "bridge_disabled",
-            }
         if not self._bridge_url:
             raise RuntimeError(
                 "Tripadvisor local worker bridge URL is empty. "
@@ -162,12 +138,6 @@ class TripadvisorLocalWorkerControlService:
         )
 
     async def stop_live_session(self) -> dict[str, Any]:
-        if not self._enabled:
-            return {
-                "ok": False,
-                "skipped": True,
-                "reason": "bridge_disabled",
-            }
         if not self._bridge_url:
             raise RuntimeError(
                 "Tripadvisor local worker bridge URL is empty. "

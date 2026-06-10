@@ -15,6 +15,11 @@ from playwright.async_api import (
     async_playwright,
 )
 
+from src.browser_runtime.browser_profiles import (
+    build_browser_profile_stealth_script,
+    build_playwright_context_options,
+)
+
 
 class GoogleMapsBrowserLifecycleFacet:
 
@@ -41,22 +46,20 @@ class GoogleMapsBrowserLifecycleFacet:
                 "slow_mo": self._slow_mo_ms,
                 "args": self._build_chromium_args(),
             }
-            if self._browser_channel:
-                launch_options["channel"] = self._browser_channel
+            effective_browser_channel = self._browser_channel or self._browser_profile.browser_channel
+            if effective_browser_channel:
+                launch_options["channel"] = effective_browser_channel
 
             try:
                 self._browser = await self._playwright.chromium.launch(**launch_options)
             except Exception:
-                if not self._browser_channel:
+                if not effective_browser_channel:
                     raise
                 launch_options.pop("channel", None)
                 self._browser = await self._playwright.chromium.launch(**launch_options)
 
             self._context = await self._browser.new_context(
-                viewport={"width": 1366, "height": 900},
-                locale="es-ES",
-                timezone_id="Europe/Madrid",
-                user_agent=self._default_user_agent,
+                **build_playwright_context_options(self._browser_profile),
             )
         else:
             user_data_dir = self._resolve_user_data_dir()
@@ -64,19 +67,17 @@ class GoogleMapsBrowserLifecycleFacet:
                 "user_data_dir": str(user_data_dir),
                 "headless": self._headless,
                 "slow_mo": self._slow_mo_ms,
-                "viewport": {"width": 1366, "height": 900},
-                "locale": "es-ES",
-                "timezone_id": "Europe/Madrid",
-                "user_agent": self._default_user_agent,
                 "args": self._build_chromium_args(),
+                **build_playwright_context_options(self._browser_profile),
             }
-            if self._browser_channel:
-                launch_options["channel"] = self._browser_channel
+            effective_browser_channel = self._browser_channel or self._browser_profile.browser_channel
+            if effective_browser_channel:
+                launch_options["channel"] = effective_browser_channel
 
             try:
                 self._context = await self._playwright.chromium.launch_persistent_context(**launch_options)
             except Exception:
-                if not self._browser_channel:
+                if not effective_browser_channel:
                     raise
                 # Fallback to bundled Chromium if requested browser channel is unavailable.
                 launch_options.pop("channel", None)
@@ -203,8 +204,8 @@ class GoogleMapsBrowserLifecycleFacet:
     def _build_chromium_args(self) -> list[str]:
         args = [
             "--disable-blink-features=AutomationControlled",
-            "--window-size=1920,1080",
-            "--lang=es-ES",
+            f"--window-size={self._browser_profile.viewport.width},{self._browser_profile.viewport.height}",
+            f"--lang={self._browser_profile.locale}",
         ]
 
         if self._headless and self._harden_headless:
@@ -230,13 +231,7 @@ class GoogleMapsBrowserLifecycleFacet:
         return deduped
 
     def _stealth_init_script(self) -> str:
-        return """
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            Object.defineProperty(navigator, 'languages', { get: () => ['es-ES', 'es', 'en-US', 'en'] });
-            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4] });
-            Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
-            window.chrome = window.chrome || { runtime: {} };
-        """
+        return build_browser_profile_stealth_script(self._browser_profile)
 
     async def _sleep_ms(self, delay_ms: int) -> None:
         await asyncio.sleep(max(0, delay_ms) / 1000)

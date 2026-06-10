@@ -6,6 +6,11 @@ from pathlib import Path
 from playwright.async_api import Page
 from playwright_stealth import Stealth
 
+from src.browser_runtime.browser_profiles import (
+    BrowserProfile,
+    resolve_browser_profile,
+    select_stable_browser_profile,
+)
 from src.scraping_tripadvisor.browser_scraper_facets import (
     TripadvisorBrowserLifecycleFacet,
     TripadvisorBrowserListingFacet,
@@ -56,6 +61,8 @@ class TripadvisorScraper(
         harden_headless: bool = True,
         extra_chromium_args: list[str] | None = None,
         incognito: bool = False,
+        browser_profile_id: str | None = None,
+        browser_profile_stable_key: str | None = None,
     ) -> None:
         self._page = page
         self._external_page = page is not None
@@ -77,6 +84,8 @@ class TripadvisorScraper(
         self._extra_chromium_args = list(extra_chromium_args or [])
         self._incognito = incognito
         self._project_root = Path(__file__).resolve().parents[2]
+        self._browser_profile_id: str | None = None
+        self._browser_profile: BrowserProfile = resolve_browser_profile()
 
         self._playwright = None
         self._browser = None
@@ -86,7 +95,26 @@ class TripadvisorScraper(
         self._cookies_checked_once = False
         self._consent_checked_once = False
         self._location_prompt_checked_once = False
-        self._stealth = Stealth(
-            navigator_languages_override=("es-ES", "es"),
-            navigator_platform_override="Win32",
+        self.use_browser_profile(
+            explicit_profile_id=browser_profile_id,
+            stable_key=browser_profile_stable_key,
         )
+
+    def use_browser_profile(
+        self,
+        *,
+        explicit_profile_id: str | None = None,
+        stable_key: str | None = None,
+    ) -> str:
+        profile = select_stable_browser_profile(
+            source="tripadvisor",
+            stable_key=stable_key,
+            explicit_profile_id=explicit_profile_id,
+        )
+        self._browser_profile = profile
+        self._browser_profile_id = profile.profile_id
+        self._stealth = Stealth(
+            navigator_languages_override=self._browser_profile.navigator_languages,
+            navigator_platform_override=self._browser_profile.navigator_platform,
+        )
+        return profile.profile_id

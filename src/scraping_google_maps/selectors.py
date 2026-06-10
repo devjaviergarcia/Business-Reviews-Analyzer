@@ -5,6 +5,10 @@ from typing import Final
 SELECTOR_PATTERNS: Final[dict[str, tuple[str, ...]]] = {
     # Search controls
     "SEARCH_INPUT": (
+        "input[name='q'][role='combobox'][jsaction*='omnibox.keyUp']",
+        "input[name='q'][role='combobox'][autocomplete='off']",
+        "input.UGojuc[role='combobox'][name='q']",
+        "input[name='q'][role='combobox']",
         "div[role='search'] input[role='combobox'][name='q']",
         "form[jsaction*='searchboxFormSubmit'] input[name='q']",
         "div[role='search'] input[role='combobox']",
