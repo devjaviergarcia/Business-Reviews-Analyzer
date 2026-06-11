@@ -1,215 +1,355 @@
 # Scrapers
 
-Este archivo explica solo una cosa: como leer el flujo real de scraping del repo sin perderse.
+This document explains one thing only:
 
-## Regla principal
+how to read the real scraping pipeline in this repository without getting lost.
 
-Si quieres entender la pipeline de una fuente, no empieces por `browser_scraper.py`.
+## Main rule
 
-Empieza por:
+If you want to understand the scraper flow for a source, **do not start with** `browser_scraper.py`.
+
+Start with:
 
 - `src/scraping_google_maps/google_maps_business_page_scraper.py`
 - `src/scraping_tripadvisor/tripadvisor_business_page_scraper.py`
 
-Esos dos archivos son los que orquestan la secuencia de etapas.
+Those files are the high-level orchestration entrypoints.
 
-Los archivos `browser_scraper.py` de cada fuente son **composition roots**: agrupan facetas, pero no cuentan la historia completa del flujo.
+The `browser_scraper.py` files are composition roots. They assemble browser capabilities, but they do not tell the full operational story by themselves.
 
-## Mapa rapido
+## Pipeline map at a glance
 
-El camino real es este:
+The real path is:
 
-`local worker / caller -> browser adapter -> BusinessService -> business page scraper -> browser scraper -> facet modules`
+`job runtime -> source adapter -> business service / business catalog -> business page scraper -> browser scraper -> facet modules`
 
-Mas concreto:
+More concretely:
 
-1. Un job browser-driven entra por el runtime local.
-2. El adapter de fuente delega en `BusinessService.scrape_business_for_analysis_pipeline(...)`.
-3. `BusinessService` termina llamando al scraper de pagina de negocio de la fuente.
-4. Ese scraper de pagina de negocio ejecuta la pipeline de alto nivel.
-5. El `browser_scraper.py` de la fuente aporta las primitivas de navegador.
-6. Las facetas implementan cada paso concreto del navegador.
+1. A browser-driven job is claimed by the local browser runtime.
+2. The source adapter translates the job payload into a source-specific scrape call.
+3. The business-facing orchestration layer delegates to the source business-page scraper.
+4. The business-page scraper runs the high-level pipeline stages.
+5. The source `browser_scraper.py` provides browser primitives.
+6. Facet modules implement each concrete browser behavior.
+
+## Runtime context
+
+All real browser execution is designed to happen on the **Linux host machine**.
+
+Important runtime pieces:
+
+- `src/browser_runtime/local_browser_runtime_worker.py`
+- `src/browser_runtime/browser_job_live_display_runtime.py`
+- `scripts/tripadvisor_local_worker_bridge.py`
+- `scripts/tripadvisor_ctl.sh`
+
+Runtime flags:
+
+- `execution_mode`
+  - `automatic`
+    - background / headless execution
+  - `live`
+    - headed execution
+
+- `live_display_mode`
+  - only used when `execution_mode=live`
+
+Live display modes:
+
+- `native`
+  - visible on the real display
+- `xvfb`
+  - headed browser in a virtual X display
+
+This matters especially for Tripadvisor, where the real scrape path is currently tied to the live replay flow.
 
 ## Google Maps
 
-### Donde leer la pipeline
+### Where to read the pipeline
 
-Archivo principal:
+Primary file:
 
 - `src/scraping_google_maps/google_maps_business_page_scraper.py`
 
-Secuencia principal:
+Main sequence:
 
-1. Resolver limites efectivos de scraping
-2. Emitir `scraper_starting`
+1. resolve effective scrape limits and strategy
+2. emit `scraper_starting`
 3. `self._scraper.start()`
 4. `self._scraper.search_business(...)`
 5. `self._scraper.extract_listing()`
 6. `self._scraper.extract_reviews(...)`
-7. `self._scraper.close()` en `finally`
+7. `self._scraper.close()` in `finally`
 
-En otras palabras:
+In short:
 
 `start -> search -> listing -> reviews -> close`
 
-### Donde vive cada cosa
+### Google review collection strategies
 
-Root del navegador:
+The review extractor supports two modes:
+
+- `scroll_copy`
+  - recommended mode
+  - scrolls the review feed, captures HTML, and parses from the captured feed
+- `interactive`
+  - legacy mode
+  - relies more directly on interactive DOM traversal
+
+In practice, Google usually runs best with `scroll_copy`.
+
+Operational runtime note:
+
+- Google can run in `automatic` or `live`
+- in code today, `automatic` means the local browser runtime flips the scraper into headless mode
+- `live` means headed mode, and then `native` vs `xvfb` decides where that headed browser lives
+
+### Meaning of the important Google tuning fields
+
+- `html_scroll_max_rounds`
+  - hard cap on feed scroll rounds
+- `html_stable_rounds`
+  - number of consecutive non-growing rounds before the feed is considered stable and the scroll loop stops
+- `interactive_max_rounds`
+  - max rounds for the legacy `interactive` strategy only
+
+Operational recommendation:
+
+- keep `scroll_copy`
+- change `html_scroll_max_rounds` when you need more depth
+- leave `html_stable_rounds` near default unless the feed stops too early or wastes too many empty loops
+
+### Where each concern lives
+
+Browser root:
 
 - `src/scraping_google_maps/browser_scraper.py`
 
-Facetas:
+Important facets:
 
 - `browser_lifecycle_facet.py`
-  - abrir/cerrar browser, context, page
+  - open / close browser, context, and page
 - `browser_navigation_facet.py`
-  - busqueda y movimiento inicial por Maps
+  - search and initial navigation in Maps
 - `browser_listing_facet.py`
-  - extraccion de la ficha
+  - business listing extraction
 - `browser_reviews_open_facet.py`
-  - apertura del panel de reseñas
+  - opening the review panel
 - `browser_reviews_feed_facet.py`
-  - control del feed y scroll
+  - feed control and scroll behavior
 - `browser_reviews_collection_facet.py`
-  - recogida de reseñas
+  - review extraction orchestration
 - `browser_review_card_facet.py`
-  - parsing de una review individual
+  - parsing one review card
 - `browser_parsing_facet.py`
-  - helpers de parsing y normalizacion
+  - text / parsing helpers
 
-### Donde NO leer la pipeline
+### What not to read first
 
 - `src/scraping_google_maps/google_maps_browser_adapter.py`
 
-Ese archivo no explica el flujo del navegador. Solo enruta la llamada al servicio de negocio.
+That file is not the browser pipeline. It is only the runtime bridge from job payload to business orchestration.
 
 ## Tripadvisor
 
-### Donde leer la pipeline
+### Where to read the pipeline
 
-Archivo principal:
+Primary file:
 
 - `src/scraping_tripadvisor/tripadvisor_business_page_scraper.py`
 
-Secuencia principal:
+Main sequence:
 
-1. Validar que la sesion de Tripadvisor esta disponible
-2. Construir runtime de pipeline con timeouts y limites
-3. Emitir `scraper_starting`
-4. Ejecutar etapa `start`
-5. Esperar `start_delay` si aplica
-6. Ejecutar etapa `search`
-7. Ejecutar etapa `listing`
-8. Ejecutar etapa `reviews` con limite blando de tiempo
-9. Cerrar browser en `finally`
-10. Si algo falla, persistir diagnostico y clasificar anti-bot / needs-human
+1. validate that the Tripadvisor session is available
+2. build the runtime limits and per-stage timing constraints
+3. emit `scraper_starting`
+4. execute `start`
+5. optionally wait for `start_delay`
+6. execute `search`
+7. execute `listing`
+8. execute `reviews`
+9. close browser in `finally`
+10. persist diagnostics and classify antibot / needs-human conditions if the run fails
 
-En otras palabras:
+In short:
 
-`session check -> start -> optional delay -> search -> listing -> reviews -> diagnostics/close`
+`session check -> start -> optional delay -> search -> listing -> reviews -> diagnostics / close`
 
-### Donde vive cada cosa
+### Operational difference vs Google
 
-Root del navegador:
+Tripadvisor has a denser orchestration layer because it must also manage:
+
+- session validation
+- antibot detection
+- needs-human classification
+- replay and live capture support
+- diagnostics persistence
+
+That is why `tripadvisor_business_page_scraper.py` is expected to be more operationally dense than the Google equivalent.
+
+Runtime note:
+
+- Tripadvisor scrape jobs are currently forced into `execution_mode=live`
+- so for Tripadvisor the practical operator choice is not `automatic` vs `live`
+- it is `native` vs `xvfb` for the live replay / needs-human path
+
+### Tripadvisor review collection model
+
+Primary review orchestration lives in:
+
+- `src/scraping_tripadvisor/browser_scraper_facets/browser_reviews_orchestration_facet.py`
+
+The current model is page-based rather than a Google-style feed stabilization loop.
+
+Important controls:
+
+- `max_pages`
+  - hard cap on how many review pages to traverse
+- `max_pages_percent`
+  - relative cap derived from known page count
+- `max_duration_seconds`
+  - soft overall time bound for the review collection phase
+
+### GraphQL support
+
+There is also source-specific review GraphQL support in:
+
+- `src/scraping_tripadvisor/browser_scraper_facets/browser_reviews_graphql_facet.py`
+
+This is part of the Tripadvisor scraping context and should be read as a supporting extraction path, not as the primary high-level business pipeline entrypoint.
+
+### Where each concern lives
+
+Browser root:
 
 - `src/scraping_tripadvisor/browser_scraper.py`
 
-Facetas del navegador:
+Important facets:
 
 - `browser_lifecycle_facet.py`
-  - abrir/cerrar browser
+  - open / close browser
 - `browser_search_entry_facet.py`
-  - escribir query y enviar busqueda
+  - enter and submit the search
 - `browser_search_typeahead_facet.py`
-  - intentar abrir coincidencia exacta desde typeahead
+  - exact-match attempt from typeahead
 - `browser_search_results_facet.py`
-  - elegir y abrir el mejor resultado
+  - open the best search result
 - `browser_search_matching_facet.py`
-  - heuristicas de matching de titulo/href
+  - result-title / href matching heuristics
 - `browser_listing_facet.py`
-  - extraccion de la ficha
+  - listing extraction
 - `browser_reviews_orchestration_facet.py`
-  - orquestacion de recoleccion de reseñas
+  - top-level review capture flow
 - `browser_reviews_page_collection_facet.py`
-  - recoleccion dentro de una pagina de reseñas
+  - collect reviews inside the current page
 - `browser_reviews_navigation_facet.py`
-  - pasar a la siguiente pagina de reseñas
+  - go to next reviews page
 - `browser_reviews_pagination_state_facet.py`
-  - snapshot del estado de paginacion
+  - pagination snapshots
+- `browser_reviews_graphql_facet.py`
+  - GraphQL review capture helpers
 - `browser_review_dom_facet.py`
-  - extraccion DOM de reseñas
+  - DOM review extraction
 - `browser_review_owner_reply_facet.py`
-  - reply del propietario
+  - owner-reply extraction
 - `browser_review_identity_facet.py`
-  - ids, identidad y parsing basico
+  - review identity and lightweight parsing
 - `browser_page_support_facet.py`
-  - cookies, consent, prompts y waits
+  - cookies, prompts, consent, waits
 - `browser_text_facet.py`
-  - helpers ligeros de texto
+  - text helpers
 
-### Que archivo concentra el ruido operativo
+### Tripadvisor needs-human and live replay
 
-- `src/scraping_tripadvisor/tripadvisor_business_page_scraper.py`
+The live operational flow is split across:
 
-Ese archivo no solo orquesta la ruta feliz. Tambien gestiona:
+- `scripts/tripadvisor_local_worker_bridge.py`
+- `scripts/tripadvisor_ctl.sh`
+- manager UI job drawer
 
-- timeout por etapa
-- diagnosticos persistidos
-- deteccion de anti-bot
-- conversion a `ScrapeBotDetectedError`
-- conversion a `ScrapeNeedsHumanInterventionError`
+This flow supports:
 
-Por eso es normal que sea mas denso que Google Maps, aunque ahora la ruta feliz ya se lea bastante mejor.
+- opening a needs-human session for a specific job
+- running it in `native` or `xvfb`
+- reading live-session state
+- reading live-session log tail
+- stopping the live session from the manager
+
+So if you are debugging a Tripadvisor human-assisted scrape, the scraper code alone is not enough. You also need to read the bridge and the manager-side control flow.
 
 ## Browser adapters
 
-Archivos:
+Files:
 
 - `src/scraping_google_maps/google_maps_browser_adapter.py`
 - `src/scraping_tripadvisor/tripadvisor_browser_adapter.py`
 
-Responsabilidad real:
+Real responsibility:
 
-- no hacen scraping
-- no contienen pipeline de navegador
-- solo traducen `AnalyzeBusinessTaskPayload` al caso de uso del servicio
+- they do not contain browser scraping logic
+- they do not describe the browser pipeline
+- they only translate `AnalyzeBusinessTaskPayload` into the business-facing scrape call
 
-Piensalos como puente de runtime, no como corazon del scraper.
+Think of them as runtime adapters, not scraper cores.
 
-## Que leer si quieres cambiar comportamiento
+## What to edit depending on what you want to change
 
-### Cambiar la secuencia de etapas
+### Change the stage sequence
 
-Toca:
+Edit:
 
 - `google_maps_business_page_scraper.py`
 - `tripadvisor_business_page_scraper.py`
 
-### Cambiar como se busca un negocio
+### Change how a business is searched
 
-Toca:
+Edit:
 
 - Google Maps: `browser_navigation_facet.py`
-- Tripadvisor: `browser_search_entry_facet.py`, `browser_search_typeahead_facet.py`, `browser_search_results_facet.py`
+- Tripadvisor:
+  - `browser_search_entry_facet.py`
+  - `browser_search_typeahead_facet.py`
+  - `browser_search_results_facet.py`
+  - `browser_search_matching_facet.py`
 
-### Cambiar como se abre o recorre la zona de reseñas
+### Change how the review area is opened or traversed
 
-Toca:
+Edit:
 
-- Google Maps: `browser_reviews_open_facet.py`, `browser_reviews_feed_facet.py`, `browser_reviews_collection_facet.py`
-- Tripadvisor: `browser_reviews_orchestration_facet.py`, `browser_reviews_page_collection_facet.py`, `browser_reviews_navigation_facet.py`, `browser_reviews_pagination_state_facet.py`
+- Google Maps:
+  - `browser_reviews_open_facet.py`
+  - `browser_reviews_feed_facet.py`
+  - `browser_reviews_collection_facet.py`
+- Tripadvisor:
+  - `browser_reviews_orchestration_facet.py`
+  - `browser_reviews_page_collection_facet.py`
+  - `browser_reviews_navigation_facet.py`
+  - `browser_reviews_pagination_state_facet.py`
 
-### Cambiar el parsing de una review
+### Change review parsing
 
-Toca:
+Edit:
 
-- Google Maps: `browser_review_card_facet.py`
-- Tripadvisor: `browser_review_dom_facet.py`, `browser_review_owner_reply_facet.py`, `browser_review_identity_facet.py`
+- Google Maps:
+  - `browser_review_card_facet.py`
+- Tripadvisor:
+  - `browser_review_dom_facet.py`
+  - `browser_review_owner_reply_facet.py`
+  - `browser_review_identity_facet.py`
 
-## Resumen corto
+### Change needs-human / live operational behavior
 
-Si buscas la pipeline, lee los `*business_page_scraper.py`.
+Edit:
 
-Si buscas implementacion de navegador, lee los `browser_scraper.py` y sus facetas.
+- `scripts/tripadvisor_local_worker_bridge.py`
+- `scripts/tripadvisor_ctl.sh`
+- `src/browser_runtime/browser_job_live_display_runtime.py`
+- manager UI job controls
 
-Si buscas el puente con jobs y runtime, lee los `*browser_adapter.py`.
+## Short summary
+
+If you want the scraper pipeline story, read the `*business_page_scraper.py` files.
+
+If you want the browser implementation details, read `browser_scraper.py` and the facet modules.
+
+If you want the runtime and live-control behavior, read the source adapters, local browser runtime, Tripadvisor bridge, and manager UI together.

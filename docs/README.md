@@ -1,49 +1,77 @@
 # Repiq Documentation
 
-This is the main documentation entrypoint for the repository.
+This is the long-form documentation entrypoint for the repository.
 
-Use the root [`README.md`](../README.md) for quick setup.
-Use this document for the longer architectural map.
-Use [`SCRAPERS.md`](../SCRAPERS.md) when you want to understand the scraper pipelines specifically.
+Use:
 
-## What the project does
+- [`README.md`](../README.md) for setup, launch, and day-one operation
+- [`SCRAPERS.md`](../SCRAPERS.md) for scraper pipeline reading
+- this file for the broader architectural map
 
-Repiq is not just a review scraper.
+## What the system does
 
-It is a local-first system for:
+Repiq is not only a review scraper.
+
+It is a local-first operational system for:
 
 - scraping public local-business data from Google Maps and Tripadvisor
-- normalizing business profiles and reviews
-- analyzing reputation with LLM-assisted pipelines
-- generating lead reports, paid reports, and public studies
-- running discovery, benchmarking, geogrids, and CRM workflows
+- normalizing business profiles, listings, and reviews
+- running LLM-assisted analysis pipelines
+- generating lead reports, advanced reports, public studies, and benchmark outputs
+- supporting CRM, report-request, and geogrid workflows
 
-## Current architecture in one sentence
+## Architecture in one sentence
 
-Mongo stores the operational state, FastAPI exposes the application surface, workers process queued jobs, and browser-driven scraping runs on the local machine through an explicit local browser runtime.
+Mongo stores operational state, FastAPI exposes the application surface, classic workers process queued jobs, and browser-driven jobs are executed on the Linux host through an explicit local browser runtime.
 
 ## Operating model
 
-The project is designed for Linux-based development and operations.
+The current operating model is:
 
-Practical assumptions:
-
+- Linux host machine is the canonical runtime for browser automation
 - API and Mongo can run locally or in Docker
-- real Playwright execution runs on the host machine
-- browser-driven jobs can run in `automatic` or `live` mode
-- the manager UI is the local operational panel
+- browser-driven jobs target the `local_browser` runtime
+- the manager UI is the operational control surface
+- Tripadvisor live / needs-human sessions are mediated by a local bridge
+
+## Execution modes
+
+Browser-driven jobs currently use two runtime flags:
+
+- `execution_mode`
+  - `automatic`
+    - background / headless execution
+    - currently relevant mainly for Google Maps
+  - `live`
+    - headed execution
+    - used for visible or operator-assisted capture
+
+- `live_display_mode`
+  - only meaningful when `execution_mode=live`
+
+Live jobs also support a display mode:
+
+- `native`
+  - visible browser on the real display
+- `xvfb`
+  - headed browser inside a virtual display
+
+Important source-specific note:
+
+- Google Maps supports both execution modes
+- Tripadvisor scrape jobs are currently forced into the `live` / replay-headfull path, so the practical choice there is `native` vs `xvfb`
 
 ## Recommended reading order
 
 1. `src/main.py`
 2. `src/platform/application_root.py`
-3. `src/dependencies.py`
-4. `src/routers/`
-5. `src/job_runtime/`
-6. `src/browser_runtime/`
-7. `src/business_catalog/`
-8. `src/crm/`
-9. `src/scraping_google_maps/` and `src/scraping_tripadvisor/`
+3. `src/routers/`
+4. `src/job_runtime/`
+5. `src/browser_runtime/`
+6. `src/scraping_google_maps/`
+7. `src/scraping_tripadvisor/`
+8. `src/business_catalog/`
+9. `src/crm/`
 10. `src/pipeline/` and `src/pipeline/report_rendering/`
 11. `scripts/`
 
@@ -67,44 +95,44 @@ Most important file:
 
 - `src/platform/application_root.py`
 
-This is the actual composition root of the project. It wires repositories, services, use cases, runtimes, and adapters.
+This is the composition root. It wires repositories, services, use cases, runtimes, and adapters explicitly.
 
 ### `src/dependencies.py`
 
-Thin bridge between FastAPI and the application root.
+FastAPI bridge layer.
 
 Responsibilities:
 
-- resolve dependencies for routers and some workers
-- expose explicit `create_*` functions backed by the root wiring
+- expose dependency helpers for routers
+- forward resolution to the application root
 
 ### `src/job_runtime/`
 
-Shared job contracts for browser-driven work.
+Shared job contracts and routing metadata.
 
-Key responsibilities:
+Responsibilities:
 
 - define job metadata such as `source`, `execution_mode`, `runtime_target`, and `fallback_policy`
-- identify which jobs belong to the local browser runtime
-- coordinate job claiming for the local runtime worker
+- represent browser-driven work consistently
+- support local browser job claiming
 
 ### `src/browser_runtime/`
 
-Local browser runtime.
+Local browser execution runtime.
 
-Key responsibilities:
+Responsibilities:
 
-- heartbeat for the local worker
+- heartbeat for the local runtime worker
 - claim browser-driven jobs
-- execute Google Maps or Tripadvisor scraping locally
-- support `automatic` and `live` execution
-- report progress and status back into Mongo
+- execute source adapters locally
+- support `automatic`, `live native`, and `live xvfb`
+- persist progress and state back into Mongo
 
-This is the key piece that keeps Playwright execution on the machine instead of inside a container.
+This is the boundary that keeps real Playwright execution on the host machine instead of inside a container.
 
 ### `src/scraping_google_maps/`
 
-Real Google Maps scraping implementation.
+Google Maps scraping context.
 
 Key files:
 
@@ -112,34 +140,34 @@ Key files:
 - `browser_scraper_facets/*`
 - `google_maps_business_page_scraper.py`
 - `google_maps_browser_adapter.py`
-- `selectors.py`
 
-Current structure:
+Reading rule:
 
-- `browser_scraper.py` acts as the scraper composition root
-- detailed logic is split into facets for lifecycle, navigation, listing extraction, review extraction, and parsing
+- `google_maps_business_page_scraper.py` tells the pipeline story
+- `browser_scraper.py` assembles the browser primitives
+- facets implement the detailed browser behavior
 
 ### `src/scraping_tripadvisor/`
 
-Real Tripadvisor scraping implementation.
+Tripadvisor scraping context.
 
 Key files:
 
 - `browser_scraper.py`
 - `browser_scraper_facets/*`
-- `browser_scraper_types.py`
 - `tripadvisor_business_page_scraper.py`
 - `tripadvisor_browser_adapter.py`
 - `tripadvisor_scrape_diagnostics.py`
 
-Current structure:
+Reading rule:
 
-- `browser_scraper.py` is the root
-- inner logic is split into explicit subcontexts such as search submission, result matching, listing opening, review collection, pagination state, DOM extraction, owner replies, and review parsing
+- `tripadvisor_business_page_scraper.py` tells the orchestration story
+- `browser_scraper.py` assembles the browser primitives
+- facets implement search, listing, review collection, pagination, parsing, and diagnostics support
 
 ### `src/scraping_shared/`
 
-Shared browser-scraping abstractions.
+Shared browser scraping abstractions.
 
 Responsibilities:
 
@@ -148,26 +176,26 @@ Responsibilities:
 
 ### `src/scraper/`
 
-Compatibility layer, not the primary implementation.
+Compatibility layer.
 
-Today it mainly contains wrappers that re-export the new scrapers for older scripts or tests.
+This is not the primary implementation anymore. It mostly exists to support older import paths and transitional wrappers.
 
 ### `src/business_catalog/`
 
-Business catalog and persisted scraping pipeline.
+Business scraping and persistence context.
 
 Responsibilities:
 
 - orchestrate scraping by source
-- persist business profiles, reviews, and datasets
-- create scrape snapshots and runs
-- enqueue and relaunch browser scrape jobs
+- enqueue and relaunch browser-driven scrape jobs
+- persist businesses, source profiles, datasets, reviews, and scrape runs
+- hand off to analysis and reporting
 
 ### `src/crm/`
 
-CRM context, already split into business-facing subcontexts.
+CRM context.
 
-Main subpackages:
+Main subcontexts:
 
 - `leads/`
 - `report_requests/`
@@ -179,54 +207,53 @@ Main subpackages:
 
 ### `src/services/business_service.py`
 
-Business analysis facade.
+Business-facing facade over the business catalog and analysis flow.
 
-It still matters, but it is no longer a single giant mixed implementation. It now behaves more like a visible composition root over more specific components.
+It still matters as a visible entrypoint, but responsibilities have been moved into more contextual modules.
 
 ### `src/services/crm_service.py`
 
-CRM facade.
+CRM-facing facade.
 
-Same story: still important, but much more traceable than before because responsibilities have been pushed into contextual modules.
+Same idea: still an entrypoint, but backed by clearer contextual modules than before.
 
 ### `src/services/business_query_service.py`
 
-Read/query context.
+Read/query side for manager and API use cases.
 
 Responsibilities:
 
-- read businesses, reviews, analyses, jobs, and artifacts
+- fetch businesses, reviews, analyses, jobs, and report artifacts
 - serve query-oriented routes and manager views
 
 ### `src/services/analysis_job_service.py`
 
-Analysis job context.
+Analysis job orchestration.
 
 Responsibilities:
 
 - enqueue analysis jobs
-- persist progress, events, and status
-- support worker execution
+- persist job state and progress
+- support worker execution and relaunch logic
 
 ### `src/pipeline/`
 
-Analysis and report-payload assembly.
+Analysis payload preparation.
 
-Key responsibilities:
+Responsibilities:
 
 - preprocess reviews
 - run LLM analysis
 - assemble structured report payloads
-- prepare data for rendering
 
 ### `src/pipeline/report_rendering/`
 
-Final report rendering context.
+Final report rendering.
 
 Responsibilities:
 
-- generate HTML, PDF, annexes, and CSVs
-- separate layout, sections, charts, and export logic
+- generate HTML, PDF, annexes, and CSV outputs
+- split rendering concerns into sections, charts, layout, and exports
 
 ### `src/routers/`
 
@@ -234,13 +261,13 @@ HTTP boundary.
 
 Responsibilities:
 
-- validate request and response payloads
-- invoke use cases or composed services
-- map domain or runtime errors into HTTP responses
+- validate requests and responses
+- invoke use cases or facades
+- map runtime and domain errors to HTTP
 
 ### `src/workers/`
 
-Traditional queue workers.
+Classic queue workers.
 
 Responsibilities:
 
@@ -249,162 +276,62 @@ Responsibilities:
 
 ### `apps/manager/`
 
-Local operations UI.
+Local operational UI.
 
 Responsibilities:
 
-- inspect jobs
-- inspect CRM state
-- launch pipelines and studies
-- operate the system manually
+- launch scrape and analysis flows
+- inspect pipeline state
+- operate Tripadvisor needs-human flows
+- read Tripadvisor live-session state and log tail
+- inspect CRM state and operational progress
 
 ### `scripts/`
 
-Operational tooling and lab entrypoints.
+Operational entrypoints and support tooling.
 
-These scripts are useful, but they are not the domain model. They are wrappers around operations, debugging, and local execution.
+Important scripts:
+
+- `scripts/local_workers.sh`
+- `scripts/run_local_browser_runtime_worker.py`
+- `scripts/tripadvisor_local_worker_bridge.py`
+- `scripts/tripadvisor_ctl.sh`
 
 ## Main flows
 
-### 1. Business scraping and analysis flow
+### 1. Browser-driven scrape flow
 
 1. A scrape job is created or relaunched.
-2. The job is persisted in Mongo.
-3. If it is browser-driven and targets `local_browser`, the local runtime claims it.
-4. The Google Maps or Tripadvisor adapter runs Playwright locally.
+2. The job is stored in Mongo with `runtime_target=local_browser`.
+3. The local browser runtime claims the job.
+4. The source adapter runs on the Linux host.
 5. `business_catalog` persists listings, reviews, datasets, and scrape runs.
-6. The pipeline preprocesses and analyzes the content.
-7. The report renderer generates the final artifacts.
+6. The flow hands off to analysis and then reporting if required.
 
-### 2. `automatic` vs `live`
+### 2. Tripadvisor needs-human flow
 
-#### `automatic`
+1. A Tripadvisor scrape reaches a blocked or human-required state.
+2. The operator opens the needs-human session from the manager UI.
+3. The local Tripadvisor bridge launches a live session in `native` or `xvfb` mode.
+4. The manager UI can read the live-session status and log tail.
+5. Once the session is resolved, the job can continue or be replayed.
 
-- default mode
-- silent execution
-- intended for throughput and retryability
+### 3. CRM lead and report-request flow
 
-#### `live`
+1. A lead or report request enters the system.
+2. The CRM context persists the request state.
+3. The queue / pull workers process pending work.
+4. Benchmark, scraping, analysis, or reporting can be triggered from that state.
 
-- explicit opt-in
-- visible browser session
-- intended for antibot handling, manual validation, or human intervention
-
-### 3. CRM lead discovery flow
-
-1. A discovery run is created.
-2. A CRM discovery job is queued.
-3. If it needs a real browser, the local runtime claims it.
-4. Google Maps discovery extracts candidate businesses.
-5. Leads, steps, and events are persisted.
-6. The CRM pipeline may continue into benchmark or campaign flows.
-
-### 4. Report request flow
-
-1. A report request enters the system.
-2. The request and its context are stored.
-3. Benchmark or geogrid work is triggered if needed.
-4. The system generates a lead report, paid report, or public study.
-5. Feedback can be stored afterwards.
-
-### 5. Geogrid flow
+### 4. Geogrid flow
 
 1. A geogrid run is created.
-2. The city, grid, and provider mode are resolved.
-3. The study runs.
-4. Ranking points and aggregate stats are calculated.
-5. The result feeds reporting or a public study.
+2. The city and grid points are resolved.
+3. Ranking capture runs for the selected provider mode.
+4. Results are aggregated into visibility metrics and can feed studies or reports.
 
-### 6. CRM campaign flow
+## Additional entrypoints
 
-1. A campaign is created.
-2. Eligible leads are selected.
-3. Dispatch jobs are queued.
-4. Messages or emails are sent.
-5. Resend events and webhooks come back.
-6. Campaign state, messages, and events are persisted.
-
-## What is actively in use
-
-These are the current live architectural pieces:
-
-- `src/platform/application_root.py`
-- `src/dependencies.py`
-- `src/main.py`
-- `src/browser_runtime/*`
-- `src/job_runtime/*`
-- `src/scraping_google_maps/*`
-- `src/scraping_tripadvisor/*`
-- `src/scraping_shared/*`
-- `src/business_catalog/*`
-- `src/crm/*`
-- `src/pipeline/*`
-- `src/pipeline/report_rendering/*`
-- `src/services/analysis_job_service.py`
-- `src/services/business_service.py`
-- `src/services/crm_service.py`
-- `src/services/business_query_service.py`
-- `src/routers/*`
-- `src/workers/*` except the RabbitMQ placeholder broker
-
-## Compatibility and transitional code
-
-Still used, but not the target architecture:
-
-- `src/scraper/*`
-- `src/business_catalog/legacy_review_dataset_packager.py`
-- `src/crm/*/legacy_*.py`
-- `src/services/tripadvisor_local_worker_control_service.py`
-- `scripts/tripadvisor_local_worker_bridge.py`
-
-## Known heavy files still worth splitting further
-
-The biggest remaining candidates are:
-
-- `src/services/analysis_job_service.py`
-- `src/crm/repositories/mongo.py`
-- `src/services/business_query_service.py`
-- `src/business_catalog/business_scrape_pipeline_runner.py`
-- `src/crm/discovery/google_maps_live_discovery_runtime.py`
-- `src/platform/application_root.py`
-- `src/workers/scraper_worker.py`
-- `src/workers/contracts.py`
-- `src/routers/business.py`
-- `src/routers/crm.py`
-- `src/scraping_tripadvisor/tripadvisor_scrape_diagnostics.py`
-
-## What is runtime noise, not architecture
-
-These paths should not be mentally treated as architecture:
-
-- `artifacts/`
-- `playwright-data*/`
-- `.venv-uv/`
-- `__pycache__/`
-- `.pytest_cache/`
-- `apps/manager/node_modules/`
-- `apps/manager/dist/`
-
-Important nuance:
-
-- `playwright-data*/` may contain useful session/runtime state
-- `artifacts/` may contain useful report output
-- so they should not be deleted blindly even if they are not part of the code architecture
-
-## Other documentation areas
-
-- `docs/backlogs/`: planning, tickets, and epics
-- `docs/context/`: context notes and supporting material
-- `docs/editorial/`: editorial assets and publication notes
-- `docs/ops/`: manual operating checklists
-- `docs/process/`: internal process notes
-- `docs/product/`: product-specific notes
-- `docs/seo/`: SEO notes and research material
-
-## Practical maintenance rules
-
-1. If it is real domain or runtime logic, it belongs in `src/` with a contextual name.
-2. If it exists only for compatibility, it should say `legacy` or clearly read as a wrapper.
-3. If it is operational glue or debugging support, it belongs in `scripts/`.
-4. If it is local output or runtime state, keep it out of the architecture mental model.
-5. If multiple docs disagree, this file is the long-form architectural source of truth.
+- [`docs/context/README.md`](context/README.md)
+- [`docs/context/architecture/README.md`](context/architecture/README.md)
+- [`docs/process/task_workflow.md`](process/task_workflow.md)
