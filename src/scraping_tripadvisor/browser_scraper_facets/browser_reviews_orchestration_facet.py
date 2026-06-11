@@ -137,6 +137,9 @@ class TripadvisorBrowserReviewsOrchestrationFacet:
                     "current_page": current_page_num,
                     "total_pages": total_pages_num,
                     "remaining_pages": remaining_pages,
+                    "page_source": getattr(self, "_last_tripadvisor_reviews_page_source", None),
+                    "graphql_expected_offset": getattr(self, "_last_tripadvisor_graphql_expected_offset", None),
+                    "graphql_captured_offset": getattr(self, "_last_tripadvisor_graphql_reviews_offset", None),
                 },
             )
 

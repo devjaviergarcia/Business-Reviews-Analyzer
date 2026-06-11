@@ -13,6 +13,7 @@ from src.config import settings
 from src.database import close_mongo_connection, connect_to_mongo
 from src.job_runtime.browser_job_contracts import (
     DEFAULT_BROWSER_EXECUTION_MODE,
+    DEFAULT_BROWSER_LIVE_DISPLAY_MODE,
     DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
     infer_browser_source,
     normalize_browser_source,
@@ -28,14 +29,13 @@ from src.services.analysis_job_service import AnalysisJobService
 from src.services.business_service import BusinessService
 from src.services.crm_service import CRMService
 from src.workers.contracts import (
-    AnalysisGenerateTaskPayload,
     AnalysisJobStatus,
-    AnalyzeBusinessTaskPayload,
     parse_analyze_business_payload,
     parse_crm_lead_discovery_payload,
     parse_geo_grid_study_payload,
 )
 
+from .browser_job_live_display_runtime import BrowserJobLiveDisplayRuntime
 from .local_browser_worker_registry import LocalBrowserWorkerRegistry
 
 LOGGER = logging.getLogger("local_browser_runtime_worker")
@@ -90,6 +90,7 @@ class LocalBrowserRuntimeWorker:
         self._idle_log_seconds = max(5, int(settings.worker_idle_log_seconds))
         self._heartbeat_seconds = max(3, int(settings.local_browser_worker_heartbeat_seconds))
         self._idle_log_every_ticks = max(1, self._idle_log_seconds // self._poll_seconds)
+        self._live_display_runtime = BrowserJobLiveDisplayRuntime()
         self._current_job_state: dict[str, Any] = {
             "state": "idle",
             "job_id": None,
@@ -181,9 +182,41 @@ class LocalBrowserRuntimeWorker:
         if source is None:
             await self._job_service.mark_failed(job_id=job_id, error="Could not infer browser scrape source.")
             return
+        if source == "tripadvisor":
+            reason = (
+                "TripAdvisor scrape jobs are locked to the replay-headfull live-session flow. "
+                "Launch them through 'Abrir Needs Human TA' / live replay instead of the local browser worker."
+            )
+            await self._job_service.mark_needs_human(
+                job_id=job_id,
+                reason=reason,
+                data={
+                    "source": "tripadvisor",
+                    "runtime_target": DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
+                    "reason_code": "tripadvisor_replay_headfull_required",
+                    "required_flow": "replay-headfull",
+                    "automatic_relaunch_disabled": True,
+                },
+            )
+            LOGGER.warning(
+                "Blocked TripAdvisor local browser execution outside replay-headfull job=%s queue=%s",
+                job_id,
+                job.get("queue_name"),
+            )
+            return
 
         execution_mode = str(job.get("execution_mode") or task_payload.execution_mode or DEFAULT_BROWSER_EXECUTION_MODE)
         execution_mode = execution_mode.strip().lower() or DEFAULT_BROWSER_EXECUTION_MODE
+        live_display_mode = (
+            str(
+                job.get("live_display_mode")
+                or task_payload.live_display_mode
+                or DEFAULT_BROWSER_LIVE_DISPLAY_MODE
+            )
+            .strip()
+            .lower()
+            or DEFAULT_BROWSER_LIVE_DISPLAY_MODE
+        )
         adapter = self._google_maps_adapter if source == "google_maps" else self._tripadvisor_adapter
         self._configure_browser_mode(execution_mode=execution_mode)
         self._current_job_state.update(
@@ -213,15 +246,17 @@ class LocalBrowserRuntimeWorker:
             data.setdefault("source", source)
             data.setdefault("runtime_target", DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET)
             data.setdefault("execution_mode", execution_mode)
+            data.setdefault("live_display_mode", live_display_mode)
             stage_counts[stage] += 1
             progress_state["stage"] = stage
             progress_state["message"] = message
             progress_state["last_progress_monotonic"] = time.monotonic()
             LOGGER.info(
-                "Local browser progress job=%s source=%s mode=%s stage=%s count=%s data=%s",
+                "Local browser progress job=%s source=%s mode=%s display=%s stage=%s count=%s data=%s",
                 job_id,
                 source,
                 execution_mode,
+                live_display_mode,
                 stage,
                 stage_counts[stage],
                 self._summarize_progress_data(data),
@@ -247,10 +282,11 @@ class LocalBrowserRuntimeWorker:
                 current_stage_count = int(stage_counts.get(current_stage, 0))
                 log_method = LOGGER.warning if seconds_without_progress >= stall_warning_seconds else LOGGER.info
                 log_method(
-                    "Local browser heartbeat job=%s source=%s mode=%s elapsed=%ss current_stage=%s stage_count=%s seconds_without_progress=%ss last_message=%s",
+                    "Local browser heartbeat job=%s source=%s mode=%s display=%s elapsed=%ss current_stage=%s stage_count=%s seconds_without_progress=%ss last_message=%s",
                     job_id,
                     source,
                     execution_mode,
+                    live_display_mode,
                     elapsed,
                     current_stage,
                     current_stage_count,
@@ -271,13 +307,18 @@ class LocalBrowserRuntimeWorker:
         job_outcome = "failed"
 
         try:
-            scrape_task = asyncio.create_task(
-                adapter.run_scrape(
-                    task_payload=task_payload,
-                    job_id=str(job_id),
-                    progress_callback=on_progress,
-                )
-            )
+            async def run_scrape_with_selected_display() -> dict[str, Any]:
+                with self._live_display_runtime.activate_for_job(
+                    execution_mode=execution_mode,
+                    live_display_mode=live_display_mode,
+                ):
+                    return await adapter.run_scrape(
+                        task_payload=task_payload,
+                        job_id=str(job_id),
+                        progress_callback=on_progress,
+                    )
+
+            scrape_task = asyncio.create_task(run_scrape_with_selected_display())
             done, _ = await asyncio.wait(
                 {scrape_task, cancellation_task},
                 return_when=asyncio.FIRST_COMPLETED,
@@ -300,44 +341,69 @@ class LocalBrowserRuntimeWorker:
             if not business_id:
                 raise RuntimeError("Scrape stage did not return a valid business_id.")
 
-            next_payload = AnalysisGenerateTaskPayload(
+            handoff_result = await self._business_service.handoff_completed_scrape_to_analysis(
+                scrape_round_id=task_payload.scrape_round_id,
+                source=source,
+                source_job_id=str(job_id),
                 business_id=business_id,
                 dataset_id=str(scrape_result.get("analysis_dataset_id") or "").strip() or None,
                 source_profile_id=str(scrape_result.get("source_profile_id") or "").strip() or None,
                 scrape_run_id=str(scrape_result.get("scrape_run_id") or "").strip() or None,
-                source_job_id=str(job_id),
-                source_mode="single",
-                selected_source=source,
             )
-            analysis_enqueue_result = await self._job_service.enqueue_analysis_generate_job(
-                task_payload=next_payload
-            )
-            analysis_job_id = str(analysis_enqueue_result.get("job_id") or "").strip() or None
-            await self._job_service.append_event(
-                job_id=job_id,
-                stage="handoff_analysis_queued",
-                message="Local browser scrape completed. Analysis job queued.",
-                status=AnalysisJobStatus.RUNNING,
-                data={
-                    "source": source,
-                    "execution_mode": execution_mode,
-                    "runtime_target": DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
-                    "analysis_job_id": analysis_job_id,
-                    "analysis_queue_name": analysis_enqueue_result.get("queue_name"),
-                    "analysis_job_type": analysis_enqueue_result.get("job_type"),
-                },
-            )
+            analysis_job_id = str(handoff_result.get("analysis_job_id") or "").strip() or None
+            if handoff_result.get("analysis_enqueued"):
+                await self._job_service.append_event(
+                    job_id=job_id,
+                    stage="handoff_analysis_queued",
+                    message="Local browser scrape completed. Analysis job queued.",
+                    status=AnalysisJobStatus.RUNNING,
+                    data={
+                        "source": source,
+                        "execution_mode": execution_mode,
+                        "live_display_mode": live_display_mode,
+                        "runtime_target": DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
+                        "analysis_job_id": analysis_job_id,
+                        "analysis_queue_name": handoff_result.get("analysis_queue_name"),
+                        "analysis_job_type": handoff_result.get("analysis_job_type"),
+                        "analysis_payload": handoff_result.get("analysis_payload"),
+                        "scrape_round_id": handoff_result.get("scrape_round_id"),
+                    },
+                )
+            else:
+                await self._job_service.append_event(
+                    job_id=job_id,
+                    stage="handoff_analysis_waiting_round",
+                    message="Local browser scrape completed. Waiting for remaining scrape sources before analysis.",
+                    status=AnalysisJobStatus.RUNNING,
+                    data={
+                        "source": source,
+                        "execution_mode": execution_mode,
+                        "live_display_mode": live_display_mode,
+                        "runtime_target": DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
+                        "scrape_round_id": handoff_result.get("scrape_round_id"),
+                        "pending_sources": handoff_result.get("pending_sources") or [],
+                        "completed_sources": handoff_result.get("completed_sources") or [],
+                        "claim_in_progress": bool(handoff_result.get("claim_in_progress")),
+                    },
+                )
             scrape_result = dict(scrape_result)
             scrape_result["pipeline"] = {
                 "worker": "local_browser_runtime",
                 "source": source,
                 "runtime_target": DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
                 "execution_mode": execution_mode,
+                "live_display_mode": live_display_mode,
             }
             scrape_result["analysis_handoff"] = {
+                "mode": handoff_result.get("mode"),
+                "scrape_round_id": handoff_result.get("scrape_round_id"),
                 "analysis_job_id": analysis_job_id,
-                "queue_name": analysis_enqueue_result.get("queue_name"),
-                "job_type": analysis_enqueue_result.get("job_type"),
+                "queue_name": handoff_result.get("analysis_queue_name"),
+                "job_type": handoff_result.get("analysis_job_type"),
+                "waiting_for_sources": bool(handoff_result.get("waiting_for_sources")),
+                "pending_sources": handoff_result.get("pending_sources") or [],
+                "completed_sources": handoff_result.get("completed_sources") or [],
+                "claim_in_progress": bool(handoff_result.get("claim_in_progress")),
             }
             await self._job_service.mark_done(job_id=job_id, result=scrape_result)
             job_outcome = "done"
@@ -348,6 +414,7 @@ class LocalBrowserRuntimeWorker:
                 data={
                     "source": source,
                     "execution_mode": execution_mode,
+                    "live_display_mode": live_display_mode,
                     "runtime_target": DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
                     "reason_code": "scrape_antibot_detected",
                     "suggested_execution_mode": "live",
@@ -362,6 +429,7 @@ class LocalBrowserRuntimeWorker:
                 data={
                     "source": source,
                     "execution_mode": execution_mode,
+                    "live_display_mode": live_display_mode,
                     "runtime_target": DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
                     "reason_code": "scrape_needs_human",
                     "suggested_execution_mode": "live",
@@ -376,11 +444,18 @@ class LocalBrowserRuntimeWorker:
             else:
                 await self._job_service.mark_failed(job_id=job_id, error=str(exc))
                 job_outcome = "failed"
-                LOGGER.exception("Local browser scrape failed job=%s source=%s mode=%s error=%s", job_id, source, execution_mode, exc)
+                LOGGER.exception(
+                    "Local browser scrape failed job=%s source=%s mode=%s display=%s error=%s",
+                    job_id,
+                    source,
+                    execution_mode,
+                    live_display_mode,
+                    exc,
+                )
         except Exception as exc:  # noqa: BLE001
             await self._job_service.mark_failed(job_id=job_id, error=str(exc))
             job_outcome = "failed"
-            LOGGER.exception("Local browser scrape failed job=%s source=%s mode=%s error=%s", job_id, source, execution_mode, exc)
+            LOGGER.exception("Local browser scrape failed job=%s source=%s mode=%s display=%s error=%s", job_id, source, execution_mode, live_display_mode, exc)
         finally:
             cancellation_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -400,7 +475,7 @@ class LocalBrowserRuntimeWorker:
                 "Local browser scrape job finished job=%s source=%s mode=%s outcome=%s stage_counts=%s",
                 job_id,
                 source,
-                execution_mode,
+                f"{execution_mode}:{live_display_mode}",
                 job_outcome,
                 dict(stage_counts),
             )
@@ -470,7 +545,15 @@ class LocalBrowserRuntimeWorker:
             except Exception:
                 pass
             try:
+                service.scraper._headless = headless  # noqa: SLF001
+            except Exception:
+                pass
+            try:
                 service.tripadvisor_scraper.headless = headless
+            except Exception:
+                pass
+            try:
+                service.tripadvisor_scraper._headless = headless  # noqa: SLF001
             except Exception:
                 pass
 
@@ -478,6 +561,7 @@ class LocalBrowserRuntimeWorker:
         prioritized_keys = [
             "source",
             "execution_mode",
+            "live_display_mode",
             "event",
             "round",
             "reviews_loaded",

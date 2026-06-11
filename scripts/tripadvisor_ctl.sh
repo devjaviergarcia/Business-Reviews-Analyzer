@@ -911,13 +911,15 @@ cmd_replay_headfull() {
   if [[ "$replay_exit" -eq 0 ]]; then
     local live_commit_done="false"
     local live_capture_success="false"
+    local live_commit_failed_after_capture="false"
     if [[ -f "$live_capture_json" ]]; then
       live_capture_success="$(jq -r '.success // false' "$live_capture_json" 2>/dev/null || printf 'false')"
       if [[ "$live_capture_success" == "true" ]]; then
         echo
         echo "Committing live captured reviews directly into DB for job: $job_id"
-        local live_commit_payload live_commit_tmp live_commit_http_status live_commit_output
-        live_commit_payload="$(jq -c \
+        local live_commit_payload_file live_commit_tmp live_commit_http_status live_commit_output
+        live_commit_payload_file="$(mktemp)"
+        if jq -c \
           --arg capture_path "$live_capture_json" \
           '{
             listing: (.listing // {}),
@@ -928,31 +930,38 @@ cmd_replay_headfull() {
               capture_success: (.success // false),
               capture_review_count: (.review_count // ((.reviews // []) | length))
             }
-          }' "$live_capture_json" 2>/dev/null || true)"
-        if [[ -n "$live_commit_payload" ]]; then
-          live_commit_tmp="$(mktemp)"
-          live_commit_http_status="$(curl -sS -o "$live_commit_tmp" -w '%{http_code}' -X POST \
-            "$API_BASE_URL/business/scrape/jobs/$job_id/commit-live" \
-            -H "accept: application/json" \
-            -H "Content-Type: application/json" \
-            -d "$live_commit_payload" || true)"
-          live_commit_output="$(cat "$live_commit_tmp")"
-          rm -f "$live_commit_tmp"
-          if [[ "$live_commit_http_status" == "200" ]]; then
-            live_commit_done="true"
-            printf '%s\n' "$live_commit_output" | jq '{job_id,status,already_done,result_summary:{business_id:(.result.business_id // null),review_count:(.result.review_count // null),dataset_id:(.result.dataset_id // null),analysis_dataset_id:(.result.analysis_dataset_id // null)}}' 2>/dev/null || printf '%s\n' "$live_commit_output"
+          }' "$live_capture_json" >"$live_commit_payload_file" 2>/dev/null; then
+          if [[ -s "$live_commit_payload_file" ]]; then
+            live_commit_tmp="$(mktemp)"
+            live_commit_http_status="$(curl -sS -o "$live_commit_tmp" -w '%{http_code}' -X POST \
+              "$API_BASE_URL/business/scrape/jobs/$job_id/commit-live" \
+              -H "accept: application/json" \
+              -H "Content-Type: application/json" \
+              --data-binary "@$live_commit_payload_file" || true)"
+            live_commit_output="$(cat "$live_commit_tmp")"
+            rm -f "$live_commit_tmp"
+            if [[ "$live_commit_http_status" == "200" ]]; then
+              live_commit_done="true"
+              printf '%s\n' "$live_commit_output" | jq '{job_id,status,already_done,result_summary:{business_id:(.result.business_id // null),review_count:(.result.review_count // null),dataset_id:(.result.dataset_id // null),analysis_dataset_id:(.result.analysis_dataset_id // null)}}' 2>/dev/null || printf '%s\n' "$live_commit_output"
+            else
+              live_commit_failed_after_capture="true"
+              echo "Warning: live commit failed (HTTP $live_commit_http_status). Automatic relaunch is disabled for replay-headfull." >&2
+              printf '%s\n' "$live_commit_output" >&2
+            fi
           else
-            echo "Warning: live commit failed (HTTP $live_commit_http_status). Fallback relaunch will be attempted." >&2
-            printf '%s\n' "$live_commit_output" >&2
+            live_commit_failed_after_capture="true"
+            echo "Warning: could not build live commit payload from $live_capture_json. Automatic relaunch is disabled for replay-headfull." >&2
           fi
         else
-          echo "Warning: could not build live commit payload from $live_capture_json. Fallback relaunch will be attempted." >&2
+          live_commit_failed_after_capture="true"
+          echo "Warning: jq could not build live commit payload from $live_capture_json. Automatic relaunch is disabled for replay-headfull." >&2
         fi
+        rm -f "$live_commit_payload_file"
       else
-        echo "Live capture JSON exists but flow was not successful (success=false). Fallback relaunch will be attempted."
+        echo "Live capture JSON exists but flow was not successful (success=false)." >&2
       fi
     else
-      echo "Warning: live capture JSON not found at $live_capture_json. Fallback relaunch will be attempted." >&2
+      echo "Warning: live capture JSON not found at $live_capture_json." >&2
     fi
 
     echo
@@ -995,25 +1004,50 @@ cmd_replay_headfull() {
 
     if [[ "$live_commit_done" == "true" ]]; then
       echo "Live commit completed successfully. Skipping automatic relaunch for job: $job_id"
-    elif [[ "$replay_available" == "true" && "$replay_session_state" == "valid" ]]; then
-      echo "Relaunching original job after replay: $job_id"
-      local relaunch_payload replay_relaunch_http_status replay_relaunch_output replay_relaunch_tmp
-      relaunch_payload='{"force":true,"restart_from_zero":true}'
-      replay_relaunch_tmp="$(mktemp)"
-      replay_relaunch_http_status="$(curl -sS -o "$replay_relaunch_tmp" -w '%{http_code}' -X POST "$API_BASE_URL/business/scrape/jobs/$job_id/relaunch" \
+    else
+      local mark_needs_human_payload mark_needs_human_tmp mark_needs_human_http_status mark_needs_human_output mark_reason
+      if [[ "$live_commit_failed_after_capture" == "true" ]]; then
+        mark_reason="TripAdvisor live replay captured reviews but commit did not complete. Retry from the same needs_human flow."
+      elif [[ "$live_capture_success" == "true" ]]; then
+        mark_reason="TripAdvisor live replay captured reviews but did not finish the live commit. Retry from the same needs_human flow."
+      else
+        mark_reason="TripAdvisor live replay finished without a successful capture. Retry from the same needs_human flow."
+      fi
+      mark_needs_human_payload="$(jq -n \
+        --arg reason "$mark_reason" \
+        --arg replay_available "$replay_available" \
+        --arg replay_session_state "$replay_session_state" \
+        --arg replay_validation_result "$replay_validation_result" \
+        --arg capture_json_path "$live_capture_json" \
+        --arg capture_success "$live_capture_success" \
+        '{
+          reason: $reason,
+          data: {
+            source: "tripadvisor",
+            replay_headfull: true,
+            automatic_relaunch_disabled: true,
+            replay_session_state: $replay_session_state,
+            replay_available: ($replay_available == "true"),
+            replay_validation_result: $replay_validation_result,
+            live_capture_json_path: $capture_json_path,
+            live_capture_success: ($capture_success == "true")
+          }
+        }')"
+      mark_needs_human_tmp="$(mktemp)"
+      mark_needs_human_http_status="$(curl -sS -o "$mark_needs_human_tmp" -w '%{http_code}' -X POST \
+        "$API_BASE_URL/business/scrape/jobs/$job_id/mark-needs-human" \
         -H "accept: application/json" \
         -H "Content-Type: application/json" \
-        -d "$relaunch_payload" || true)"
-      replay_relaunch_output="$(cat "$replay_relaunch_tmp")"
-      rm -f "$replay_relaunch_tmp"
-      if [[ "$replay_relaunch_http_status" == "200" ]]; then
-        printf '%s\n' "$replay_relaunch_output" | jq '{job_id,status,queue_name,attempts,last_event:(.events[-1] // null)}'
+        -d "$mark_needs_human_payload" || true)"
+      mark_needs_human_output="$(cat "$mark_needs_human_tmp")"
+      rm -f "$mark_needs_human_tmp"
+      if [[ "$mark_needs_human_http_status" == "200" ]]; then
+        echo "Marked job as needs_human after replay-headfull. Automatic relaunch remains disabled for job: $job_id"
+        printf '%s\n' "$mark_needs_human_output" | jq '{job_id,status,error,last_event}' 2>/dev/null || printf '%s\n' "$mark_needs_human_output"
       else
-        echo "Warning: automatic relaunch after replay failed (HTTP $replay_relaunch_http_status)." >&2
-        printf '%s\n' "$replay_relaunch_output" >&2
+        echo "Warning: could not mark job as needs_human after replay-headfull (HTTP $mark_needs_human_http_status)." >&2
+        printf '%s\n' "$mark_needs_human_output" >&2
       fi
-    else
-      echo "Skipping automatic relaunch after replay because session is not valid/available." >&2
     fi
   fi
 

@@ -61,6 +61,7 @@ export interface AnalyzeJobItem {
   source?: string;
   runtime_target?: string;
   execution_mode?: "automatic" | "live" | string;
+  live_display_mode?: "native" | "xvfb" | string;
   requested_by?: string;
   fallback_policy?: string;
   human_session_id?: string | null;

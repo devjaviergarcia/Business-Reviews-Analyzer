@@ -384,6 +384,11 @@ body::after {
   flex-wrap: wrap;
 }
 
+.form-grid > .form-actions {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+}
+
 .atom-button,
 .atom-input,
 select.atom-input {

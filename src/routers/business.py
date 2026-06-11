@@ -118,6 +118,7 @@ class ScrapeBusinessJobsRequest(AnalyzeBusinessRequest):
     google_maps_name: str | None = None
     tripadvisor_name: str | None = None
     execution_mode: Literal["automatic", "live"] = "automatic"
+    live_display_mode: Literal["native", "xvfb"] = "native"
 
     model_config = ConfigDict(extra="forbid")
 
@@ -146,6 +147,7 @@ class RelaunchScrapeJobRequest(BaseModel):
     google_maps_name: str | None = None
     tripadvisor_name: str | None = None
     execution_mode: Literal["automatic", "live"] | None = None
+    live_display_mode: Literal["native", "xvfb"] | None = None
     scraper_params: ScraperParamsRequest | None = None
 
     model_config = ConfigDict(extra="forbid")
@@ -166,6 +168,13 @@ class TripadvisorLiveCommitRequest(BaseModel):
     reviews: list[dict[str, Any]] = Field(default_factory=list)
     commit_reason: str | None = None
     metadata: dict[str, Any] | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MarkScrapeJobNeedsHumanRequest(BaseModel):
+    reason: str = Field(min_length=1)
+    data: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -264,6 +273,7 @@ async def enqueue_scrape_jobs(
             google_maps_name=payload.google_maps_name,
             tripadvisor_name=payload.tripadvisor_name,
             execution_mode=payload.execution_mode,
+            live_display_mode=payload.live_display_mode,
             requested_by="business_router",
         )
     except ValueError as exc:
@@ -402,6 +412,7 @@ async def relaunch_scrape_job(
             google_maps_name=payload.google_maps_name if payload else None,
             tripadvisor_name=payload.tripadvisor_name if payload else None,
             execution_mode=payload.execution_mode if payload else None,
+            live_display_mode=payload.live_display_mode if payload else None,
             interactive_max_rounds=(
                 scraper_params.scraper_interactive_max_rounds if scraper_params else None
             ),
@@ -437,6 +448,26 @@ async def commit_tripadvisor_live_capture(
             reviews=payload.reviews,
             commit_reason=payload.commit_reason,
             metadata=payload.metadata,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+
+@router.post("/scrape/jobs/{job_id}/mark-needs-human", tags=["Scrape"])
+async def mark_scrape_job_needs_human(
+    job_id: str,
+    payload: MarkScrapeJobNeedsHumanRequest,
+    service: BusinessServiceDep,
+) -> dict:
+    try:
+        return await service.mark_scrape_job_needs_human(
+            job_id=job_id,
+            reason=payload.reason,
+            data=payload.data,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

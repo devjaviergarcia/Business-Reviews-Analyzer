@@ -5,6 +5,7 @@ from pathlib import Path
 from src.browser_runtime.local_browser_worker_registry import LocalBrowserWorkerRegistry
 from src.business_catalog import (
     BrowserJobControlRuntime,
+    BrowserScrapeRoundRuntime,
     BusinessArtifactRuntime,
     BusinessCleanupRuntime,
     BusinessCommonRuntime,
@@ -41,6 +42,7 @@ from src.services.business_service_facets import (
     BusinessServiceScrapingFacet,
     BusinessServiceSummaryFacet,
 )
+from src.services.tripadvisor_local_worker_control_service import TripadvisorLocalWorkerControlService
 from src.services.reanalyze_use_case import ReanalyzeUseCase
 
 
@@ -154,6 +156,7 @@ class BusinessService(
         analyze_use_case: AnalyzeBusinessUseCase | None = None,
         reanalyze_use_case: ReanalyzeUseCase | None = None,
         local_browser_worker_registry: LocalBrowserWorkerRegistry | None = None,
+        tripadvisor_live_session_launcher: TripadvisorLocalWorkerControlService | None = None,
     ) -> None:
         self._configure_business_foundation(
             scraper=scraper,
@@ -164,6 +167,7 @@ class BusinessService(
             job_service=job_service,
             query_service=query_service,
             local_browser_worker_registry=local_browser_worker_registry,
+            tripadvisor_live_session_launcher=tripadvisor_live_session_launcher,
         )
         self._configure_business_analysis_context(
             analyze_use_case=analyze_use_case,
@@ -184,6 +188,7 @@ class BusinessService(
         job_service: AnalysisJobService | None,
         query_service: BusinessQueryService | None,
         local_browser_worker_registry: LocalBrowserWorkerRegistry | None,
+        tripadvisor_live_session_launcher: TripadvisorLocalWorkerControlService | None,
     ) -> None:
         self.scraper = scraper or type(self).build_default_scraper()
         self.tripadvisor_scraper = tripadvisor_scraper or type(self).build_default_tripadvisor_scraper()
@@ -193,6 +198,7 @@ class BusinessService(
         self.job_service = job_service or AnalysisJobService()
         self.query_service = query_service or BusinessQueryService()
         self.local_browser_worker_registry = local_browser_worker_registry or LocalBrowserWorkerRegistry()
+        self.tripadvisor_live_session_launcher = tripadvisor_live_session_launcher
 
     def _configure_business_analysis_context(
         self,
@@ -275,9 +281,15 @@ class BusinessService(
         )
 
     def _configure_business_operation_runtimes(self) -> None:
+        self._browser_scrape_round_runtime = BrowserScrapeRoundRuntime(
+            database_factory=lambda: get_database(),
+            job_service=self.job_service,
+        )
         self._browser_job_control_runtime = BrowserJobControlRuntime(
             database_factory=lambda: get_database(),
             job_service=self.job_service,
+            open_browser_scrape_round=self._open_browser_scrape_round,
+            register_browser_scrape_round_source_job=self._register_browser_scrape_round_source_job,
             local_browser_worker_registry=self.local_browser_worker_registry,
             validate_business_name=self._validate_business_name,
             normalize_text=self._normalize_text,
@@ -289,6 +301,11 @@ class BusinessService(
             ensure_job_is_scrape=self._ensure_job_is_scrape,
             businesses_collection_name=self._BUSINESSES_COLLECTION,
             active_job_statuses=self._ACTIVE_JOB_STATUSES,
+            launch_tripadvisor_live_session=(
+                self.tripadvisor_live_session_launcher.launch_live_session
+                if self.tripadvisor_live_session_launcher is not None
+                else None
+            ),
         )
         self._business_cleanup_runtime = BusinessCleanupRuntime(
             database_factory=lambda: get_database(),
@@ -312,6 +329,7 @@ class BusinessService(
             sanitize_response_payload=self._sanitize_response_payload,
             ensure_job_is_scrape=self._ensure_job_is_scrape,
             scrape_business_for_analysis_pipeline=self.scrape_business_for_analysis_pipeline,
+            handoff_completed_scrape_to_analysis=self.handoff_completed_scrape_to_analysis,
         )
         self._tripadvisor_antibot_job_runtime = TripadvisorAntibotJobRuntime(
             database_factory=lambda: get_database(),

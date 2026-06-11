@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from time import monotonic
+from urllib.parse import urljoin
 
 
 class TripadvisorBrowserSearchTypeaheadFacet:

@@ -6,10 +6,12 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 BrowserJobSource = Literal["google_maps", "tripadvisor"]
 BrowserExecutionMode = Literal["automatic", "live"]
+BrowserLiveDisplayMode = Literal["native", "xvfb"]
 BrowserRuntimeTarget = Literal["local_browser", "server_worker"]
 BrowserFallbackPolicy = Literal["none", "suggest_live", "auto_escalate_to_live"]
 
 DEFAULT_BROWSER_EXECUTION_MODE: BrowserExecutionMode = "automatic"
+DEFAULT_BROWSER_LIVE_DISPLAY_MODE: BrowserLiveDisplayMode = "native"
 DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET: BrowserRuntimeTarget = "local_browser"
 DEFAULT_SERVER_WORKER_RUNTIME_TARGET: BrowserRuntimeTarget = "server_worker"
 DEFAULT_BROWSER_FALLBACK_POLICY: BrowserFallbackPolicy = "suggest_live"
@@ -21,6 +23,7 @@ LOCAL_BROWSER_QUEUE_NAMES = frozenset({"scrape", "scrape_google_maps", "scrape_t
 class BrowserJobRuntimeOptions(BaseModel):
     source: BrowserJobSource
     execution_mode: BrowserExecutionMode = DEFAULT_BROWSER_EXECUTION_MODE
+    live_display_mode: BrowserLiveDisplayMode = DEFAULT_BROWSER_LIVE_DISPLAY_MODE
     runtime_target: BrowserRuntimeTarget = DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET
     requested_by: str = "internal_api"
     fallback_policy: BrowserFallbackPolicy = DEFAULT_BROWSER_FALLBACK_POLICY
@@ -42,6 +45,11 @@ class BrowserJobRuntimeOptions(BaseModel):
             return None
         cleaned = str(value).strip()
         return cleaned or None
+
+    @field_validator("execution_mode", "live_display_mode", mode="before")
+    @classmethod
+    def normalize_runtime_mode_values(cls, value: object) -> str:
+        return str(value or "").strip().lower()
 
 
 def normalize_browser_source(value: object) -> BrowserJobSource | None:
@@ -105,4 +113,3 @@ def is_local_browser_job(job_doc: Mapping[str, Any]) -> bool:
     queue_name = job_doc.get("queue_name")
     job_type = job_doc.get("job_type")
     return default_runtime_target_for_job(queue_name=queue_name, job_type=job_type) == DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET
-

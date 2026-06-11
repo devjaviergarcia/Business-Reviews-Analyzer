@@ -57,6 +57,7 @@ class StopWorkerRequest(BaseModel):
 
 class LaunchLiveSessionRequest(BaseModel):
     reason: str = Field(default="needs_human_live")
+    live_display_mode: str = Field(default="native")
     display: str | None = None
     profile_dir: str | None = None
     job_id: str | None = None
@@ -188,6 +189,12 @@ def _current_live_session_status() -> dict[str, Any]:
                     "pid": int(pid or 0),
                     "updated_at_ts": now_ts,
                     "finished_reason": None,
+                    "started_at_ts": state_snapshot.get("started_at_ts"),
+                    "mode": state_snapshot.get("mode"),
+                    "reason": state_snapshot.get("reason"),
+                    "job_id": state_snapshot.get("job_id"),
+                    "live_display_mode": state_snapshot.get("live_display_mode"),
+                    "display": state_snapshot.get("display"),
                 }
             )
     else:
@@ -206,8 +213,15 @@ def _current_live_session_status() -> dict[str, Any]:
                 "pid": None,
                 "updated_at_ts": now_ts,
                 "finished_reason": finished_reason,
+                "started_at_ts": state_snapshot.get("started_at_ts"),
+                "mode": state_snapshot.get("mode"),
+                "reason": state_snapshot.get("reason"),
+                "job_id": state_snapshot.get("job_id"),
+                "live_display_mode": state_snapshot.get("live_display_mode"),
+                "display": state_snapshot.get("display"),
             }
         )
+    merged_state_snapshot = _read_live_session_state()
     return {
         "running": bool(running),
         "pid": pid if running else None,
@@ -215,6 +229,13 @@ def _current_live_session_status() -> dict[str, Any]:
         "log_file": LIVE_SESSION_LOG_FILE.as_posix(),
         "state": state,
         "finished_reason": finished_reason,
+        "mode": merged_state_snapshot.get("mode"),
+        "reason": merged_state_snapshot.get("reason"),
+        "job_id": merged_state_snapshot.get("job_id"),
+        "live_display_mode": merged_state_snapshot.get("live_display_mode"),
+        "display": merged_state_snapshot.get("display"),
+        "started_at_ts": merged_state_snapshot.get("started_at_ts"),
+        "updated_at_ts": merged_state_snapshot.get("updated_at_ts"),
     }
 
 
@@ -408,8 +429,9 @@ def live_session_launch(payload: LaunchLiveSessionRequest) -> dict[str, Any]:
 
     LIVE_SESSION_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
+    live_display_mode = str(payload.live_display_mode or "native").strip().lower() or "native"
     selected_display = (str(payload.display).strip() if payload.display else "") or LIVE_SESSION_DEFAULT_DISPLAY
-    if selected_display:
+    if live_display_mode != "xvfb" and selected_display:
         env["DISPLAY"] = selected_display
     if payload.profile_dir:
         env["SCRAPER_TRIPADVISOR_USER_DATA_DIR_LOCAL"] = str(payload.profile_dir).strip()
@@ -421,12 +443,20 @@ def live_session_launch(payload: LaunchLiveSessionRequest) -> dict[str, Any]:
     else:
         mode = "human_session"
         cmd = ["bash", str(TRIPADVISOR_CTL_SCRIPT), "human"]
+    if live_display_mode == "xvfb":
+        cmd = [
+            "xvfb-run",
+            "-a",
+            '--server-args=-screen 0 1920x1080x24 -ac +extension RANDR -nolisten tcp',
+            *cmd,
+        ]
     try:
         with LIVE_SESSION_LOG_FILE.open("ab") as log_stream:
             log_stream.write(
                 (
                     "\n"
                     f"[live-session] launch mode={mode} reason={payload.reason!r} "
+                    f"live_display_mode={live_display_mode!r} "
                     f"display={env.get('DISPLAY')!r} job_id={requested_job_id or '-'}\n"
                 ).encode("utf-8", errors="replace")
             )
@@ -454,6 +484,12 @@ def live_session_launch(payload: LaunchLiveSessionRequest) -> dict[str, Any]:
         {
             "state": "running",
             "pid": int(proc.pid),
+            "mode": mode,
+            "reason": str(payload.reason or "").strip() or "needs_human_live",
+            "job_id": requested_job_id or None,
+            "live_display_mode": live_display_mode,
+            "display": env.get("DISPLAY"),
+            "started_at_ts": time.time(),
             "updated_at_ts": time.time(),
             "finished_reason": None,
         }
@@ -479,6 +515,7 @@ def live_session_launch(payload: LaunchLiveSessionRequest) -> dict[str, Any]:
         "reason": payload.reason,
         "mode": mode,
         "job_id": requested_job_id or None,
+        "live_display_mode": live_display_mode,
         "live_session": _current_live_session_status(),
         "display": env.get("DISPLAY"),
         "profile_dir": env.get("SCRAPER_TRIPADVISOR_USER_DATA_DIR_LOCAL"),
@@ -499,6 +536,7 @@ def live_session_stop() -> dict[str, Any]:
         }
 
     assert pid is not None
+    state_snapshot = _read_live_session_state()
     try:
         os.kill(pid, signal.SIGTERM)
     except Exception as exc:
@@ -507,6 +545,12 @@ def live_session_stop() -> dict[str, Any]:
         {
             "state": "stopping",
             "pid": int(pid),
+            "mode": state_snapshot.get("mode"),
+            "reason": state_snapshot.get("reason"),
+            "job_id": state_snapshot.get("job_id"),
+            "live_display_mode": state_snapshot.get("live_display_mode"),
+            "display": state_snapshot.get("display"),
+            "started_at_ts": state_snapshot.get("started_at_ts"),
             "updated_at_ts": time.time(),
             "finished_reason": "api-stop",
         }

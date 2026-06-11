@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from src.workers.contracts import AnalysisGenerateTaskPayload
 from src.workers.scraper_worker import ScraperWorker
 
 
@@ -23,8 +24,10 @@ class _FakeJobService:
 
 
 class _FakeBusinessService:
-    def __init__(self) -> None:
+    def __init__(self, *, handoff_result: dict[str, Any] | None = None) -> None:
         self.job_service = _FakeJobService()
+        self.handoff_result = dict(handoff_result) if isinstance(handoff_result, dict) else None
+        self.handoff_calls: list[dict[str, Any]] = []
 
     async def scrape_business_for_analysis_pipeline(self, **kwargs) -> dict[str, Any]:
         del kwargs
@@ -39,6 +42,37 @@ class _FakeBusinessService:
             "analysis_dataset_id": "dataset-1",
             "source_profile_id": "source-profile-1",
             "scrape_run_id": "scrape-run-1",
+        }
+
+    async def handoff_completed_scrape_to_analysis(self, **kwargs) -> dict[str, Any]:
+        self.handoff_calls.append(dict(kwargs))
+        if self.handoff_result is not None:
+            return dict(self.handoff_result)
+
+        normalized_source = str(kwargs.get("source") or "").strip().lower() or None
+        payload = AnalysisGenerateTaskPayload(
+            business_id=str(kwargs.get("business_id") or "").strip(),
+            dataset_id=str(kwargs.get("dataset_id") or "").strip() or None,
+            source_profile_id=str(kwargs.get("source_profile_id") or "").strip() or None,
+            scrape_run_id=str(kwargs.get("scrape_run_id") or "").strip() or None,
+            source_job_id=str(kwargs.get("source_job_id") or "").strip() or None,
+            source_mode="single" if normalized_source in {"google_maps", "tripadvisor"} else "auto",
+            selected_source=normalized_source if normalized_source in {"google_maps", "tripadvisor"} else None,
+            scrape_round_id=str(kwargs.get("scrape_round_id") or "").strip() or None,
+        )
+        enqueue_result = await self.job_service.enqueue_analysis_generate_job(task_payload=payload)
+        return {
+            "mode": "legacy_immediate",
+            "scrape_round_id": payload.scrape_round_id,
+            "analysis_enqueued": True,
+            "waiting_for_sources": False,
+            "claim_in_progress": False,
+            "completed_sources": [normalized_source] if normalized_source else [],
+            "pending_sources": [],
+            "analysis_job_id": str(enqueue_result.get("job_id") or "").strip() or None,
+            "analysis_queue_name": enqueue_result.get("queue_name"),
+            "analysis_job_type": enqueue_result.get("job_type"),
+            "analysis_payload": payload.model_dump(mode="python"),
         }
 
 
@@ -212,3 +246,47 @@ def test_scraper_worker_tripadvisor_only_still_handoffs_to_analysis_single_sourc
     done_payload = fake_broker.done_results[0]["result"]
     assert done_payload["analysis_handoff"]["analysis_job_id"] == "analysis-job-1"
     assert any(event["stage"] == "handoff_analysis_queued" for event in fake_broker.appended_events)
+
+
+def test_scraper_worker_defers_analysis_until_remaining_sources_finish_round() -> None:
+    fake_service = _FakeBusinessService(
+        handoff_result={
+            "mode": "scrape_round",
+            "scrape_round_id": "round-1",
+            "analysis_enqueued": False,
+            "waiting_for_sources": True,
+            "claim_in_progress": False,
+            "completed_sources": ["google_maps"],
+            "pending_sources": ["tripadvisor"],
+            "analysis_job_id": None,
+            "analysis_queue_name": None,
+            "analysis_job_type": None,
+            "analysis_payload": None,
+        }
+    )
+    fake_broker = _FakeBroker()
+    worker = ScraperWorker(service=fake_service, job_broker=fake_broker)
+    worker._scrape_source = "google_maps"  # noqa: SLF001
+    worker._selected_sources = ("google_maps",)  # noqa: SLF001
+
+    job = {
+        "_id": "scrape-job-gmaps-1",
+        "queue_name": "scrape_google_maps",
+        "job_type": "business_analyze",
+        "payload": {
+            "name": "Negocio Google",
+            "scrape_round_id": "round-1",
+            "force": True,
+            "strategy": "scroll_copy",
+            "force_mode": "fallback_existing",
+        },
+    }
+
+    asyncio.run(worker._process_job(job))
+
+    assert len(fake_service.job_service.enqueue_calls) == 0
+    assert len(fake_broker.done_results) == 1
+    done_payload = fake_broker.done_results[0]["result"]
+    assert done_payload["analysis_handoff"]["waiting_for_sources"] is True
+    assert done_payload["analysis_handoff"]["pending_sources"] == ["tripadvisor"]
+    assert any(event["stage"] == "handoff_analysis_waiting_round" for event in fake_broker.appended_events)

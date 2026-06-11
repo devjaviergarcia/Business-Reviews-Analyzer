@@ -20,6 +20,7 @@ type NodeKey = "scrape_google_maps" | "scrape_tripadvisor" | "analysis" | "repor
 type NodeStatus = "idle" | "queued" | "running" | "done" | "failed" | "needs_human" | "waiting";
 type ConnectorState = "idle" | "active" | "done" | "failed" | "waiting" | "human";
 type ScrapeSource = "google_maps" | "tripadvisor";
+type LiveDisplayMode = "native" | "xvfb";
 
 type BusinessScrapeGroup = {
   key: string;
@@ -40,6 +41,28 @@ type TripAdvisorSessionState = {
   last_validation_result?: string;
   bot_detected_count?: number;
   last_error?: string | null;
+};
+
+type TripAdvisorLiveSessionState = {
+  running?: boolean;
+  pid?: number | null;
+  state?: string;
+  finished_reason?: string | null;
+  mode?: string | null;
+  reason?: string | null;
+  job_id?: string | null;
+  live_display_mode?: string | null;
+  display?: string | null;
+  log_file?: string | null;
+  started_at_ts?: number | null;
+  updated_at_ts?: number | null;
+};
+
+type TripAdvisorLiveSessionLogTail = {
+  ok?: boolean;
+  live_session?: TripAdvisorLiveSessionState | null;
+  log_file?: string | null;
+  log_tail?: string | null;
 };
 
 type PipelineNodeState = {
@@ -124,6 +147,8 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
   const sessionCookieExpiry = createElement("span", "jobs6-kv", "Cookie expira: -");
   const sessionLastHuman = createElement("span", "jobs6-kv", "Última intervención: -");
   const sessionExtra = createElement("span", "jobs6-kv", "Validación: -");
+  const sessionLiveStatus = createElement("span", "jobs6-badge jobs6-badge--idle", "TA Live: idle");
+  const sessionLiveMeta = createElement("span", "jobs6-kv", "Live: -");
   const sessionRefreshButton = createButton({ label: "Refrescar sesión TA", tone: "white" });
   sessionStrip.append(
     sessionStatus,
@@ -131,6 +156,8 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     sessionCookieExpiry,
     sessionLastHuman,
     sessionExtra,
+    sessionLiveStatus,
+    sessionLiveMeta,
     sessionRefreshButton
   );
   headerPanel.append(sessionStrip);
@@ -211,6 +238,33 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
   const drawerError = createElement("div", "jobs6-drawer-block jobs6-drawer-error muted", "Sin error.");
   const drawerTransitionsTitle = createElement("h4", "jobs6-drawer-section-title", "Transiciones recientes");
   const drawerTransitions = createElement("pre", "code-block jobs6-drawer-transitions", "");
+  const drawerTripadvisorLiveTitle = createElement(
+    "h4",
+    "jobs6-drawer-section-title hidden",
+    "Sesión live TA"
+  );
+  const drawerTripadvisorLiveSummary = createElement(
+    "div",
+    "jobs6-drawer-block hidden"
+  );
+  const drawerTripadvisorLiveActions = createElement("div", "form-actions hidden");
+  const drawerTripadvisorLiveRefreshButton = createButton({
+    label: "Refrescar logs TA",
+    tone: "white",
+  });
+  const drawerTripadvisorLiveStopButton = createButton({
+    label: "Parar sesión live TA",
+    tone: "white",
+  });
+  drawerTripadvisorLiveActions.append(
+    drawerTripadvisorLiveRefreshButton,
+    drawerTripadvisorLiveStopButton
+  );
+  const drawerTripadvisorLiveLog = createElement(
+    "pre",
+    "code-block jobs6-drawer-transitions hidden",
+    ""
+  );
   const drawerRelaunchConfigTitle = createElement(
     "h4",
     "jobs6-drawer-section-title hidden",
@@ -244,6 +298,21 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     drawerRelaunchConfigHint
   );
   const drawerNodeActionsTitle = createElement("h4", "jobs6-drawer-section-title", "Acciones");
+  const drawerLiveModeTitle = createElement("h4", "jobs6-drawer-section-title", "Modo live");
+  const drawerLiveModeBlock = createElement("div", "jobs6-drawer-block");
+  const drawerLiveModeSelect = createElement("select", "atom-input") as HTMLSelectElement;
+  drawerLiveModeSelect.innerHTML =
+    '<option value="native">Live nativo</option><option value="xvfb">Live bajo Xvfb</option>';
+  const drawerLiveModeHint = createElement(
+    "div",
+    "muted",
+    "Native usa tu display local. Xvfb abre Chromium headed dentro de un display virtual."
+  );
+  drawerLiveModeBlock.append(
+    createElement("label", "form-label", "Display live"),
+    drawerLiveModeSelect,
+    drawerLiveModeHint
+  );
   const drawerNodeActions = createElement("div", "form-actions");
   const drawerRelaunchButton = createButton({ label: "Relanzar", tone: "turquoise" });
   const drawerRelaunchFromZeroButton = createButton({ label: "Relanzar de 0", tone: "turquoise" });
@@ -269,8 +338,14 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     drawerError,
     drawerTransitionsTitle,
     drawerTransitions,
+    drawerTripadvisorLiveTitle,
+    drawerTripadvisorLiveSummary,
+    drawerTripadvisorLiveActions,
+    drawerTripadvisorLiveLog,
     drawerRelaunchConfigTitle,
     drawerRelaunchConfig,
+    drawerLiveModeTitle,
+    drawerLiveModeBlock,
     drawerNodeActionsTitle,
     drawerNodeActions,
     drawerActionStatus
@@ -311,7 +386,10 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
 
   let jobsPollTimer: number | null = null;
   let sessionPollTimer: number | null = null;
+  let tripadvisorLiveSessionPollTimer: number | null = null;
   let sessionState: TripAdvisorSessionState | null = null;
+  let tripadvisorLiveSessionTail: TripAdvisorLiveSessionLogTail | null = null;
+  let tripadvisorLiveSessionError: string | null = null;
 
   let logsLines: string[] = [];
   let drawerOpen = false;
@@ -352,6 +430,12 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
 
   sessionRefreshButton.addEventListener("click", () => {
     void loadTripadvisorSessionState();
+  });
+  drawerTripadvisorLiveRefreshButton.addEventListener("click", () => {
+    void loadTripadvisorLiveSessionTail({ force: true });
+  });
+  drawerTripadvisorLiveStopButton.addEventListener("click", () => {
+    void stopTripadvisorLiveSession();
   });
 
   reloadSelectedButton.addEventListener("click", () => {
@@ -1339,6 +1423,12 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
       drawerStateLine.textContent = "-";
       drawerError.textContent = "Sin error.";
       drawerTransitions.textContent = "";
+      drawerTripadvisorLiveTitle.classList.add("hidden");
+      drawerTripadvisorLiveSummary.classList.add("hidden");
+      drawerTripadvisorLiveActions.classList.add("hidden");
+      drawerTripadvisorLiveLog.classList.add("hidden");
+      drawerTripadvisorLiveSummary.textContent = "";
+      drawerTripadvisorLiveLog.textContent = "";
       drawerRelaunchConfigTitle.classList.add("hidden");
       drawerRelaunchConfig.classList.add("hidden");
       drawerActionStatus.textContent = "";
@@ -1381,8 +1471,14 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     drawerLaunchLiveButton.classList.toggle("hidden", node.key === "analysis" || node.key === "report");
     drawerLaunchLiveButton.textContent =
       node.key === "scrape_tripadvisor" ? "Abrir Needs Human TA" : "Lanzar Live";
+    drawerLiveModeTitle.classList.toggle("hidden", node.key === "analysis" || node.key === "report");
+    drawerLiveModeBlock.classList.toggle("hidden", node.key === "analysis" || node.key === "report");
     drawerRelaunchConfigTitle.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
     drawerRelaunchConfig.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
+    drawerTripadvisorLiveTitle.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
+    drawerTripadvisorLiveSummary.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
+    drawerTripadvisorLiveActions.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
+    drawerTripadvisorLiveLog.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
     drawerRelaunchFromZeroButton.classList.toggle("hidden", node.key === "analysis" || node.key === "report");
     drawerRelaunchButton.toggleAttribute("disabled", !node.jobId);
     drawerRelaunchFromZeroButton.toggleAttribute("disabled", !node.jobId || node.key === "analysis" || node.key === "report");
@@ -1394,6 +1490,12 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     if (node.key === "scrape_tripadvisor" && node.jobId) {
       const job = findJobById(node.jobId);
       const payload = isRecord(job?.payload) ? job.payload : null;
+      const liveDisplayMode = String(
+        (job?.live_display_mode as string | undefined) ||
+          (payload?.live_display_mode as string | undefined) ||
+          "native"
+      ).trim();
+      drawerLiveModeSelect.value = liveDisplayMode === "xvfb" ? "xvfb" : "native";
       if (!drawerTripadvisorNameInput.value.trim()) {
         const sourceName = String(
           (payload?.source_name as string | undefined) ||
@@ -1414,6 +1516,22 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
         ).trim();
         if (pagesPercent) drawerTripadvisorPagesPercentInput.value = pagesPercent;
       }
+    } else if (node.key === "scrape_google_maps" && node.jobId) {
+      const job = findJobById(node.jobId);
+      const payload = isRecord(job?.payload) ? job.payload : null;
+      const liveDisplayMode = String(
+        (job?.live_display_mode as string | undefined) ||
+          (payload?.live_display_mode as string | undefined) ||
+          "native"
+      ).trim();
+      drawerLiveModeSelect.value = liveDisplayMode === "xvfb" ? "xvfb" : "native";
+    } else {
+      drawerLiveModeSelect.value = "native";
+    }
+
+    if (node.key === "scrape_tripadvisor") {
+      renderTripadvisorLiveSessionDetails();
+      void loadTripadvisorLiveSessionTail();
     }
   }
 
@@ -1584,6 +1702,10 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     return match || null;
   }
 
+  function getSelectedLiveDisplayMode(): LiveDisplayMode {
+    return drawerLiveModeSelect.value === "xvfb" ? "xvfb" : "native";
+  }
+
   async function confirmManualTripadvisorSession(): Promise<void> {
     drawerActionStatus.textContent = "Confirmando sesión manual...";
     try {
@@ -1609,6 +1731,7 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
       drawerActionStatus.textContent = `No hay job_id de ${sourceLabel} para lanzar Live.`;
       return;
     }
+    const liveDisplayMode = getSelectedLiveDisplayMode();
     if (node.key === "scrape_tripadvisor") {
       drawerActionStatus.textContent = "Abriendo sesión needs_human de TripAdvisor...";
       try {
@@ -1619,6 +1742,7 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
         }>("/tripadvisor/live-session/launch", {
           reason: `ui_needs_human_tripadvisor:${replayJobId}:${node.status || "unknown"}`,
           job_id: replayJobId,
+          live_display_mode: liveDisplayMode,
         });
         const alreadyRunning = Boolean(response?.already_running);
         const liveState = String(response?.live_session?.state || "").trim() || "unknown";
@@ -1627,13 +1751,15 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
           ? `La sesión live de TripAdvisor ya estaba abierta${livePid ? ` (pid ${livePid})` : ""}.`
           : `Sesión needs_human de TripAdvisor abierta${livePid ? ` (pid ${livePid})` : ""}. Estado: ${liveState}.`;
         await loadTripadvisorSessionState();
+        await loadTripadvisorLiveSessionTail({ force: true });
         return;
       } catch (error) {
         drawerActionStatus.textContent = `ERROR: ${formatError(error)}`;
+        await loadTripadvisorLiveSessionTail({ force: true });
         return;
       }
     }
-    drawerActionStatus.textContent = `Relanzando ${sourceLabel} en modo live...`;
+    drawerActionStatus.textContent = `Relanzando ${sourceLabel} en modo live (${liveDisplayMode})...`;
     try {
       const relaunchOverrides = buildRelaunchOverridesForNode(node);
       const response = await deps.apiClient.post<{ job_id?: string | null }>(
@@ -1641,11 +1767,12 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
         {
           reason: `ui_live_relaunch:${replayJobId}:${node.status || "unknown"}`,
           execution_mode: "live",
+          live_display_mode: liveDisplayMode,
           ...relaunchOverrides,
         }
       );
       const relaunchedJobId = String(response?.job_id || replayJobId).trim() || replayJobId;
-      drawerActionStatus.textContent = `${sourceLabel} relanzado en modo live: ${relaunchedJobId}`;
+      drawerActionStatus.textContent = `${sourceLabel} relanzado en modo live (${liveDisplayMode}): ${relaunchedJobId}`;
       await loadJobsList();
       const group = getRenderableBusinessGroups().find(
         (item) =>
@@ -1749,6 +1876,100 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     }
   }
 
+  function shouldPollTripadvisorLiveSession(): boolean {
+    if (drawerOpen && drawerNodeKey === "scrape_tripadvisor") {
+      return true;
+    }
+    return Boolean(tripadvisorLiveSessionTail?.live_session?.running);
+  }
+
+  async function loadTripadvisorLiveSessionTail(options?: { force?: boolean }): Promise<void> {
+    if (!options?.force && !shouldPollTripadvisorLiveSession()) {
+      return;
+    }
+    try {
+      const payload = await deps.apiClient.get<TripAdvisorLiveSessionLogTail>(
+        "/tripadvisor/live-session/log-tail?max_chars=12000"
+      );
+      tripadvisorLiveSessionTail = payload;
+      tripadvisorLiveSessionError = null;
+      renderTripadvisorLiveSessionDetails();
+    } catch (error) {
+      tripadvisorLiveSessionError = formatError(error);
+      renderTripadvisorLiveSessionDetails();
+    }
+  }
+
+  function renderTripadvisorLiveSessionDetails(): void {
+    const liveSession = tripadvisorLiveSessionTail?.live_session;
+    if (tripadvisorLiveSessionError) {
+      sessionLiveStatus.className = "jobs6-badge jobs6-badge--failed";
+      sessionLiveStatus.textContent = "TA Live: error";
+      sessionLiveMeta.textContent = `Live: ${tripadvisorLiveSessionError}`;
+      if (drawerNodeKey === "scrape_tripadvisor") {
+        drawerTripadvisorLiveSummary.textContent = "No se pudo leer el estado live de TripAdvisor.";
+        drawerTripadvisorLiveLog.textContent = `ERROR: ${tripadvisorLiveSessionError}`;
+        drawerTripadvisorLiveStopButton.setAttribute("disabled", "disabled");
+      }
+      return;
+    }
+    const liveState = String(liveSession?.state || "").trim().toLowerCase();
+    const isRunning = Boolean(liveSession?.running);
+    const liveDisplayMode = String(liveSession?.live_display_mode || "").trim() || "-";
+    const liveMode = String(liveSession?.mode || "").trim() || "-";
+    const liveJobId = String(liveSession?.job_id || "").trim() || "-";
+    const finishedReason = String(liveSession?.finished_reason || "").trim() || "-";
+    const liveDisplay = String(liveSession?.display || "").trim() || "-";
+    const startedAt = formatTimestampValue(liveSession?.started_at_ts);
+    const updatedAt = formatTimestampValue(liveSession?.updated_at_ts);
+    const liveStatusText = isRunning ? "running" : liveState || "idle";
+    const liveStatusClass = isRunning
+      ? "jobs6-badge--running"
+      : liveStatusText === "finished"
+        ? "jobs6-badge--waiting"
+        : liveStatusText === "stopping"
+          ? "jobs6-badge--queued"
+          : "jobs6-badge--idle";
+
+    sessionLiveStatus.className = `jobs6-badge ${liveStatusClass}`;
+    sessionLiveStatus.textContent = `TA Live: ${liveStatusText}`;
+    sessionLiveMeta.textContent = `Live: ${liveDisplayMode} • pid ${String(liveSession?.pid ?? "-")} • ${liveMode}`;
+
+    if (drawerNodeKey !== "scrape_tripadvisor") {
+      return;
+    }
+
+    drawerTripadvisorLiveSummary.textContent = [
+      `Estado: ${liveStatusText}`,
+      `PID: ${String(liveSession?.pid ?? "-")}`,
+      `Display mode: ${liveDisplayMode}`,
+      `Modo bridge: ${liveMode}`,
+      `Display: ${liveDisplay}`,
+      `Job replay: ${liveJobId}`,
+      `Reason: ${String(liveSession?.reason || "-")}`,
+      `Started: ${startedAt}`,
+      `Updated: ${updatedAt}`,
+      `Finished reason: ${finishedReason}`,
+      `Log file: ${String(tripadvisorLiveSessionTail?.log_file || liveSession?.log_file || "-")}`,
+    ].join("\n");
+    drawerTripadvisorLiveLog.textContent =
+      tripadvisorLiveSessionError
+        ? `ERROR: ${tripadvisorLiveSessionError}`
+        : String(tripadvisorLiveSessionTail?.log_tail || "").trim() || "Sin logs todavía.";
+    drawerTripadvisorLiveStopButton.toggleAttribute("disabled", !isRunning);
+  }
+
+  async function stopTripadvisorLiveSession(): Promise<void> {
+    drawerActionStatus.textContent = "Parando sesión live TA...";
+    try {
+      await deps.apiClient.post("/tripadvisor/live-session/stop", {});
+      await loadTripadvisorLiveSessionTail({ force: true });
+      drawerActionStatus.textContent = "Sesión live TA detenida.";
+    } catch (error) {
+      drawerActionStatus.textContent = `ERROR: ${formatError(error)}`;
+    }
+  }
+
   function renderSessionState(): void {
     const state = sessionState;
     if (!state) return;
@@ -1790,6 +2011,14 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
         void loadTripadvisorSessionState();
       }, 12000);
     }
+    if (tripadvisorLiveSessionPollTimer === null) {
+      tripadvisorLiveSessionPollTimer = window.setInterval(() => {
+        if (!shouldPollTripadvisorLiveSession()) {
+          return;
+        }
+        void loadTripadvisorLiveSessionTail();
+      }, 5000);
+    }
   }
 
   function stopPollers(): void {
@@ -1800,6 +2029,10 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     if (sessionPollTimer !== null) {
       window.clearInterval(sessionPollTimer);
       sessionPollTimer = null;
+    }
+    if (tripadvisorLiveSessionPollTimer !== null) {
+      window.clearInterval(tripadvisorLiveSessionPollTimer);
+      tripadvisorLiveSessionPollTimer = null;
     }
   }
 
@@ -1852,6 +2085,7 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
 
   void loadJobsList();
   void loadTripadvisorSessionState();
+  void loadTripadvisorLiveSessionTail({ force: true });
 
   AnimationController.mount(root, "view");
 
@@ -1870,6 +2104,7 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
         void loadJobsList();
       }
       void loadTripadvisorSessionState();
+      void loadTripadvisorLiveSessionTail({ force: true });
     },
     onHide: () => {
       stopPollers();
@@ -2531,6 +2766,13 @@ function formatDateTime(raw: string | null | undefined): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
+}
+
+function formatTimestampValue(raw: number | null | undefined): string {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
+    return "-";
+  }
+  return formatDateTime(new Date(raw * 1000).toISOString());
 }
 
 function computeDurationSeconds(startedAt: string | undefined, finishedAt: string | undefined): number | null {

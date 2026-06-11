@@ -1,4 +1,5 @@
 from .business_artifact_runtime import BusinessArtifactRuntime
+from .browser_scrape_round_runtime import BrowserScrapeRoundRuntime
 from .browser_job_control_runtime import BrowserJobControlRuntime
 from .business_cleanup_runtime import BusinessCleanupRuntime
 from .business_common_runtime import BusinessCommonRuntime
@@ -12,6 +13,7 @@ from .tripadvisor_live_capture_runtime import TripadvisorLiveCaptureRuntime
 
 __all__ = [
     "BusinessArtifactRuntime",
+    "BrowserScrapeRoundRuntime",
     "BrowserJobControlRuntime",
     "BusinessCleanupRuntime",
     "BusinessCommonRuntime",

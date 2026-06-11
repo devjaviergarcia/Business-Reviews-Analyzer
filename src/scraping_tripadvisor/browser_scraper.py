@@ -95,6 +95,12 @@ class TripadvisorScraper(
         self._cookies_checked_once = False
         self._consent_checked_once = False
         self._location_prompt_checked_once = False
+        self._tripadvisor_graphql_review_capture_listener_installed = False
+        self._tripadvisor_graphql_review_capture_tasks: set[object] = set()
+        self._tripadvisor_graphql_review_batches_by_offset: dict[int, object] = {}
+        self._last_tripadvisor_graphql_expected_offset: int | None = None
+        self._last_tripadvisor_graphql_reviews_offset: int | None = None
+        self._last_tripadvisor_reviews_page_source = "uninitialized"
         self.use_browser_profile(
             explicit_profile_id=browser_profile_id,
             stable_key=browser_profile_stable_key,

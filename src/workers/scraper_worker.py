@@ -24,7 +24,6 @@ from src.services.tripadvisor_session_service import TripadvisorSessionService
 from src.workers.base_queue_worker import QueuedJobWorkerBase
 from src.workers.broker import WorkerJobBroker
 from src.workers.contracts import (
-    AnalysisGenerateTaskPayload,
     AnalysisJobStatus,
     parse_analyze_business_payload,
     parse_crm_lead_discovery_payload,
@@ -386,6 +385,7 @@ class ScraperWorker(QueuedJobWorkerBase):
         force = bool(task_payload.force)
         strategy = task_payload.strategy
         force_mode = task_payload.force_mode
+        payload_source = str(task_payload.source or job.get("source") or "").strip().lower()
         canonical_name = task_payload.canonical_name
         source_name = task_payload.source_name
         root_business_id = task_payload.root_business_id
@@ -489,6 +489,32 @@ class ScraperWorker(QueuedJobWorkerBase):
         cancellation_watch_task = asyncio.create_task(cancellation_watch_loop())
 
         try:
+            if self.queue_name == "scrape_tripadvisor" or payload_source == "tripadvisor":
+                reason = (
+                    "TripAdvisor scrape jobs are locked to the replay-headfull live-session flow. "
+                    "Use the TripAdvisor needs_human replay flow instead of the legacy scrape worker."
+                )
+                await self._job_broker.mark_needs_human(
+                    job_id=job_id,
+                    reason=reason,
+                    data=self._with_worker_source(
+                        {
+                            "reason_code": "tripadvisor_replay_headfull_required",
+                            "required_flow": "replay-headfull",
+                            "automatic_relaunch_disabled": True,
+                            "queue_name": self.queue_name,
+                            "payload_source": payload_source or None,
+                        }
+                    ),
+                )
+                job_outcome = "needs_human"
+                LOGGER.warning(
+                    "Blocked TripAdvisor legacy worker execution outside replay-headfull job=%s queue=%s payload_source=%s",
+                    job_id,
+                    self.queue_name,
+                    payload_source,
+                )
+                return
             scrape_task = asyncio.create_task(
                 self._service.scrape_business_for_analysis_pipeline(
                     name=job_name,
@@ -551,58 +577,67 @@ class ScraperWorker(QueuedJobWorkerBase):
                 raise RuntimeError(_CANCELLED_BY_USER_ERROR)
 
             if self._should_handoff_to_analysis():
-                handoff_source_mode = "auto"
-                handoff_selected_source = None
-                if self._scrape_source in {"google_maps", "tripadvisor"}:
-                    handoff_source_mode = "single"
-                    handoff_selected_source = self._scrape_source
-                next_payload = AnalysisGenerateTaskPayload(
+                handoff_result = await self._service.handoff_completed_scrape_to_analysis(
+                    scrape_round_id=task_payload.scrape_round_id,
+                    source=(self._scrape_source if self._scrape_source in {"google_maps", "tripadvisor"} else None),
+                    source_job_id=str(job_id),
                     business_id=business_id,
                     dataset_id=str(scrape_result.get("analysis_dataset_id") or "").strip() or None,
                     source_profile_id=str(scrape_result.get("source_profile_id") or "").strip() or None,
                     scrape_run_id=str(scrape_result.get("scrape_run_id") or "").strip() or None,
-                    source_job_id=str(job_id),
-                    source_mode=handoff_source_mode,
-                    selected_source=handoff_selected_source,
                 )
-                LOGGER.info(
-                    "Handing off job=%s to queue=analysis job_type=analysis_generate payload=%s",
-                    job_id,
-                    next_payload.model_dump(mode="python"),
-                )
-                analysis_enqueue_result = await self._service.job_service.enqueue_analysis_generate_job(
-                    task_payload=next_payload
-                )
-                analysis_job_id = str(analysis_enqueue_result.get("job_id") or "").strip() or None
-                await self._job_broker.append_event(
-                    job_id=job_id,
-                    stage="handoff_analysis_queued",
-                    message="Scrape stage completed. Analysis job queued.",
-                    status=AnalysisJobStatus.RUNNING,
-                    data=self._with_worker_source(
-                        {
-                            "analysis_job_id": analysis_job_id,
-                            "analysis_queue_name": analysis_enqueue_result.get("queue_name"),
-                            "analysis_job_type": analysis_enqueue_result.get("job_type"),
-                            "analysis_payload": analysis_enqueue_result.get("payload"),
-                            "scrape_result": {
-                                "business_id": business_id,
-                                "review_count": scrape_result.get("review_count"),
-                                "scraped_review_count": scrape_result.get("scraped_review_count"),
-                                "processed_review_count": scrape_result.get("processed_review_count"),
-                                "cached_scrape": scrape_result.get("cached_scrape"),
-                                "stored_review_count_before": scrape_result.get("stored_review_count_before"),
-                                "stored_review_count_after": scrape_result.get("stored_review_count_after"),
-                                "scrape_produced_new_reviews": scrape_result.get("scrape_produced_new_reviews"),
-                                "dataset_id": scrape_result.get("dataset_id"),
-                                "analysis_dataset_id": scrape_result.get("analysis_dataset_id"),
-                                "legacy_dataset_id": scrape_result.get("legacy_dataset_id"),
-                                "source_profile_id": scrape_result.get("source_profile_id"),
-                                "scrape_run_id": scrape_result.get("scrape_run_id"),
-                            },
-                        }
-                    ),
-                )
+                analysis_job_id = str(handoff_result.get("analysis_job_id") or "").strip() or None
+                if handoff_result.get("analysis_enqueued"):
+                    LOGGER.info(
+                        "Handing off job=%s to queue=analysis job_type=analysis_generate payload=%s",
+                        job_id,
+                        handoff_result.get("analysis_payload"),
+                    )
+                    await self._job_broker.append_event(
+                        job_id=job_id,
+                        stage="handoff_analysis_queued",
+                        message="Scrape stage completed. Analysis job queued.",
+                        status=AnalysisJobStatus.RUNNING,
+                        data=self._with_worker_source(
+                            {
+                                "analysis_job_id": analysis_job_id,
+                                "analysis_queue_name": handoff_result.get("analysis_queue_name"),
+                                "analysis_job_type": handoff_result.get("analysis_job_type"),
+                                "analysis_payload": handoff_result.get("analysis_payload"),
+                                "scrape_round_id": handoff_result.get("scrape_round_id"),
+                                "scrape_result": {
+                                    "business_id": business_id,
+                                    "review_count": scrape_result.get("review_count"),
+                                    "scraped_review_count": scrape_result.get("scraped_review_count"),
+                                    "processed_review_count": scrape_result.get("processed_review_count"),
+                                    "cached_scrape": scrape_result.get("cached_scrape"),
+                                    "stored_review_count_before": scrape_result.get("stored_review_count_before"),
+                                    "stored_review_count_after": scrape_result.get("stored_review_count_after"),
+                                    "scrape_produced_new_reviews": scrape_result.get("scrape_produced_new_reviews"),
+                                    "dataset_id": scrape_result.get("dataset_id"),
+                                    "analysis_dataset_id": scrape_result.get("analysis_dataset_id"),
+                                    "legacy_dataset_id": scrape_result.get("legacy_dataset_id"),
+                                    "source_profile_id": scrape_result.get("source_profile_id"),
+                                    "scrape_run_id": scrape_result.get("scrape_run_id"),
+                                },
+                            }
+                        ),
+                    )
+                else:
+                    await self._job_broker.append_event(
+                        job_id=job_id,
+                        stage="handoff_analysis_waiting_round",
+                        message="Scrape stage completed. Waiting for remaining scrape sources before analysis.",
+                        status=AnalysisJobStatus.RUNNING,
+                        data=self._with_worker_source(
+                            {
+                                "scrape_round_id": handoff_result.get("scrape_round_id"),
+                                "pending_sources": handoff_result.get("pending_sources") or [],
+                                "completed_sources": handoff_result.get("completed_sources") or [],
+                                "claim_in_progress": bool(handoff_result.get("claim_in_progress")),
+                            }
+                        ),
+                    )
                 scrape_result = dict(scrape_result)
                 scrape_result["pipeline"] = {
                     "worker": "scraper",
@@ -610,18 +645,33 @@ class ScraperWorker(QueuedJobWorkerBase):
                     "queue_name": self.queue_name,
                 }
                 scrape_result["analysis_handoff"] = {
+                    "mode": handoff_result.get("mode"),
+                    "scrape_round_id": handoff_result.get("scrape_round_id"),
                     "analysis_job_id": analysis_job_id,
-                    "queue_name": analysis_enqueue_result.get("queue_name"),
-                    "job_type": analysis_enqueue_result.get("job_type"),
+                    "queue_name": handoff_result.get("analysis_queue_name"),
+                    "job_type": handoff_result.get("analysis_job_type"),
+                    "waiting_for_sources": bool(handoff_result.get("waiting_for_sources")),
+                    "pending_sources": handoff_result.get("pending_sources") or [],
+                    "completed_sources": handoff_result.get("completed_sources") or [],
+                    "claim_in_progress": bool(handoff_result.get("claim_in_progress")),
                 }
                 await self._job_broker.mark_done(job_id=job_id, result=scrape_result)
                 job_outcome = "done"
-                LOGGER.info(
-                    "Scrape job done and handed off to analysis: scrape_job=%s analysis_job=%s business_id=%s",
-                    job_id,
-                    analysis_job_id,
-                    business_id,
-                )
+                if handoff_result.get("analysis_enqueued"):
+                    LOGGER.info(
+                        "Scrape job done and handed off to analysis: scrape_job=%s analysis_job=%s business_id=%s",
+                        job_id,
+                        analysis_job_id,
+                        business_id,
+                    )
+                else:
+                    LOGGER.info(
+                        "Scrape job done but analysis handoff deferred by scrape round: scrape_job=%s business_id=%s pending_sources=%s round=%s",
+                        job_id,
+                        business_id,
+                        handoff_result.get("pending_sources") or [],
+                        handoff_result.get("scrape_round_id"),
+                    )
             else:
                 scrape_result = dict(scrape_result)
                 scrape_result["pipeline"] = {

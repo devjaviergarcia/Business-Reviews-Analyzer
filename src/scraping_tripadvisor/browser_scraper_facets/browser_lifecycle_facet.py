@@ -24,6 +24,7 @@ class TripadvisorBrowserLifecycleFacet:
     def bind_page(self, page: Page) -> None:
         self._page = page
         self._external_page = True
+        self._tripadvisor_graphql_review_capture_listener_installed = False
 
     async def __aenter__(self) -> TripadvisorScraper:
         await self.start()
@@ -95,10 +96,14 @@ class TripadvisorBrowserLifecycleFacet:
             raise RuntimeError("Playwright context was not initialized.")
 
         self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
+        await self._install_tripadvisor_graphql_review_capture()
         await self._go_to_home()
         return self._page
 
     async def close(self) -> None:
+        capture_tasks = list(getattr(self, "_tripadvisor_graphql_review_capture_tasks", set()))
+        if capture_tasks:
+            await asyncio.gather(*capture_tasks, return_exceptions=True)
         if not self._external_page and self._context is not None:
             await self._context.close()
         if not self._external_page and self._browser is not None:
@@ -112,6 +117,12 @@ class TripadvisorBrowserLifecycleFacet:
         self._page = None
         self._external_page = False
         self._last_click_ts = None
+        self._tripadvisor_graphql_review_capture_listener_installed = False
+        self._tripadvisor_graphql_review_batches_by_offset = {}
+        self._tripadvisor_graphql_review_capture_tasks = set()
+        self._last_tripadvisor_graphql_expected_offset = None
+        self._last_tripadvisor_graphql_reviews_offset = None
+        self._last_tripadvisor_reviews_page_source = "closed"
 
     async def _wait_after_navigation(self) -> None:
         page = self._require_page()

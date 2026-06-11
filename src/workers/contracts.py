@@ -9,9 +9,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from src.job_runtime.browser_job_contracts import (
     DEFAULT_BROWSER_EXECUTION_MODE,
     DEFAULT_BROWSER_FALLBACK_POLICY,
+    DEFAULT_BROWSER_LIVE_DISPLAY_MODE,
     DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
     BrowserExecutionMode,
     BrowserFallbackPolicy,
+    BrowserLiveDisplayMode,
     BrowserJobSource,
     BrowserRuntimeTarget,
 )
@@ -74,7 +76,9 @@ class AnalyzeBusinessTaskPayload(BaseModel):
     source_name: str | None = None
     source_name_normalized: str | None = None
     root_business_id: str | None = None
+    scrape_round_id: str | None = None
     execution_mode: BrowserExecutionMode = DEFAULT_BROWSER_EXECUTION_MODE
+    live_display_mode: BrowserLiveDisplayMode = DEFAULT_BROWSER_LIVE_DISPLAY_MODE
     runtime_target: BrowserRuntimeTarget = DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET
     requested_by: str = "internal_api"
     fallback_policy: BrowserFallbackPolicy = DEFAULT_BROWSER_FALLBACK_POLICY
@@ -106,6 +110,7 @@ class AnalyzeBusinessTaskPayload(BaseModel):
         "source_name",
         "source_name_normalized",
         "root_business_id",
+        "scrape_round_id",
         "human_session_id",
         "source_display_name",
         mode="before",
@@ -128,6 +133,12 @@ class AnalyzeBusinessTaskPayload(BaseModel):
     def normalize_execution_mode(cls, value: object) -> object:
         cleaned = str(value or DEFAULT_BROWSER_EXECUTION_MODE).strip().lower()
         return cleaned or DEFAULT_BROWSER_EXECUTION_MODE
+
+    @field_validator("live_display_mode", mode="before")
+    @classmethod
+    def normalize_live_display_mode(cls, value: object) -> object:
+        cleaned = str(value or DEFAULT_BROWSER_LIVE_DISPLAY_MODE).strip().lower()
+        return cleaned or DEFAULT_BROWSER_LIVE_DISPLAY_MODE
 
     @field_validator("runtime_target", mode="before")
     @classmethod
@@ -225,6 +236,7 @@ class AnalysisGenerateTaskPayload(BaseModel):
     batch_size: int | None = None
     max_reviews_pool: int | None = None
     source_job_id: str | None = None
+    scrape_round_id: str | None = None
     source_mode: ReportSourceMode = "auto"
     selected_source: ReportSelectedSource | None = None
 
@@ -247,7 +259,14 @@ class AnalysisGenerateTaskPayload(BaseModel):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
-    @field_validator("dataset_id", "source_profile_id", "scrape_run_id", "source_job_id", mode="before")
+    @field_validator(
+        "dataset_id",
+        "source_profile_id",
+        "scrape_run_id",
+        "source_job_id",
+        "scrape_round_id",
+        mode="before",
+    )
     @classmethod
     def normalize_optional_ids(cls, value: object) -> object:
         if value is None:
@@ -566,7 +585,11 @@ def parse_analyze_business_payload(job_doc: Mapping[str, Any]) -> AnalyzeBusines
             "source_name": str(job_doc.get("source_name") or "").strip() or None,
             "source_name_normalized": str(job_doc.get("source_name_normalized") or "").strip() or None,
             "root_business_id": str(job_doc.get("root_business_id") or "").strip() or None,
+            "scrape_round_id": str(job_doc.get("scrape_round_id") or "").strip() or None,
             "execution_mode": str(job_doc.get("execution_mode") or DEFAULT_BROWSER_EXECUTION_MODE),
+            "live_display_mode": str(
+                job_doc.get("live_display_mode") or DEFAULT_BROWSER_LIVE_DISPLAY_MODE
+            ),
             "runtime_target": str(job_doc.get("runtime_target") or DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET),
             "requested_by": str(job_doc.get("requested_by") or "").strip().lower() or "internal_api",
             "fallback_policy": str(job_doc.get("fallback_policy") or DEFAULT_BROWSER_FALLBACK_POLICY),
@@ -607,6 +630,7 @@ def parse_analysis_generate_payload(job_doc: Mapping[str, Any]) -> AnalysisGener
             "batch_size": job_doc.get("batch_size"),
             "max_reviews_pool": job_doc.get("max_reviews_pool"),
             "source_job_id": str(job_doc.get("source_job_id") or "").strip() or None,
+            "scrape_round_id": str(job_doc.get("scrape_round_id") or "").strip() or None,
             "source_mode": str(job_doc.get("source_mode") or "auto"),
             "selected_source": (
                 str(job_doc.get("selected_source")).strip()
@@ -860,6 +884,7 @@ class AnalysisJobQueueDocument(BaseModel):
     source: str | None = None
     runtime_target: str | None = None
     execution_mode: str | None = None
+    live_display_mode: str | None = None
     requested_by: str | None = None
     fallback_policy: str | None = None
     human_session_id: str | None = None
@@ -871,6 +896,7 @@ class AnalysisJobQueueDocument(BaseModel):
     source_name: str | None = None
     source_name_normalized: str | None = None
     root_business_id: str | None = None
+    scrape_round_id: str | None = None
     force: bool | None = None
     strategy: str | None = None
     force_mode: str | None = None

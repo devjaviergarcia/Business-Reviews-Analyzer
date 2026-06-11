@@ -5,6 +5,7 @@ from typing import Any, Awaitable, Callable
 from src.job_runtime.browser_job_contracts import (
     DEFAULT_BROWSER_EXECUTION_MODE,
     DEFAULT_BROWSER_FALLBACK_POLICY,
+    DEFAULT_BROWSER_LIVE_DISPLAY_MODE,
     DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
     default_source_display_name,
 )
@@ -24,6 +25,9 @@ class EnqueueBrowserScrapeJobsUseCase:
         resolve_scrape_sources: Callable[[tuple[str, ...] | list[str] | None], tuple[str, ...]],
         inspect_local_browser_runtime_on_enqueue: Callable[[tuple[str, ...]], Awaitable[dict[str, Any]]],
         ensure_root_business_on_enqueue: Callable[..., Awaitable[dict[str, Any]]],
+        open_browser_scrape_round: Callable[..., Awaitable[dict[str, Any]]],
+        register_browser_scrape_round_source_job: Callable[..., Awaitable[dict[str, Any]]],
+        launch_tripadvisor_live_session: Callable[..., Awaitable[dict[str, Any]]] | None = None,
     ) -> None:
         self._job_service = job_service
         self._validate_business_name = validate_business_name
@@ -33,6 +37,40 @@ class EnqueueBrowserScrapeJobsUseCase:
         self._resolve_scrape_sources = resolve_scrape_sources
         self._inspect_local_browser_runtime_on_enqueue = inspect_local_browser_runtime_on_enqueue
         self._ensure_root_business_on_enqueue = ensure_root_business_on_enqueue
+        self._open_browser_scrape_round = open_browser_scrape_round
+        self._register_browser_scrape_round_source_job = register_browser_scrape_round_source_job
+        self._launch_tripadvisor_live_session = launch_tripadvisor_live_session
+
+    async def _maybe_launch_tripadvisor_live_session(
+        self,
+        *,
+        job_id: str,
+        reason: str,
+        live_display_mode: str,
+    ) -> dict[str, Any]:
+        if self._launch_tripadvisor_live_session is None:
+            return {
+                "launched": False,
+                "skipped": True,
+                "reason": "tripadvisor_live_launcher_not_configured",
+            }
+        try:
+            launch_result = await self._launch_tripadvisor_live_session(
+                reason=reason,
+                job_id=job_id,
+                live_display_mode=live_display_mode,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "launched": False,
+                "skipped": False,
+                "error": str(exc),
+            }
+        return {
+            "launched": True,
+            "skipped": False,
+            "result": launch_result,
+        }
 
     async def execute(
         self,
@@ -50,6 +88,7 @@ class EnqueueBrowserScrapeJobsUseCase:
         google_maps_name: str | None = None,
         tripadvisor_name: str | None = None,
         execution_mode: str | None = None,
+        live_display_mode: str | None = None,
         requested_by: str | None = None,
     ) -> dict[str, Any]:
         business_name = self._validate_business_name(name)
@@ -69,10 +108,23 @@ class EnqueueBrowserScrapeJobsUseCase:
             str(execution_mode or DEFAULT_BROWSER_EXECUTION_MODE).strip().lower()
             or DEFAULT_BROWSER_EXECUTION_MODE
         )
+        normalized_live_display_mode = (
+            str(live_display_mode or DEFAULT_BROWSER_LIVE_DISPLAY_MODE).strip().lower()
+            or DEFAULT_BROWSER_LIVE_DISPLAY_MODE
+        )
         normalized_requested_by = (
             str(requested_by or "").strip().lower().replace(" ", "_")
             or "business_api"
         )
+        scrape_round = await self._open_browser_scrape_round(
+            canonical_name=business_name,
+            canonical_name_normalized=canonical_name_normalized,
+            root_business_id=root_business_id,
+            requested_sources=selected_sources,
+            requested_by=normalized_requested_by,
+        )
+        scrape_round_id = str(scrape_round.get("round_id") or "").strip() or None
+        effective_execution_mode_by_source: dict[str, str] = {}
 
         source_names: dict[str, str] = {}
         for source in selected_sources:
@@ -96,6 +148,8 @@ class EnqueueBrowserScrapeJobsUseCase:
         for source in selected_sources:
             source_business_name = source_names[source]
             source_name_normalized = self._normalize_text(source_business_name)
+            effective_execution_mode = "live" if source == "tripadvisor" else normalized_execution_mode
+            effective_execution_mode_by_source[source] = effective_execution_mode
             task_payload = AnalyzeBusinessTaskPayload(
                 name=source_business_name,
                 source=source,
@@ -104,7 +158,9 @@ class EnqueueBrowserScrapeJobsUseCase:
                 source_name=source_business_name,
                 source_name_normalized=source_name_normalized,
                 root_business_id=root_business_id,
-                execution_mode=normalized_execution_mode,
+                scrape_round_id=scrape_round_id,
+                execution_mode=effective_execution_mode,
+                live_display_mode=normalized_live_display_mode,
                 runtime_target=DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
                 requested_by=normalized_requested_by,
                 fallback_policy=DEFAULT_BROWSER_FALLBACK_POLICY,
@@ -125,11 +181,30 @@ class EnqueueBrowserScrapeJobsUseCase:
                 job_type="business_analyze",
                 source=source,
                 runtime_target=DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
-                execution_mode=normalized_execution_mode,
+                execution_mode=effective_execution_mode,
+                live_display_mode=normalized_live_display_mode,
                 requested_by=normalized_requested_by,
                 fallback_policy=DEFAULT_BROWSER_FALLBACK_POLICY,
                 source_display_name=default_source_display_name(source),
             )
+            await self._register_browser_scrape_round_source_job(
+                scrape_round_id=scrape_round_id,
+                source=source,
+                source_job_id=str(queued_job.get("job_id") or "").strip(),
+                queue_name=queue_by_source[source],
+                execution_mode=effective_execution_mode,
+                source_name=source_business_name,
+            )
+            if source == "tripadvisor":
+                launch_status = await self._maybe_launch_tripadvisor_live_session(
+                    job_id=str(queued_job.get("job_id") or "").strip(),
+                    reason=f"enqueue_tripadvisor_live:{queued_job.get('job_id')}",
+                    live_display_mode=normalized_live_display_mode,
+                )
+                queued_job = {
+                    **queued_job,
+                    "tripadvisor_live_session": launch_status,
+                }
             jobs_by_source[source] = queued_job
 
         primary_source = selected_sources[0]
@@ -143,7 +218,10 @@ class EnqueueBrowserScrapeJobsUseCase:
             "canonical_name": business_name,
             "canonical_name_normalized": canonical_name_normalized,
             "business_id": root_business_id,
+            "scrape_round_id": scrape_round_id,
             "execution_mode": normalized_execution_mode,
+            "live_display_mode": normalized_live_display_mode,
+            "effective_execution_mode_by_source": effective_execution_mode_by_source,
             "runtime_target": DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
             "local_browser_runtime": runtime_availability,
             "sources_requested": list(selected_sources),

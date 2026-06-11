@@ -65,7 +65,11 @@ class LocalBrowserJobCoordinator:
         jobs = database[self._jobs_collection_name]
         pick_query: dict[str, Any] = {
             "status": AnalysisJobStatus.QUEUED.value,
-            "queue_name": {"$in": sorted(LOCAL_BROWSER_QUEUE_NAMES)},
+            "queue_name": {
+                "$in": sorted(
+                    queue_name for queue_name in LOCAL_BROWSER_QUEUE_NAMES if queue_name != "scrape_tripadvisor"
+                )
+            },
             "job_type": {"$in": sorted(LOCAL_BROWSER_JOB_TYPES)},
             "$and": [
                 {

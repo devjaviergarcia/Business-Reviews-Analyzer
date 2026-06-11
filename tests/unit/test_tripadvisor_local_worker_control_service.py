@@ -90,3 +90,37 @@ def test_ensure_started_raises_runtime_error_on_unreachable_bridge(
 
     assert "unreachable" in str(exc_info.value).lower()
 
+
+def test_launch_live_session_calls_bridge_with_live_display_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def _fake_urlopen(req, timeout: float = 0):  # noqa: ANN001
+        captured["url"] = req.full_url
+        captured["method"] = req.get_method()
+        captured["timeout"] = timeout
+        captured["body"] = json.loads((req.data or b"{}").decode("utf-8"))
+        return _FakeResponse({"ok": True, "live_session": {"state": "running"}})
+
+    monkeypatch.setattr(local_worker_control_module.request, "urlopen", _fake_urlopen)
+
+    service = TripadvisorLocalWorkerControlService(
+        enabled=True,
+        bridge_url="http://bridge.local:8765",
+        timeout_seconds=4.0,
+    )
+    result = asyncio.run(
+        service.launch_live_session(
+            reason="ui_live_tripadvisor",
+            live_display_mode="xvfb",
+            job_id="job-ta-1",
+        )
+    )
+
+    assert result["ok"] is True
+    assert captured["url"] == "http://bridge.local:8765/live-session/launch"
+    assert captured["method"] == "POST"
+    assert captured["body"]["reason"] == "ui_live_tripadvisor"
+    assert captured["body"]["live_display_mode"] == "xvfb"
+    assert captured["body"]["job_id"] == "job-ta-1"

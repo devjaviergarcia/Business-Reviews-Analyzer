@@ -73,6 +73,9 @@ class ApplicationRoot:
             resolve_scrape_sources=business._resolve_scrape_sources,
             inspect_local_browser_runtime_on_enqueue=business._inspect_local_browser_runtime_on_enqueue,
             ensure_root_business_on_enqueue=business._ensure_root_business_on_enqueue,
+            open_browser_scrape_round=business._open_browser_scrape_round,
+            register_browser_scrape_round_source_job=business._register_browser_scrape_round_source_job,
+            launch_tripadvisor_live_session=self.legacy_tripadvisor_bridge.launch_live_session,
         )
 
     def _build_relaunch_browser_scrape_job_use_case(
@@ -85,6 +88,7 @@ class ApplicationRoot:
             ensure_tripadvisor_session_available_for_relaunch=business._ensure_tripadvisor_session_available_for_relaunch,
             validate_business_name=business._validate_business_name,
             normalize_text=business._normalize_text,
+            launch_tripadvisor_live_session=self.legacy_tripadvisor_bridge.launch_live_session,
         )
 
     def _build_enqueue_crm_lead_discovery_job_use_case(
@@ -583,6 +587,7 @@ class ApplicationRoot:
             job_service=self.analysis_jobs,
             query_service=self.business_query,
             local_browser_worker_registry=self.local_browser_registry,
+            tripadvisor_live_session_launcher=self.legacy_tripadvisor_bridge,
         )
         return service.attach_browser_scrape_job_use_cases(
             enqueue_browser_scrape_jobs_use_case=self._build_enqueue_browser_scrape_jobs_use_case(service),

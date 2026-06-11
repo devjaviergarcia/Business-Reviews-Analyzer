@@ -80,6 +80,16 @@ export function createAnalysisView(deps: AnalysisViewDeps): ViewModule {
           strategy: values.strategy,
           force_mode: values.forceMode || null,
         };
+        if (values.launchMode === "live_native") {
+          payload.execution_mode = "live";
+          payload.live_display_mode = "native";
+        } else if (values.launchMode === "live_xvfb") {
+          payload.execution_mode = "live";
+          payload.live_display_mode = "xvfb";
+        } else {
+          payload.execution_mode = "automatic";
+          payload.live_display_mode = "native";
+        }
         if (values.sourceScope === "google_maps" || values.sourceScope === "tripadvisor") {
           payload.sources = [values.sourceScope];
         }

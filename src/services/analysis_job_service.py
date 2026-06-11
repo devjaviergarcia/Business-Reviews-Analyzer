@@ -12,6 +12,7 @@ from src.database import get_database
 from src.job_runtime.browser_job_contracts import (
     DEFAULT_BROWSER_FALLBACK_POLICY,
     DEFAULT_BROWSER_EXECUTION_MODE,
+    DEFAULT_BROWSER_LIVE_DISPLAY_MODE,
     DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
     default_fallback_policy_for_runtime,
     default_runtime_target_for_job,
@@ -69,6 +70,8 @@ class AnalysisJobService:
             payload_override.pop("source_mode", None)
         if payload_override.get("selected_source") is None:
             payload_override.pop("selected_source", None)
+        if payload_override.get("scrape_round_id") is None:
+            payload_override.pop("scrape_round_id", None)
         return await self.enqueue_job(
             task_payload=task_payload,
             queue_name="analysis",
@@ -104,6 +107,7 @@ class AnalysisJobService:
         source: str | None = None,
         runtime_target: str | None = None,
         execution_mode: str | None = None,
+        live_display_mode: str | None = None,
         requested_by: str | None = None,
         fallback_policy: str | None = None,
         human_session_id: str | None = None,
@@ -141,6 +145,7 @@ class AnalysisJobService:
             payload_data.get("source_name_normalized") if isinstance(payload_data, dict) else None
         )
         payload_root_business_id = payload_data.get("root_business_id") if isinstance(payload_data, dict) else None
+        payload_scrape_round_id = payload_data.get("scrape_round_id") if isinstance(payload_data, dict) else None
         payload_force = payload_data.get("force") if isinstance(payload_data, dict) else None
         payload_strategy = payload_data.get("strategy") if isinstance(payload_data, dict) else None
         payload_force_mode = payload_data.get("force_mode") if isinstance(payload_data, dict) else None
@@ -183,6 +188,15 @@ class AnalysisJobService:
                 else ""
             )
             or DEFAULT_BROWSER_EXECUTION_MODE
+        )
+        resolved_live_display_mode = (
+            str(live_display_mode or "").strip().lower()
+            or (
+                str(payload_data.get("live_display_mode") or "").strip().lower()
+                if isinstance(payload_data, dict)
+                else ""
+            )
+            or DEFAULT_BROWSER_LIVE_DISPLAY_MODE
         )
         resolved_requested_by = (
             str(requested_by or "").strip().lower()
@@ -228,6 +242,7 @@ class AnalysisJobService:
             source=resolved_source,
             runtime_target=resolved_runtime_target,
             execution_mode=resolved_execution_mode,
+            live_display_mode=resolved_live_display_mode,
             requested_by=resolved_requested_by,
             fallback_policy=resolved_fallback_policy,
             human_session_id=resolved_human_session_id,
@@ -250,6 +265,9 @@ class AnalysisJobService:
             ),
             root_business_id=(
                 str(payload_root_business_id).strip() if isinstance(payload_root_business_id, str) else None
+            ),
+            scrape_round_id=(
+                str(payload_scrape_round_id).strip() if isinstance(payload_scrape_round_id, str) else None
             ),
             force=bool(payload_force) if isinstance(payload_force, bool) else None,
             strategy=str(payload_strategy).strip() if isinstance(payload_strategy, str) else None,
@@ -297,6 +315,7 @@ class AnalysisJobService:
             "source": resolved_source,
             "runtime_target": resolved_runtime_target,
             "execution_mode": resolved_execution_mode,
+            "live_display_mode": resolved_live_display_mode,
             "requested_by": resolved_requested_by,
             "fallback_policy": resolved_fallback_policy,
             "human_session_id": resolved_human_session_id,
@@ -720,6 +739,10 @@ class AnalysisJobService:
             str(payload_data.get("execution_mode") or "").strip().lower()
             or DEFAULT_BROWSER_EXECUTION_MODE
         )
+        resolved_live_display_mode = (
+            str(payload_data.get("live_display_mode") or "").strip().lower()
+            or DEFAULT_BROWSER_LIVE_DISPLAY_MODE
+        )
         resolved_requested_by = str(payload_data.get("requested_by") or "").strip().lower() or "system_handoff"
         resolved_fallback_policy = (
             str(payload_data.get("fallback_policy") or "").strip().lower()
@@ -737,6 +760,7 @@ class AnalysisJobService:
             "source": resolved_source,
             "runtime_target": resolved_runtime_target,
             "execution_mode": resolved_execution_mode,
+            "live_display_mode": resolved_live_display_mode,
         }
         if isinstance(data, dict):
             event_data.update(data)
@@ -758,6 +782,7 @@ class AnalysisJobService:
             "source": resolved_source,
             "runtime_target": resolved_runtime_target,
             "execution_mode": resolved_execution_mode,
+            "live_display_mode": resolved_live_display_mode,
             "requested_by": resolved_requested_by,
             "fallback_policy": resolved_fallback_policy,
             "human_session_id": resolved_human_session_id,
@@ -926,6 +951,11 @@ class AnalysisJobService:
             or str(existing.get("execution_mode") or "").strip().lower()
             or DEFAULT_BROWSER_EXECUTION_MODE
         )
+        resolved_live_display_mode = (
+            str(payload_for_relaunch.get("live_display_mode") or "").strip().lower()
+            or str(existing.get("live_display_mode") or "").strip().lower()
+            or DEFAULT_BROWSER_LIVE_DISPLAY_MODE
+        )
         resolved_requested_by = (
             str(payload_for_relaunch.get("requested_by") or "").strip().lower()
             or str(existing.get("requested_by") or "").strip().lower()
@@ -983,6 +1013,7 @@ class AnalysisJobService:
                     "source": resolved_source,
                     "runtime_target": resolved_runtime_target,
                     "execution_mode": resolved_execution_mode,
+                    "live_display_mode": resolved_live_display_mode,
                     "requested_by": resolved_requested_by,
                     "fallback_policy": resolved_fallback_policy,
                     "human_session_id": resolved_human_session_id,
@@ -1032,6 +1063,7 @@ class AnalysisJobService:
                     "source": resolved_source,
                     "runtime_target": resolved_runtime_target,
                     "execution_mode": resolved_execution_mode,
+                    "live_display_mode": resolved_live_display_mode,
                     "requested_by": resolved_requested_by,
                     "fallback_policy": resolved_fallback_policy,
                     "human_session_id": resolved_human_session_id,
@@ -1162,8 +1194,14 @@ class AnalysisJobService:
                             str(payload.get("source_name_normalized") or "").strip() or None
                         ),
                         "root_business_id": str(payload.get("root_business_id") or "").strip() or None,
+                        "scrape_round_id": str(payload.get("scrape_round_id") or "").strip() or None,
                         "execution_mode": (
                             str(payload.get("execution_mode") or DEFAULT_BROWSER_EXECUTION_MODE).strip().lower()
+                        ),
+                        "live_display_mode": (
+                            str(payload.get("live_display_mode") or DEFAULT_BROWSER_LIVE_DISPLAY_MODE)
+                            .strip()
+                            .lower()
                         ),
                         "runtime_target": (
                             str(payload.get("runtime_target") or DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET).strip().lower()
@@ -1197,6 +1235,7 @@ class AnalysisJobService:
                         "batch_size": payload.get("batch_size"),
                         "max_reviews_pool": payload.get("max_reviews_pool"),
                         "source_job_id": str(payload.get("source_job_id") or "").strip() or None,
+                        "scrape_round_id": str(payload.get("scrape_round_id") or "").strip() or None,
                         "source_mode": str(payload.get("source_mode") or "auto"),
                         "selected_source": (
                             str(payload.get("selected_source")).strip()
@@ -1279,8 +1318,10 @@ class AnalysisJobService:
         payload_source_name = payload_data.get("source_name")
         payload_source_name_normalized = payload_data.get("source_name_normalized")
         payload_root_business_id = payload_data.get("root_business_id")
+        payload_scrape_round_id = payload_data.get("scrape_round_id")
         payload_runtime_target = payload_data.get("runtime_target")
         payload_execution_mode = payload_data.get("execution_mode")
+        payload_live_display_mode = payload_data.get("live_display_mode")
         payload_requested_by = payload_data.get("requested_by")
         payload_fallback_policy = payload_data.get("fallback_policy")
         payload_human_session_id = payload_data.get("human_session_id")
@@ -1308,10 +1349,14 @@ class AnalysisJobService:
             fields["source_name_normalized"] = payload_source_name_normalized
         if isinstance(payload_root_business_id, str):
             fields["root_business_id"] = payload_root_business_id
+        if isinstance(payload_scrape_round_id, str):
+            fields["scrape_round_id"] = payload_scrape_round_id
         if isinstance(payload_runtime_target, str):
             fields["runtime_target"] = payload_runtime_target.strip().lower()
         if isinstance(payload_execution_mode, str):
             fields["execution_mode"] = payload_execution_mode.strip().lower()
+        if isinstance(payload_live_display_mode, str):
+            fields["live_display_mode"] = payload_live_display_mode.strip().lower()
         if isinstance(payload_requested_by, str):
             fields["requested_by"] = payload_requested_by.strip().lower()
         if isinstance(payload_fallback_policy, str):

@@ -118,12 +118,10 @@ class BusinessServiceScrapingFacet:
         browser_profile_id: str | None = None,
         progress_callback: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        self.tripadvisor_scraper.use_browser_profile(explicit_profile_id=browser_profile_id)
-        return await self._tripadvisor_business_page_scraper.scrape_business_page(
-            business_name,
-            max_pages=max_pages,
-            pages_percent=pages_percent,
-            progress_callback=progress_callback,
+        del business_name, max_pages, pages_percent, browser_profile_id, progress_callback
+        raise RuntimeError(
+            "TripAdvisor direct scraping is disabled. "
+            "This source must enter through the replay-headfull live-session flow and commit the captured payload."
         )
 
     def _resolve_effective_tripadvisor_start_delay_seconds(self) -> float:

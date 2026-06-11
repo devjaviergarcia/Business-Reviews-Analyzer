@@ -98,6 +98,7 @@ class TripadvisorLocalWorkerControlService:
         self,
         *,
         reason: str = "needs_human_live",
+        live_display_mode: str | None = None,
         display: str | None = None,
         profile_dir: str | None = None,
         job_id: str | None = None,
@@ -110,6 +111,8 @@ class TripadvisorLocalWorkerControlService:
         payload: dict[str, Any] = {
             "reason": str(reason or "needs_human_live"),
         }
+        if isinstance(live_display_mode, str) and live_display_mode.strip():
+            payload["live_display_mode"] = live_display_mode.strip().lower()
         if isinstance(display, str) and display.strip():
             payload["display"] = display.strip()
         if isinstance(profile_dir, str) and profile_dir.strip():

@@ -22,6 +22,7 @@ class _FakeJobService:
         source: str | None = None,
         runtime_target: str | None = None,
         execution_mode: str | None = None,
+        live_display_mode: str | None = None,
         requested_by: str | None = None,
         fallback_policy: str | None = None,
         source_display_name: str | None = None,
@@ -36,6 +37,7 @@ class _FakeJobService:
                 "source": source,
                 "runtime_target": runtime_target,
                 "execution_mode": execution_mode,
+                "live_display_mode": live_display_mode,
                 "requested_by": requested_by,
                 "fallback_policy": fallback_policy,
                 "source_display_name": source_display_name,
@@ -69,12 +71,26 @@ class _FakeLocalBrowserWorkerRegistry:
         return list(self._workers)
 
 
+class _FakeScrapeRoundRuntime:
+    def __init__(self) -> None:
+        self.open_calls: list[dict[str, Any]] = []
+        self.register_calls: list[dict[str, Any]] = []
+
+    async def open_round(self, **kwargs: Any) -> dict[str, Any]:
+        self.open_calls.append(dict(kwargs))
+        return {"round_id": "round-1"}
+
+    async def register_source_job(self, **kwargs: Any) -> dict[str, Any]:
+        self.register_calls.append(dict(kwargs))
+        return {"round_id": kwargs["scrape_round_id"]}
+
+
 def _build_service(
     *,
     job_service: _FakeJobService,
     local_browser_worker_registry: _FakeLocalBrowserWorkerRegistry,
 ) -> BusinessService:
-    return BusinessService(
+    service = BusinessService(
         scraper=object(),
         tripadvisor_scraper=object(),
         preprocessor=object(),
@@ -83,6 +99,8 @@ def _build_service(
         query_service=object(),
         local_browser_worker_registry=local_browser_worker_registry,
     )
+    service._browser_scrape_round_runtime = _FakeScrapeRoundRuntime()  # noqa: SLF001
+    return service
 
 
 def test_enqueue_tripadvisor_still_queues_when_no_local_runtime_is_active(
@@ -124,7 +142,9 @@ def test_enqueue_tripadvisor_still_queues_when_no_local_runtime_is_active(
     assert fake_registry.calls[0]["supported_sources"] == ["tripadvisor"]
     assert len(fake_job_service.calls) == 1
     assert fake_job_service.calls[0]["queue_name"] == "scrape_tripadvisor"
+    assert fake_job_service.calls[0]["payload"]["scrape_round_id"] == "round-1"
     assert result["primary_source"] == "tripadvisor"
+    assert result["scrape_round_id"] == "round-1"
     assert result["local_browser_runtime"]["available"] is False
     assert result["local_browser_runtime"]["missing_sources"] == ["tripadvisor"]
     assert "will remain pending" in result["local_browser_runtime"]["message"].lower()
@@ -160,8 +180,8 @@ def test_enqueue_tripadvisor_reports_available_local_runtime_when_worker_exists(
     )
 
     assert len(fake_job_service.calls) == 1
+    assert fake_job_service.calls[0]["payload"]["scrape_round_id"] == "round-1"
     assert result["local_browser_runtime"]["available"] is True
     assert result["local_browser_runtime"]["available_sources"] == ["tripadvisor"]
     assert result["local_browser_runtime"]["worker_count"] == 1
     assert result["local_browser_runtime"]["workers"][0]["worker_id"] == "local-browser:test"
-

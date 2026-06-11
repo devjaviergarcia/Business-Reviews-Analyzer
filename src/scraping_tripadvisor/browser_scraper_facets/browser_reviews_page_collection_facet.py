@@ -24,7 +24,22 @@ class TripadvisorBrowserReviewsPageCollectionFacet:
 
         if ensure_reviews_open:
             await self._open_reviews_section()
+        await self._install_tripadvisor_graphql_review_capture()
+
+        graphql_budget_seconds = min(2.4, max(0.8, total_budget_seconds * 0.24))
+        graphql_batch = await self._current_tripadvisor_graphql_review_page(
+            timeout_ms=int(graphql_budget_seconds * 1000.0),
+        )
+        if graphql_batch is not None and graphql_batch.reviews:
+            self._last_tripadvisor_reviews_page_source = "graphql"
+            return self._project_tripadvisor_graphql_reviews_for_collection(
+                reviews=graphql_batch.reviews,
+                include_owner_reply=include_owner_reply,
+                include_image_urls=include_image_urls,
+            )
+
         await self._prefetch_reviews_by_scroll(max_seconds=min(2.2, max(0.6, total_budget_seconds * 0.28)))
+        self._last_tripadvisor_reviews_page_source = "dom"
 
         # Fast DOM polling + progressive scroll: helps with lazy-loaded review cards.
         best_items: list[dict[str, Any]] = []

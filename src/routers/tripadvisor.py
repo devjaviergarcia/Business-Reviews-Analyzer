@@ -59,6 +59,7 @@ class MarkInvalidSessionRequest(BaseModel):
 
 class LaunchTripadvisorLiveSessionRequest(BaseModel):
     reason: str = "needs_human_live"
+    live_display_mode: str = "native"
     display: str | None = None
     profile_dir: str | None = None
     job_id: str | None = None
@@ -171,6 +172,7 @@ async def launch_tripadvisor_live_session(
     try:
         return await control_service.launch_live_session(
             reason=payload.reason,
+            live_display_mode=payload.live_display_mode,
             display=payload.display,
             profile_dir=payload.profile_dir,
             job_id=payload.job_id,

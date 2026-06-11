@@ -15,6 +15,7 @@ class TripadvisorLiveCaptureRuntime:
         sanitize_response_payload: Callable[[Any], Any],
         ensure_job_is_scrape: Callable[[dict[str, Any]], None],
         scrape_business_for_analysis_pipeline: Callable[..., Awaitable[dict[str, Any]]],
+        handoff_completed_scrape_to_analysis: Callable[..., Awaitable[dict[str, Any]]],
     ) -> None:
         self._job_service = job_service
         self._parse_object_id = parse_object_id
@@ -22,6 +23,7 @@ class TripadvisorLiveCaptureRuntime:
         self._sanitize_response_payload = sanitize_response_payload
         self._ensure_job_is_scrape = ensure_job_is_scrape
         self._scrape_business_for_analysis_pipeline = scrape_business_for_analysis_pipeline
+        self._handoff_completed_scrape_to_analysis = handoff_completed_scrape_to_analysis
 
     async def commit_live_capture(
         self,
@@ -135,6 +137,55 @@ class TripadvisorLiveCaptureRuntime:
             "metadata": normalized_metadata,
         }
 
+        handoff_result = await self._handoff_completed_scrape_to_analysis(
+            scrape_round_id=task_payload.scrape_round_id,
+            source="tripadvisor",
+            source_job_id=str(job_id),
+            business_id=str(scrape_result.get("business_id") or "").strip(),
+            dataset_id=str(scrape_result.get("analysis_dataset_id") or "").strip() or None,
+            source_profile_id=str(scrape_result.get("source_profile_id") or "").strip() or None,
+            scrape_run_id=str(scrape_result.get("scrape_run_id") or "").strip() or None,
+        )
+        if handoff_result.get("analysis_enqueued"):
+            await self._job_service.append_event(
+                job_id=job_object_id,
+                stage="handoff_analysis_queued",
+                message="Live TripAdvisor capture completed. Analysis job queued.",
+                status=AnalysisJobStatus.RUNNING,
+                data={
+                    "source": "tripadvisor",
+                    "analysis_job_id": handoff_result.get("analysis_job_id"),
+                    "analysis_queue_name": handoff_result.get("analysis_queue_name"),
+                    "analysis_job_type": handoff_result.get("analysis_job_type"),
+                    "analysis_payload": handoff_result.get("analysis_payload"),
+                    "scrape_round_id": handoff_result.get("scrape_round_id"),
+                },
+            )
+        else:
+            await self._job_service.append_event(
+                job_id=job_object_id,
+                stage="handoff_analysis_waiting_round",
+                message="Live TripAdvisor capture completed. Waiting for remaining scrape sources before analysis.",
+                status=AnalysisJobStatus.RUNNING,
+                data={
+                    "source": "tripadvisor",
+                    "pending_sources": handoff_result.get("pending_sources") or [],
+                    "completed_sources": handoff_result.get("completed_sources") or [],
+                    "scrape_round_id": handoff_result.get("scrape_round_id"),
+                    "claim_in_progress": bool(handoff_result.get("claim_in_progress")),
+                },
+            )
+        result_payload["analysis_handoff"] = {
+            "mode": handoff_result.get("mode"),
+            "scrape_round_id": handoff_result.get("scrape_round_id"),
+            "analysis_job_id": handoff_result.get("analysis_job_id"),
+            "queue_name": handoff_result.get("analysis_queue_name"),
+            "job_type": handoff_result.get("analysis_job_type"),
+            "waiting_for_sources": bool(handoff_result.get("waiting_for_sources")),
+            "pending_sources": handoff_result.get("pending_sources") or [],
+            "completed_sources": handoff_result.get("completed_sources") or [],
+            "claim_in_progress": bool(handoff_result.get("claim_in_progress")),
+        }
         await self._job_service.mark_done(job_id=job_object_id, result=result_payload)
         return self._sanitize_response_payload(
             {

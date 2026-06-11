@@ -6,6 +6,7 @@ from .browser_review_dom_facet import TripadvisorBrowserReviewDomFacet
 from .browser_review_identity_facet import TripadvisorBrowserReviewIdentityFacet
 from .browser_review_owner_reply_facet import TripadvisorBrowserReviewOwnerReplyFacet
 from .browser_reviews_collection_facet import TripadvisorBrowserReviewsCollectionFacet
+from .browser_reviews_graphql_facet import TripadvisorBrowserReviewsGraphqlFacet
 from .browser_reviews_navigation_facet import TripadvisorBrowserReviewsNavigationFacet
 from .browser_reviews_orchestration_facet import TripadvisorBrowserReviewsOrchestrationFacet
 from .browser_reviews_page_collection_facet import TripadvisorBrowserReviewsPageCollectionFacet
@@ -27,6 +28,7 @@ __all__ = [
     "TripadvisorBrowserReviewIdentityFacet",
     "TripadvisorBrowserReviewOwnerReplyFacet",
     "TripadvisorBrowserReviewsCollectionFacet",
+    "TripadvisorBrowserReviewsGraphqlFacet",
     "TripadvisorBrowserReviewsNavigationFacet",
     "TripadvisorBrowserReviewsOrchestrationFacet",
     "TripadvisorBrowserReviewsPageCollectionFacet",

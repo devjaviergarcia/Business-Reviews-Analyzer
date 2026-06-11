@@ -3,8 +3,110 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from src.workers.contracts import AnalysisGenerateTaskPayload
+
 
 class BusinessServiceJobsFacet:
+
+    async def _open_browser_scrape_round(
+        self,
+        *,
+        canonical_name: str,
+        canonical_name_normalized: str,
+        root_business_id: str | None,
+        requested_sources: tuple[str, ...] | list[str],
+        requested_by: str | None,
+    ) -> dict[str, Any]:
+        return await self._browser_scrape_round_runtime.open_round(
+            canonical_name=canonical_name,
+            canonical_name_normalized=canonical_name_normalized,
+            root_business_id=root_business_id,
+            requested_sources=requested_sources,
+            requested_by=requested_by,
+        )
+
+    async def _register_browser_scrape_round_source_job(
+        self,
+        *,
+        scrape_round_id: str,
+        source: str,
+        source_job_id: str,
+        queue_name: str,
+        execution_mode: str,
+        source_name: str | None,
+    ) -> dict[str, Any]:
+        return await self._browser_scrape_round_runtime.register_source_job(
+            scrape_round_id=scrape_round_id,
+            source=source,
+            source_job_id=source_job_id,
+            queue_name=queue_name,
+            execution_mode=execution_mode,
+            source_name=source_name,
+        )
+
+    async def handoff_completed_scrape_to_analysis(
+        self,
+        *,
+        scrape_round_id: str | None,
+        source: str | None,
+        source_job_id: str,
+        business_id: str,
+        dataset_id: str | None,
+        source_profile_id: str | None,
+        scrape_run_id: str | None,
+    ) -> dict[str, Any]:
+        normalized_source = str(source or "").strip().lower() or None
+        normalized_scrape_round_id = str(scrape_round_id or "").strip() or None
+        normalized_source_job_id = str(source_job_id or "").strip()
+        normalized_business_id = str(business_id or "").strip()
+        if not normalized_source_job_id:
+            raise ValueError("source_job_id cannot be empty for analysis handoff.")
+        if not normalized_business_id:
+            raise ValueError("business_id cannot be empty for analysis handoff.")
+
+        if normalized_scrape_round_id and normalized_source in {"google_maps", "tripadvisor"}:
+            return await self._browser_scrape_round_runtime.complete_source_job_and_maybe_enqueue_analysis(
+                scrape_round_id=normalized_scrape_round_id,
+                source=normalized_source,
+                source_job_id=normalized_source_job_id,
+                business_id=normalized_business_id,
+                dataset_id=str(dataset_id or "").strip() or None,
+                source_profile_id=str(source_profile_id or "").strip() or None,
+                scrape_run_id=str(scrape_run_id or "").strip() or None,
+            )
+
+        source_mode = "auto"
+        selected_source = None
+        if normalized_source in {"google_maps", "tripadvisor"}:
+            source_mode = "single"
+            selected_source = normalized_source
+
+        next_payload = AnalysisGenerateTaskPayload(
+            business_id=normalized_business_id,
+            dataset_id=str(dataset_id or "").strip() or None,
+            source_profile_id=str(source_profile_id or "").strip() or None,
+            scrape_run_id=str(scrape_run_id or "").strip() or None,
+            source_job_id=normalized_source_job_id,
+            source_mode=source_mode,
+            selected_source=selected_source,
+            scrape_round_id=normalized_scrape_round_id,
+        )
+        analysis_enqueue_result = await self.job_service.enqueue_analysis_generate_job(
+            task_payload=next_payload,
+        )
+        return {
+            "mode": "legacy_immediate",
+            "scrape_round_id": normalized_scrape_round_id,
+            "analysis_enqueued": True,
+            "waiting_for_sources": False,
+            "claim_in_progress": False,
+            "completed_sources": [normalized_source] if normalized_source else [],
+            "pending_sources": [],
+            "analysis_job_id": str(analysis_enqueue_result.get("job_id") or "").strip() or None,
+            "analysis_queue_name": analysis_enqueue_result.get("queue_name"),
+            "analysis_job_type": analysis_enqueue_result.get("job_type"),
+            "analysis_payload": next_payload.model_dump(mode="python"),
+        }
 
     async def enqueue_business_scrape_jobs(
         self,
@@ -21,6 +123,7 @@ class BusinessServiceJobsFacet:
         google_maps_name: str | None = None,
         tripadvisor_name: str | None = None,
         execution_mode: str | None = None,
+        live_display_mode: str | None = None,
         requested_by: str | None = None,
     ) -> dict:
         if self._enqueue_browser_scrape_jobs_use_case is not None:
@@ -38,6 +141,7 @@ class BusinessServiceJobsFacet:
                 google_maps_name=google_maps_name,
                 tripadvisor_name=tripadvisor_name,
                 execution_mode=execution_mode,
+                live_display_mode=live_display_mode,
                 requested_by=requested_by,
             )
         return await self._browser_job_control_runtime.enqueue_business_scrape_jobs(
@@ -54,6 +158,7 @@ class BusinessServiceJobsFacet:
             google_maps_name=google_maps_name,
             tripadvisor_name=tripadvisor_name,
             execution_mode=execution_mode,
+            live_display_mode=live_display_mode,
             requested_by=requested_by,
         )
 
@@ -120,6 +225,36 @@ class BusinessServiceJobsFacet:
             reviews=reviews,
             commit_reason=commit_reason,
             metadata=metadata,
+        )
+
+    async def mark_scrape_job_needs_human(
+        self,
+        *,
+        job_id: str,
+        reason: str,
+        data: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        normalized_reason = str(reason or "").strip()
+        if not normalized_reason:
+            raise ValueError("reason is required.")
+        existing_job = await self.job_service.get_job(job_id=job_id)
+        self._ensure_job_is_scrape(existing_job)
+        parsed_job_id = self._parse_object_id(job_id, field_name="job_id")
+        await self.job_service.mark_needs_human(
+            job_id=parsed_job_id,
+            reason=normalized_reason,
+            data=data if isinstance(data, dict) else None,
+        )
+        updated_job = await self.job_service.get_job(job_id=job_id)
+        updated_events = updated_job.get("events") if isinstance(updated_job, dict) else []
+        last_event = updated_events[-1] if isinstance(updated_events, list) and updated_events else None
+        return self._sanitize_response_payload(
+            {
+                "job_id": str(job_id),
+                "status": str(updated_job.get("status") or "needs_human"),
+                "error": updated_job.get("error"),
+                "last_event": last_event,
+            }
         )
 
     async def get_analysis_job(self, job_id: str) -> dict:
