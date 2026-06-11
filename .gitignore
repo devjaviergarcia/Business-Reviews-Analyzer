@@ -17,3 +17,5 @@ playwright-data*/
 
 
 artifacts/
+data/archive/
+*.har
