@@ -50,19 +50,20 @@ class BusinessServiceJobsFacet:
         scrape_round_id: str | None,
         source: str | None,
         source_job_id: str,
-        business_id: str,
+        business_id: str | None,
         dataset_id: str | None,
         source_profile_id: str | None,
         scrape_run_id: str | None,
+        completion_mode: str | None = None,
+        resolution: str | None = None,
+        resolution_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_source = str(source or "").strip().lower() or None
         normalized_scrape_round_id = str(scrape_round_id or "").strip() or None
         normalized_source_job_id = str(source_job_id or "").strip()
-        normalized_business_id = str(business_id or "").strip()
+        normalized_business_id = str(business_id or "").strip() or None
         if not normalized_source_job_id:
             raise ValueError("source_job_id cannot be empty for analysis handoff.")
-        if not normalized_business_id:
-            raise ValueError("business_id cannot be empty for analysis handoff.")
 
         if normalized_scrape_round_id and normalized_source in {"google_maps", "tripadvisor"}:
             return await self._browser_scrape_round_runtime.complete_source_job_and_maybe_enqueue_analysis(
@@ -73,7 +74,13 @@ class BusinessServiceJobsFacet:
                 dataset_id=str(dataset_id or "").strip() or None,
                 source_profile_id=str(source_profile_id or "").strip() or None,
                 scrape_run_id=str(scrape_run_id or "").strip() or None,
+                completion_mode=completion_mode,
+                resolution=resolution,
+                resolution_metadata=resolution_metadata,
             )
+
+        if not normalized_business_id:
+            raise ValueError("business_id cannot be empty for analysis handoff.")
 
         source_mode = "auto"
         selected_source = None
@@ -102,6 +109,7 @@ class BusinessServiceJobsFacet:
             "claim_in_progress": False,
             "completed_sources": [normalized_source] if normalized_source else [],
             "pending_sources": [],
+            "source_status": "done",
             "analysis_job_id": str(analysis_enqueue_result.get("job_id") or "").strip() or None,
             "analysis_queue_name": analysis_enqueue_result.get("queue_name"),
             "analysis_job_type": analysis_enqueue_result.get("job_type"),
@@ -224,6 +232,19 @@ class BusinessServiceJobsFacet:
             listing=listing,
             reviews=reviews,
             commit_reason=commit_reason,
+            metadata=metadata,
+        )
+
+    async def finalize_tripadvisor_live_capture_without_result(
+        self,
+        *,
+        job_id: str,
+        resolution: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return await self._tripadvisor_live_capture_runtime.finalize_live_capture_without_result(
+            job_id=job_id,
+            resolution=resolution,
             metadata=metadata,
         )
 
@@ -362,6 +383,9 @@ class BusinessServiceJobsFacet:
 
     def resolve_report_artifact_path(self, *, path: str) -> Path:
         return self._business_artifact_runtime.resolve_report_artifact_path(path=path)
+
+    def open_report_artifact_path(self, *, path: str) -> Path:
+        return self._business_artifact_runtime.open_report_artifact_path(path=path)
 
     async def delete_business(
         self,

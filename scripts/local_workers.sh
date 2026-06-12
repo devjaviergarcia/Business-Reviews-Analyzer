@@ -50,6 +50,7 @@ Selectors:
 Managed processes:
   manager-ui
   local-browser-runtime
+  local-artifact-opener
   tripadvisor-live-bridge
   supabase-queue
   report-requests
@@ -98,6 +99,7 @@ worker_names() {
   cat <<'EOFN'
 manager-ui
 local-browser-runtime
+local-artifact-opener
 tripadvisor-live-bridge
 supabase-queue
 report-requests
@@ -120,6 +122,7 @@ worker_description() {
   case "$1" in
     manager-ui) echo "Frontend preview server for apps/manager" ;;
     local-browser-runtime) echo "Local Playwright runtime for browser-driven jobs" ;;
+    local-artifact-opener) echo "Host bridge that opens local report artifacts with xdg-open" ;;
     tripadvisor-live-bridge) echo "TripAdvisor live-session bridge for needs_human replay" ;;
     supabase-queue) echo "Supabase form/job pull worker" ;;
     report-requests) echo "Pending report-request processor" ;;
@@ -134,6 +137,7 @@ worker_description() {
 worker_endpoint() {
   case "$1" in
     manager-ui) printf 'http://127.0.0.1:%s\n' "$MANAGER_PORT" ;;
+    local-artifact-opener) printf 'http://127.0.0.1:8766\n' ;;
     tripadvisor-live-bridge) printf 'http://127.0.0.1:8765\n' ;;
     *) return 1 ;;
   esac
@@ -147,6 +151,7 @@ worker_patterns() {
         "vite preview --host $MANAGER_HOST --port $MANAGER_PORT"
       ;;
     local-browser-runtime) printf '%s\n' "scripts/run_local_browser_runtime_worker.py" ;;
+    local-artifact-opener) printf '%s\n' "scripts/local_artifact_opener_bridge.py" ;;
     tripadvisor-live-bridge) printf '%s\n' "scripts/tripadvisor_local_worker_bridge.py" ;;
     supabase-queue) printf '%s\n' "scripts/run_supabase_queue_worker.py" ;;
     report-requests) printf '%s\n' "scripts/run_report_requests_worker.py" ;;
@@ -167,6 +172,9 @@ worker_command() {
       ;;
     local-browser-runtime)
       printf 'cd %q && export PYTHONPATH=%q${PYTHONPATH:+:$PYTHONPATH} && exec %q -u scripts/run_local_browser_runtime_worker.py' "$REPO_ROOT" "$REPO_ROOT" "$python_bin"
+      ;;
+    local-artifact-opener)
+      printf 'cd %q && export PYTHONPATH=%q${PYTHONPATH:+:$PYTHONPATH} && exec %q -u scripts/local_artifact_opener_bridge.py' "$REPO_ROOT" "$REPO_ROOT" "$python_bin"
       ;;
     tripadvisor-live-bridge)
       printf 'cd %q && export PYTHONPATH=%q${PYTHONPATH:+:$PYTHONPATH} && exec %q -u scripts/tripadvisor_local_worker_bridge.py --host 127.0.0.1 --port 8765' "$REPO_ROOT" "$REPO_ROOT" "$python_bin"
@@ -284,7 +292,7 @@ expand_selectors() {
         seen["manager-ui"]=1
         ;;
       host)
-        for name in local-browser-runtime tripadvisor-live-bridge supabase-queue report-requests; do
+        for name in local-browser-runtime local-artifact-opener tripadvisor-live-bridge supabase-queue report-requests; do
           seen["$name"]=1
         done
         ;;
@@ -451,7 +459,7 @@ status_worker() {
 cmd_list() {
   echo "Profiles:"
   echo "  front -> manager-ui"
-  echo "  host  -> local-browser-runtime, tripadvisor-live-bridge, supabase-queue, report-requests"
+  echo "  host  -> local-browser-runtime, local-artifact-opener, tripadvisor-live-bridge, supabase-queue, report-requests"
   echo "  queue -> analysis, report, crm, scraper"
   echo "  all   -> every managed process"
   echo

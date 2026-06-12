@@ -6,6 +6,12 @@ from src.workers.contracts import AnalysisJobStatus, parse_analyze_business_payl
 
 
 class TripadvisorLiveCaptureRuntime:
+    _RESOLVED_WITHOUT_CAPTURE_REASONS = {
+        "business_not_found",
+        "manual_close",
+        "manual_skip",
+    }
+
     def __init__(
         self,
         *,
@@ -178,6 +184,7 @@ class TripadvisorLiveCaptureRuntime:
         result_payload["analysis_handoff"] = {
             "mode": handoff_result.get("mode"),
             "scrape_round_id": handoff_result.get("scrape_round_id"),
+            "source_status": handoff_result.get("source_status"),
             "analysis_job_id": handoff_result.get("analysis_job_id"),
             "queue_name": handoff_result.get("analysis_queue_name"),
             "job_type": handoff_result.get("analysis_job_type"),
@@ -185,6 +192,141 @@ class TripadvisorLiveCaptureRuntime:
             "pending_sources": handoff_result.get("pending_sources") or [],
             "completed_sources": handoff_result.get("completed_sources") or [],
             "claim_in_progress": bool(handoff_result.get("claim_in_progress")),
+        }
+        await self._job_service.mark_done(job_id=job_object_id, result=result_payload)
+        return self._sanitize_response_payload(
+            {
+                "job_id": str(job_id),
+                "status": "done",
+                "already_done": False,
+                "result": result_payload,
+            }
+        )
+
+    async def finalize_live_capture_without_result(
+        self,
+        *,
+        job_id: str,
+        resolution: str,
+        metadata: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        normalized_resolution = str(resolution or "").strip().lower()
+        if normalized_resolution not in self._RESOLVED_WITHOUT_CAPTURE_REASONS:
+            allowed = ", ".join(sorted(self._RESOLVED_WITHOUT_CAPTURE_REASONS))
+            raise ValueError(f"Unsupported TripAdvisor live resolution '{resolution}'. Allowed values: {allowed}.")
+
+        existing_job = await self._job_service.get_job(job_id=job_id)
+        self._ensure_job_is_scrape(existing_job)
+        queue_name = str(existing_job.get("queue_name") or "").strip().lower()
+        if queue_name != "scrape_tripadvisor":
+            raise ValueError("live resolve is supported only for scrape_tripadvisor jobs.")
+
+        status_value = str(existing_job.get("status") or "").strip().lower()
+        if status_value == "done":
+            return self._sanitize_response_payload(
+                {
+                    "job_id": str(job_id),
+                    "status": "done",
+                    "already_done": True,
+                    "result": existing_job.get("result"),
+                }
+            )
+
+        task_payload = parse_analyze_business_payload(existing_job)
+        normalized_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        job_object_id = self._parse_object_id(job_id, field_name="job_id")
+
+        await self._job_service.append_event(
+            job_id=job_object_id,
+            stage="live_commit_resolved_without_capture",
+            message=(
+                "Live TripAdvisor session finished without captured reviews. "
+                "The source was resolved and the pipeline will continue."
+            ),
+            status=AnalysisJobStatus.RUNNING,
+            data={
+                "source": "tripadvisor",
+                "resolution": normalized_resolution,
+                "metadata": normalized_metadata,
+            },
+        )
+
+        handoff_result = await self._handoff_completed_scrape_to_analysis(
+            scrape_round_id=task_payload.scrape_round_id,
+            source="tripadvisor",
+            source_job_id=str(job_id),
+            business_id=str(task_payload.root_business_id or "").strip() or None,
+            dataset_id=None,
+            source_profile_id=None,
+            scrape_run_id=None,
+            completion_mode="resolved_without_capture",
+            resolution=normalized_resolution,
+            resolution_metadata=normalized_metadata,
+        )
+
+        if handoff_result.get("analysis_enqueued"):
+            await self._job_service.append_event(
+                job_id=job_object_id,
+                stage="handoff_analysis_queued",
+                message=(
+                    "TripAdvisor live session ended without a capture, "
+                    "but the source was resolved and analysis was queued."
+                ),
+                status=AnalysisJobStatus.RUNNING,
+                data={
+                    "source": "tripadvisor",
+                    "resolution": normalized_resolution,
+                    "analysis_job_id": handoff_result.get("analysis_job_id"),
+                    "analysis_queue_name": handoff_result.get("analysis_queue_name"),
+                    "analysis_job_type": handoff_result.get("analysis_job_type"),
+                    "analysis_payload": handoff_result.get("analysis_payload"),
+                    "scrape_round_id": handoff_result.get("scrape_round_id"),
+                },
+            )
+        else:
+            await self._job_service.append_event(
+                job_id=job_object_id,
+                stage="handoff_analysis_waiting_round",
+                message=(
+                    "TripAdvisor live session ended without a capture. "
+                    "The source was resolved and the pipeline is waiting for the remaining sources."
+                ),
+                status=AnalysisJobStatus.RUNNING,
+                data={
+                    "source": "tripadvisor",
+                    "resolution": normalized_resolution,
+                    "pending_sources": handoff_result.get("pending_sources") or [],
+                    "completed_sources": handoff_result.get("completed_sources") or [],
+                    "scrape_round_id": handoff_result.get("scrape_round_id"),
+                    "claim_in_progress": bool(handoff_result.get("claim_in_progress")),
+                },
+            )
+
+        result_payload = {
+            "pipeline": {
+                "worker": "live_commit",
+                "source": "tripadvisor",
+                "queue_name": "scrape_tripadvisor",
+                "mode": "live_resolution",
+            },
+            "live_commit": {
+                "committed": False,
+                "source_status": handoff_result.get("source_status"),
+                "resolution": normalized_resolution,
+                "metadata": normalized_metadata,
+            },
+            "analysis_handoff": {
+                "mode": handoff_result.get("mode"),
+                "scrape_round_id": handoff_result.get("scrape_round_id"),
+                "source_status": handoff_result.get("source_status"),
+                "analysis_job_id": handoff_result.get("analysis_job_id"),
+                "queue_name": handoff_result.get("analysis_queue_name"),
+                "job_type": handoff_result.get("analysis_job_type"),
+                "waiting_for_sources": bool(handoff_result.get("waiting_for_sources")),
+                "pending_sources": handoff_result.get("pending_sources") or [],
+                "completed_sources": handoff_result.get("completed_sources") or [],
+                "claim_in_progress": bool(handoff_result.get("claim_in_progress")),
+            },
         }
         await self._job_service.mark_done(job_id=job_object_id, result=result_payload)
         return self._sanitize_response_payload(

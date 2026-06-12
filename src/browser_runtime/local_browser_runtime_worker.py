@@ -397,6 +397,7 @@ class LocalBrowserRuntimeWorker:
             scrape_result["analysis_handoff"] = {
                 "mode": handoff_result.get("mode"),
                 "scrape_round_id": handoff_result.get("scrape_round_id"),
+                "source_status": handoff_result.get("source_status"),
                 "analysis_job_id": analysis_job_id,
                 "queue_name": handoff_result.get("analysis_queue_name"),
                 "job_type": handoff_result.get("analysis_job_type"),

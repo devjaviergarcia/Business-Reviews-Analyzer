@@ -3,6 +3,7 @@ import { createReviewCard } from "../components/atoms/review-card";
 import { createButton } from "../components/atoms/button";
 import { createInput } from "../components/atoms/input";
 import { ApiClient } from "../core/api-client";
+import { extractLocalArtifactPath, normalizeArtifactOutputUrl } from "../core/artifact-url";
 import {
   clearElement,
   createElement,
@@ -44,6 +45,7 @@ type ReviewsResponse = PaginatedResponse<ReviewItem> & {
 };
 
 type UnknownRecord = Record<string, unknown>;
+const LOCAL_ARTIFACT_OPENER_URL = "http://127.0.0.1:8766/open";
 
 export function createBusinessView(deps: BusinessViewDeps): ViewModule {
   const root = createElement("section", "view-panel business6-view");
@@ -177,7 +179,12 @@ export function createBusinessView(deps: BusinessViewDeps): ViewModule {
     null
   );
   renderAnalysisSummaryCard(analysisSummaryCard, { info: "Selecciona un negocio para cargar análisis." });
-  renderGeneratedAnalysesCard(generatedSummaryCard, null, null, deps.apiClient.getBaseUrl());
+  renderGeneratedAnalysesCard(
+    generatedSummaryCard,
+    null,
+    null,
+    deps.apiClient.getBaseUrl()
+  );
 
   searchButton.addEventListener("click", () => {
     void searchBusinesses();
@@ -463,7 +470,12 @@ export function createBusinessView(deps: BusinessViewDeps): ViewModule {
       selectedLabel.textContent = "No business selected.";
       renderBusinessSummaryCard(businessSummaryCard, {}, null, null);
       renderAnalysisSummaryCard(analysisSummaryCard, { info: "Selecciona un negocio para cargar análisis." });
-      renderGeneratedAnalysesCard(generatedSummaryCard, null, null, deps.apiClient.getBaseUrl());
+      renderGeneratedAnalysesCard(
+        generatedSummaryCard,
+        null,
+        null,
+        deps.apiClient.getBaseUrl()
+      );
       clearElement(sourcesGrid);
       clearElement(sourceViewActions);
       clearElement(reviewsList);
@@ -627,6 +639,7 @@ function renderGeneratedAnalysesCard(
   const reportArtifacts = asRecord(reportResponse.report_artifacts);
   const previewArtifacts = asRecord(reportResponse.preview_report_artifacts);
   const artifactActions = createElement("div", "form-actions");
+  const artifactStatus = createElement("div", "muted", "");
   const mainPdfPath = artifactPathFromArtifacts(reportArtifacts, "pdf");
   const mainHtmlPath = artifactPathFromArtifacts(reportArtifacts, "html");
   const previewPdfPath = artifactPathFromArtifacts(previewArtifacts, "pdf");
@@ -641,17 +654,41 @@ function renderGeneratedAnalysesCard(
     if (!buttonInfo.path) continue;
     const button = createButton({ label: buttonInfo.label, tone: "white" });
     button.addEventListener("click", () => {
-      window.open(
-        normalizeLocalPathToUrl(buttonInfo.path as string, apiBaseUrl),
-        "_blank",
-        "noopener"
-      );
+      const target = normalizeArtifactOutputUrl(buttonInfo.path as string, apiBaseUrl);
+      const localPath = extractLocalArtifactPath(target);
+      if (localPath) {
+        artifactStatus.textContent = "Abriendo archivo local...";
+        void fetch(LOCAL_ARTIFACT_OPENER_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: localPath }),
+        })
+          .then(async (response) => {
+            if (!response.ok) {
+              throw new Error(await response.text());
+            }
+            return response.json();
+          })
+          .then(() => {
+            artifactStatus.textContent = "Archivo abierto con la aplicación local.";
+          })
+          .catch((error: unknown) => {
+            artifactStatus.textContent = formatError(error);
+          });
+        return;
+      }
+      window.open(target, "_blank", "noopener");
+      artifactStatus.textContent = "Archivo abierto en nueva pestaña.";
     });
     artifactActions.append(button);
   }
 
   if (artifactActions.childElementCount > 0) {
-    container.append(createElement("div", "business6-card__section-title", "Artefactos"), artifactActions);
+    container.append(
+      createElement("div", "business6-card__section-title", "Artefactos"),
+      artifactActions,
+      artifactStatus,
+    );
   }
 }
 
@@ -659,20 +696,6 @@ function artifactPathFromArtifacts(artifacts: UnknownRecord, key: "pdf" | "html"
   const bucket = asRecord(artifacts[key]);
   const path = stringFromUnknown(bucket.path);
   return path || null;
-}
-
-function normalizeLocalPathToUrl(pathOrUrl: string, apiBaseUrl: string): string {
-  const value = String(pathOrUrl || "").trim();
-  if (!value) return "";
-  if (value.startsWith("http://") || value.startsWith("https://") || value.startsWith("blob:")) {
-    return value;
-  }
-  const normalizedPath = value.startsWith("file://") ? value.slice("file://".length) : value;
-  const normalizedBase = String(apiBaseUrl || "").trim().replace(/\/+$/, "");
-  if (normalizedPath.startsWith("/business/report/artifacts")) {
-    return `${normalizedBase}${normalizedPath}`;
-  }
-  return `${normalizedBase}/business/report/artifacts?path=${encodeURIComponent(normalizedPath)}`;
 }
 
 function createSourceOverviewCard(item: BusinessSourceOverview): HTMLElement {

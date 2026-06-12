@@ -172,6 +172,13 @@ class TripadvisorLiveCommitRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class TripadvisorLiveResolveRequest(BaseModel):
+    resolution: Literal["business_not_found", "manual_close", "manual_skip"]
+    metadata: dict[str, Any] | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class MarkScrapeJobNeedsHumanRequest(BaseModel):
     reason: str = Field(min_length=1)
     data: dict[str, Any] | None = None
@@ -199,6 +206,12 @@ class AnalyzeStoredReviewsJobRequest(BaseModel):
         if mode != "single":
             self.selected_source = None
         return self
+
+
+class OpenReportArtifactRequest(BaseModel):
+    path: str = Field(min_length=1)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 def _json_default(value: Any) -> str:
@@ -468,6 +481,26 @@ async def mark_scrape_job_needs_human(
             job_id=job_id,
             reason=payload.reason,
             data=payload.data,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+
+@router.post("/scrape/jobs/{job_id}/resolve-live", tags=["Scrape"])
+async def resolve_tripadvisor_live_capture_without_result(
+    job_id: str,
+    payload: TripadvisorLiveResolveRequest,
+    service: BusinessServiceDep,
+) -> dict:
+    try:
+        return await service.finalize_tripadvisor_live_capture_without_result(
+            job_id=job_id,
+            resolution=payload.resolution,
+            metadata=payload.metadata,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -763,6 +796,22 @@ async def open_report_artifact(
         path=str(resolved_path),
         filename=resolved_path.name if download else None,
     )
+
+
+@router.post("/report/artifacts/open", tags=["Analyze"])
+async def open_report_artifact_in_system(
+    payload: OpenReportArtifactRequest,
+    service: BusinessServiceDep,
+) -> dict:
+    try:
+        resolved_path = service.open_report_artifact_path(path=payload.path)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    return {"ok": True, "path": str(resolved_path)}
 
 
 @router.get("/report/jobs/{job_id}", tags=["Analyze"])

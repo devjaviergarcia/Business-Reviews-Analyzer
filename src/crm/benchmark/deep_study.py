@@ -46,6 +46,7 @@ class DeepStudySnapshot(BaseModel):
     monthly_actions: list[MonthlyAction] = Field(default_factory=list)
     response_templates: list[ResponseTemplate] = Field(default_factory=list)
     score_breakdown: dict[str, float] = Field(default_factory=dict)
+    score_explanation: dict[str, Any] = Field(default_factory=dict)
     data_quality: dict[str, Any] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
 
@@ -134,6 +135,15 @@ def build_deep_study_snapshot(
         competitor_stats=competitor_stats,
         has_reviews=bool(review_items),
     )
+    score_explanation = _build_score_explanation(
+        rating=rating,
+        review_count=review_count,
+        discovery_rank=discovery_rank,
+        website=website,
+        phone=phone,
+        competitor_stats=competitor_stats,
+        score_breakdown=score_breakdown,
+    )
     monthly_actions = _build_monthly_actions(
         risks=risks,
         competitor_gaps=competitor_gaps,
@@ -161,6 +171,7 @@ def build_deep_study_snapshot(
         monthly_actions=monthly_actions,
         response_templates=response_templates,
         score_breakdown=score_breakdown,
+        score_explanation=score_explanation,
         data_quality={
             "reviews_available": len(review_items),
             "competitors_available": len(competitor_items),
@@ -352,6 +363,72 @@ def _build_score_breakdown(
         "conversion": _bound(conversion),
         "response": _bound(response),
         "opportunity": _bound(opportunity),
+    }
+
+
+def _build_score_explanation(
+    *,
+    rating: float | None,
+    review_count: int | None,
+    discovery_rank: int | None,
+    website: str | None,
+    phone: str | None,
+    competitor_stats: dict[str, Any],
+    score_breakdown: dict[str, float],
+) -> dict[str, Any]:
+    positives: list[str] = []
+    negatives: list[str] = []
+
+    avg_rating = _coerce_float(competitor_stats.get("avg_rating"))
+    avg_reviews = _coerce_float(competitor_stats.get("avg_review_count"))
+    avg_rank = _coerce_float(competitor_stats.get("avg_discovery_rank"))
+
+    if rating is not None and rating >= 4.4:
+        positives.append(f"El rating visible está en {rating:.1f}/5, un nivel competitivo.")
+    elif rating is not None and rating < 4.2:
+        negatives.append(f"El rating visible cae a {rating:.1f}/5 y resta confianza.")
+    if avg_rating is not None and rating is not None and rating < avg_rating:
+        negatives.append(f"El rating queda por debajo de la media competitiva ({avg_rating:.1f}).")
+
+    if review_count is not None and review_count >= 200:
+        positives.append(f"Hay volumen suficiente de reseñas ({review_count}) para generar prueba social.")
+    elif review_count is not None and review_count < 50:
+        negatives.append(f"El volumen de reseñas es bajo ({review_count}) y limita la prueba social.")
+    if avg_reviews is not None and review_count is not None and review_count < avg_reviews:
+        negatives.append(f"El negocio tiene menos reseñas que la media del benchmark ({avg_reviews:.0f}).")
+
+    if discovery_rank is not None and discovery_rank <= 5:
+        positives.append(f"Aparece arriba en discovery local (posición #{discovery_rank}).")
+    elif discovery_rank is not None and discovery_rank > 10:
+        negatives.append(f"Aparece tarde en discovery local (posición #{discovery_rank}).")
+    if avg_rank is not None and discovery_rank is not None and discovery_rank > avg_rank:
+        negatives.append(f"Su posición está por detrás de la media competitiva (#{avg_rank:.1f}).")
+
+    if website:
+        positives.append("La ficha tiene web visible y eso ayuda a convertir visitas en clics.")
+    else:
+        negatives.append("No hay web visible en la ficha, así que se pierde capacidad de conversión.")
+
+    if phone:
+        positives.append("El teléfono está visible para contacto directo.")
+    else:
+        negatives.append("No hay teléfono visible y eso añade fricción al contacto.")
+
+    top_positive = positives[0] if positives else "No se detecta una palanca claramente positiva."
+    top_negative = negatives[0] if negatives else "No se detecta un freno principal con los datos actuales."
+    summary = f"Suma sobre todo por: {top_positive} Frena sobre todo por: {top_negative}"
+
+    return {
+        "summary": summary,
+        "positives": positives[:4],
+        "negatives": negatives[:4],
+        "component_scores": {
+            "reputation": _bound(_coerce_float(score_breakdown.get("reputation")) or 0.0),
+            "visibility": _bound(_coerce_float(score_breakdown.get("visibility")) or 0.0),
+            "conversion": _bound(_coerce_float(score_breakdown.get("conversion")) or 0.0),
+            "response": _bound(_coerce_float(score_breakdown.get("response")) or 0.0),
+            "opportunity": _bound(_coerce_float(score_breakdown.get("opportunity")) or 0.0),
+        },
     }
 
 

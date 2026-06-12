@@ -66,6 +66,7 @@ def render_paid_report_html(
     templates_html = "".join(_template_html(item) for item in payload["response_templates"])
     history_html = _history_html(payload["history"])
     notes_html = _notes_html(payload.get("data_notes") or [])
+    score_explanation_html = _score_explanation_html(payload.get("score_explanation"))
     cta_payload = payload["cta"]
 
     return f"""<!doctype html>
@@ -131,6 +132,36 @@ def render_paid_report_html(
     .muted, .metric span {{ color: var(--muted); font-size: 14px; }}
     .grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }}
     .card {{ padding: 24px; }}
+    .score-explanation {{ margin-top: 16px; }}
+    .score-parts {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }}
+    .score-part {{
+      border-radius: 18px;
+      padding: 16px;
+      background: #f8fbf5;
+      border: 1px solid var(--line);
+    }}
+    .score-part strong {{ display: block; margin-top: 6px; font-size: 28px; line-height: 1; }}
+    .reason-grid {{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 16px;
+    }}
+    .reason-box {{
+      border-radius: 20px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      background: #f8fbf5;
+    }}
+    .reason-box h3 {{ margin: 0 0 10px; }}
+    .reason-box ul {{ margin: 0; padding-left: 18px; }}
+    .reason-box--good h3 {{ color: var(--accent); }}
+    .reason-box--bad h3 {{ color: #9d3a26; }}
     .plan-item {{
       display: grid;
       grid-template-columns: 42px 1fr;
@@ -169,7 +200,7 @@ def render_paid_report_html(
       text-decoration: none;
     }}
     @media (max-width: 860px) {{
-      .dash, .grid {{ grid-template-columns: 1fr; }}
+      .dash, .grid, .score-parts, .reason-grid {{ grid-template-columns: 1fr; }}
       .hero {{ padding: 22px; }}
     }}
   </style>
@@ -187,6 +218,7 @@ def render_paid_report_html(
         {_metric("Oportunidad", _opportunity_text(payload), "Cuanto margen accionable queda este mes.")}
       </div>
     </section>
+    {score_explanation_html}
     <section class="grid">
       <article class="card">
         <h2>Comparativa con competidores</h2>
@@ -266,6 +298,66 @@ def _history_html(history: list[dict[str, Any]]) -> str:
   <thead><tr><th>Mes</th><th>Score</th><th>Orden</th><th>Rating</th><th>Resenas</th></tr></thead>
   <tbody>{"".join(rows)}</tbody>
 </table>"""
+
+
+def _score_explanation_html(score_explanation: dict[str, Any] | None) -> str:
+    if not isinstance(score_explanation, dict):
+        return ""
+    positives = score_explanation.get("positives") if isinstance(score_explanation.get("positives"), list) else []
+    negatives = score_explanation.get("negatives") if isinstance(score_explanation.get("negatives"), list) else []
+    component_scores = (
+        score_explanation.get("component_scores")
+        if isinstance(score_explanation.get("component_scores"), dict)
+        else {}
+    )
+    if not positives and not negatives and not component_scores:
+        return ""
+
+    summary = str(score_explanation.get("summary") or "").strip()
+    component_cards = []
+    labels = {
+        "reputation": "Reputacion",
+        "visibility": "Visibilidad",
+        "conversion": "Conversion",
+        "response": "Respuesta",
+    }
+    for key in ("reputation", "visibility", "conversion", "response"):
+        value = _coerce_float(component_scores.get(key))
+        if value is None:
+            continue
+        component_cards.append(
+            f"""<div class="score-part">
+  <span>{_e(labels[key])}</span>
+  <strong>{_e(f"{value:.0f}/100")}</strong>
+</div>"""
+        )
+
+    positives_html = (
+        "<ul>" + "".join(f"<li>{_e(str(item))}</li>" for item in positives[:4] if str(item).strip()) + "</ul>"
+        if positives
+        else "<p class=\"muted\">No destaca una palanca positiva clara en este corte.</p>"
+    )
+    negatives_html = (
+        "<ul>" + "".join(f"<li>{_e(str(item))}</li>" for item in negatives[:4] if str(item).strip()) + "</ul>"
+        if negatives
+        else "<p class=\"muted\">No destaca un freno principal con los datos disponibles.</p>"
+    )
+
+    return f"""<section class="card score-explanation">
+  <h2>Por qué sale este score</h2>
+  {f"<p>{_e(summary)}</p>" if summary else ""}
+  <div class="score-parts">{"".join(component_cards)}</div>
+  <div class="reason-grid">
+    <div class="reason-box reason-box--good">
+      <h3>Lo que suma</h3>
+      {positives_html}
+    </div>
+    <div class="reason-box reason-box--bad">
+      <h3>Lo que resta</h3>
+      {negatives_html}
+    </div>
+  </div>
+</section>"""
 
 
 def _monthly_plan(*, snapshot: dict[str, Any]) -> list[dict[str, str]]:

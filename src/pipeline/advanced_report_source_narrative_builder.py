@@ -29,11 +29,13 @@ async def build_llm_source_narrative(
         "tripadvisor": "Tripadvisor",
     }.get(source_key, source_key.replace("_", " ").title())
     top_problems = summarize_problem_clusters(problem_clusters=problem_clusters, limit=3)
-    top_problem_labels = [
-        human_label_problem(str(item.get("problem", "") or ""))
-        for item in top_problems
-        if isinstance(item, dict)
-    ]
+    top_problem_labels = _normalize_problem_labels(
+        [
+            human_label_problem(str(item.get("problema", "") or item.get("problem", "") or ""))
+            for item in top_problems
+            if isinstance(item, dict)
+        ]
+    )
     fallback_note = (
         "En Tripadvisor el perfil suele ser más crítico y turístico; conviene comparar con Google Maps "
         "antes de sacar conclusiones definitivas."
@@ -125,27 +127,32 @@ async def build_llm_source_narrative(
     raw_fortalezas = parsed.get("top_fortalezas")
     raw_problemas = parsed.get("top_problemas")
     fortalezas = (
-        [
-            sanitize_llm_text(plainify_business_text(str(item or "").strip()))
-            for item in raw_fortalezas
-            if str(item or "").strip()
-        ][:3]
+        _normalize_short_text_items(
+            [
+                sanitize_llm_text(plainify_business_text(str(item or "").strip()))
+                for item in raw_fortalezas
+                if str(item or "").strip()
+            ]
+        )[:3]
         if isinstance(raw_fortalezas, list)
         else []
     )
     problemas = (
-        [
-            sanitize_llm_text(plainify_business_text(str(item or "").strip()))
-            for item in raw_problemas
-            if str(item or "").strip()
-        ][:3]
+        _normalize_problem_labels(
+            [
+                sanitize_llm_text(plainify_business_text(str(item or "").strip()))
+                for item in raw_problemas
+                if str(item or "").strip()
+            ]
+        )[:3]
         if isinstance(raw_problemas, list)
         else []
     )
     note_value = parsed.get("nota_sesgo")
     note_text = None
     if note_value is not None and str(note_value).strip():
-        note_text = sanitize_llm_text(plainify_business_text(str(note_value).strip()))
+        candidate_note = sanitize_llm_text(plainify_business_text(str(note_value).strip()))
+        note_text = _normalize_note_text(candidate_note)
     if source_key == "tripadvisor" and not note_text:
         note_text = fallback_note
     if not narrativa:
@@ -160,3 +167,55 @@ async def build_llm_source_narrative(
         "top_problemas": problemas,
         "nota_sesgo": note_text,
     }
+
+
+def _normalize_short_text_items(items: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        cleaned = str(item or "").strip()
+        key = cleaned.casefold()
+        if not cleaned or key in seen:
+            continue
+        seen.add(key)
+        normalized.append(cleaned)
+    return normalized
+
+
+def _normalize_problem_labels(items: list[str]) -> list[str]:
+    generic_keys = {
+        "experiencia general",
+        "experiencia del cliente",
+        "general",
+    }
+    cleaned_items = [str(item or "").strip(" .,:;") for item in items if str(item or "").strip(" .,:;")]
+    has_specific = any(item.casefold() not in generic_keys for item in cleaned_items)
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    generic_seen = False
+    for cleaned in cleaned_items:
+        key = cleaned.casefold()
+        is_generic = key in generic_keys
+        if has_specific and is_generic:
+            continue
+        if key in seen:
+            continue
+        if is_generic and generic_seen:
+            continue
+        seen.add(key)
+        if is_generic:
+            generic_seen = True
+        normalized.append(cleaned)
+    return normalized
+
+
+def _normalize_note_text(value: str | None) -> str | None:
+    cleaned = str(value or "").strip(" .,:;")
+    if not cleaned:
+        return None
+    if len(cleaned) < 12:
+        return None
+    if len(cleaned.split()) < 3:
+        return None
+    return cleaned

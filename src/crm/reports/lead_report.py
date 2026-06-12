@@ -45,6 +45,7 @@ def build_lead_report_payload(
         "health_score": health_score,
         "opportunity_score": _coerce_float(score_breakdown.get("opportunity") or business_data.get("opportunity_score")),
         "executive_summary": _text(snapshot.get("executive_summary") or _fallback_summary(business_data)),
+        "score_explanation": snapshot.get("score_explanation") if isinstance(snapshot.get("score_explanation"), dict) else {},
         "opportunities": opportunities,
         "immediate_action": opportunities[0] if opportunities else _fallback_action(),
         "comparison": comparison,
@@ -100,6 +101,7 @@ def render_lead_report_html(
     comparison_html = _comparison_html(payload["comparison"])
     strengths_html = _list_section("Fortalezas actuales", payload["strengths"])
     notes_html = _list_section("Limitaciones del diagnostico", payload["data_notes"], muted=True)
+    score_explanation_html = _score_explanation_html(payload.get("score_explanation"))
     immediate_action = payload["immediate_action"]
     cta_payload = payload["cta"]
 
@@ -189,6 +191,50 @@ def render_lead_report_html(
       gap: 16px;
       margin-top: 16px;
     }}
+    .score-explanation {{
+      margin-top: 16px;
+      padding: 22px;
+    }}
+    .reason-grid {{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 14px;
+    }}
+    .reason-box {{
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255,255,255,.72);
+      padding: 16px;
+    }}
+    .reason-box h3 {{
+      margin: 0 0 10px;
+      font-size: 18px;
+    }}
+    .reason-box ul {{
+      margin: 0;
+      padding-left: 18px;
+    }}
+    .reason-box--good h3 {{ color: var(--accent); }}
+    .reason-box--bad h3 {{ color: var(--danger); }}
+    .score-parts {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }}
+    .score-part {{
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255,255,255,.72);
+      padding: 14px;
+    }}
+    .score-part strong {{
+      display: block;
+      margin-top: 6px;
+      font-size: 24px;
+      line-height: 1;
+    }}
     .section, .action {{ padding: 22px; }}
     h2 {{ margin: 0 0 14px; font-size: 24px; letter-spacing: -0.03em; }}
     .opportunity {{
@@ -241,7 +287,7 @@ def render_lead_report_html(
       font-weight: 700;
     }}
     @media (max-width: 820px) {{
-      .metrics, .grid {{ grid-template-columns: 1fr; }}
+      .metrics, .grid, .reason-grid, .score-parts {{ grid-template-columns: 1fr; }}
       .hero {{ padding: 22px; }}
       main {{ padding-top: 18px; }}
     }}
@@ -258,6 +304,7 @@ def render_lead_report_html(
         {"".join(metric_cards)}
       </div>
     </section>
+    {score_explanation_html}
     <section class="grid">
       <article class="section">
         <h2>3 oportunidades principales</h2>
@@ -345,6 +392,67 @@ def _meta_html(items: list[str]) -> str:
     if not items:
         return ""
     return f"""<div class="meta">{_e(" - ".join(items))}</div>"""
+
+
+def _score_explanation_html(score_explanation: dict[str, Any] | None) -> str:
+    if not isinstance(score_explanation, dict):
+        return ""
+    positives = score_explanation.get("positives") if isinstance(score_explanation.get("positives"), list) else []
+    negatives = score_explanation.get("negatives") if isinstance(score_explanation.get("negatives"), list) else []
+    component_scores = (
+        score_explanation.get("component_scores")
+        if isinstance(score_explanation.get("component_scores"), dict)
+        else {}
+    )
+    if not positives and not negatives and not component_scores:
+        return ""
+
+    component_cards = []
+    labels = {
+        "reputation": "Reputacion",
+        "visibility": "Visibilidad",
+        "conversion": "Conversion",
+        "response": "Respuesta",
+    }
+    for key in ("reputation", "visibility", "conversion", "response"):
+        value = _coerce_float(component_scores.get(key))
+        if value is None:
+            continue
+        component_cards.append(
+            f"""<div class="score-part">
+  <span>{_e(labels[key])}</span>
+  <strong>{_e(f"{value:.0f}/100")}</strong>
+</div>"""
+        )
+
+    positives_html = (
+        "<ul>" + "".join(f"<li>{_e(str(item))}</li>" for item in positives[:4] if str(item).strip()) + "</ul>"
+        if positives
+        else "<p class=\"muted\">No aparece una palanca positiva clara con los datos disponibles.</p>"
+    )
+    negatives_html = (
+        "<ul>" + "".join(f"<li>{_e(str(item))}</li>" for item in negatives[:4] if str(item).strip()) + "</ul>"
+        if negatives
+        else "<p class=\"muted\">No aparece un freno principal con los datos disponibles.</p>"
+    )
+    summary = _optional_text(score_explanation.get("summary"))
+    summary_html = f"<p>{_e(summary)}</p>" if summary else ""
+
+    return f"""<section class="section score-explanation">
+  <h2>Por qué sale este score</h2>
+  {summary_html}
+  <div class="score-parts">{"".join(component_cards)}</div>
+  <div class="reason-grid">
+    <div class="reason-box reason-box--good">
+      <h3>Lo que suma</h3>
+      {positives_html}
+    </div>
+    <div class="reason-box reason-box--bad">
+      <h3>Lo que resta</h3>
+      {negatives_html}
+    </div>
+  </div>
+</section>"""
 
 
 def _build_opportunities(*, snapshot: dict[str, Any]) -> list[dict[str, str]]:

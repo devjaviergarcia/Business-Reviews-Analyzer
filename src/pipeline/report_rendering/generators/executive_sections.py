@@ -11,6 +11,16 @@ class ExecutiveSummarySectionGenerator(_BaseSectionGenerator):
         r = self.renderer
         diagnostico = r._clean_narrative_text(str(payload.get("diagnostico", "") or "").strip())
         estado = payload.get("estado_actual") if isinstance(payload.get("estado_actual"), dict) else {}
+        source_availability = (
+            payload.get("source_availability")
+            if isinstance(payload.get("source_availability"), dict)
+            else {}
+        )
+        tripadvisor_availability = (
+            source_availability.get("tripadvisor")
+            if isinstance(source_availability.get("tripadvisor"), dict)
+            else None
+        )
         aciertos = payload.get("aciertos_notorios") if isinstance(payload.get("aciertos_notorios"), list) else []
         aciertos_estructurados = (
             payload.get("aciertos_estructurados")
@@ -25,11 +35,18 @@ class ExecutiveSummarySectionGenerator(_BaseSectionGenerator):
             f"<div class='pill'><strong>Tipos de cliente detectados:</strong> {r._safe_int(estado.get('cluster_count'))}</div>",
             f"<div class='pill'><strong>Problemas principales:</strong> {len(estado.get('problemas_principales') or []) if isinstance(estado.get('problemas_principales'), list) else 0}</div>",
         ]
+        if tripadvisor_availability:
+            flag_text = str(tripadvisor_availability.get("flag") or "").strip() or "Estado Tripadvisor no disponible"
+            pills.append(f"<div class='pill'><strong>Tripadvisor:</strong> {html.escape(flag_text)}</div>")
         parts = [
             f"<p>{html.escape(diagnostico)}</p>" if diagnostico else "",
             f"<p>{score_badge}</p>",
             f"<div class='pill-grid'>{''.join(pills)}</div>",
         ]
+        if tripadvisor_availability:
+            detail = r._clean_narrative_text(str(tripadvisor_availability.get("detail", "") or "").strip())
+            if detail:
+                parts.append(f"<p class='muted'><strong>Fuente Tripadvisor:</strong> {html.escape(detail)}</p>")
         if aciertos_estructurados:
             cards: list[str] = []
             for item in aciertos_estructurados[:3]:
@@ -73,6 +90,7 @@ class ReputationScoreSectionGenerator(_BaseSectionGenerator):
         componentes = payload.get("componentes_numericos")
         evolucion = payload.get("evolucion")
         components_html = r._render_score_components(componentes)
+        score_drivers_html = _render_score_drivers(renderer=r, components=componentes)
         evolucion_html = r._render_payload(evolucion) if not r._is_empty_payload(evolucion) else ""
 
         marker_color = "#C23B18"
@@ -107,7 +125,90 @@ class ReputationScoreSectionGenerator(_BaseSectionGenerator):
             "<div>"
             f"<p>{html.escape(explicacion)}</p>"
             f"{components_html}"
+            f"{score_drivers_html}"
             "</div>"
             "</div>"
             + ("<h3>Evolución y tendencia</h3>" + evolucion_html if evolucion_html else "")
         )
+
+
+def _render_score_drivers(*, renderer: Any, components: Any) -> str:
+    if not isinstance(components, dict):
+        return ""
+
+    strengths: list[str] = []
+    risks: list[str] = []
+
+    avg_rating = renderer._safe_float(components.get("avg_rating"))
+    if avg_rating >= 4.4:
+        strengths.append(f"La valoración media está en {avg_rating:.2f}/5, un nivel competitivo.")
+    elif avg_rating < 4.2:
+        risks.append(f"La valoración media cae a {avg_rating:.2f}/5, por debajo del umbral de confianza.")
+
+    response_rate = renderer._safe_float(components.get("response_rate"))
+    if response_rate >= 0.45:
+        strengths.append(f"Se responde aproximadamente al {response_rate * 100:.1f}% de las reseñas.")
+    elif response_rate < 0.20:
+        risks.append(f"La tasa de respuesta es baja ({response_rate * 100:.1f}%).")
+
+    negative_ratio = renderer._safe_float(components.get("negative_ratio"))
+    if 0.0 <= negative_ratio <= 0.12:
+        strengths.append(f"El peso de reseñas negativas es bajo ({negative_ratio * 100:.1f}%).")
+    elif negative_ratio >= 0.25:
+        risks.append(f"Hay demasiada fricción visible en reseñas negativas ({negative_ratio * 100:.1f}%).")
+
+    sentiment_avg = renderer._safe_float(components.get("sentiment_avg"))
+    if sentiment_avg >= 0.20:
+        strengths.append(f"El sentimiento medio es favorable ({sentiment_avg:.2f}).")
+    elif sentiment_avg <= -0.05:
+        risks.append(f"El tono medio de las reseñas empuja hacia abajo ({sentiment_avg:.2f}).")
+
+    tranquility_avg = renderer._safe_float(components.get("tranquility_avg"))
+    if tranquility_avg >= 0.15:
+        strengths.append(f"El tono general se percibe calmado y estable ({tranquility_avg:.2f}).")
+    elif tranquility_avg <= -0.05:
+        risks.append(f"Las reseñas transmiten tensión o fricción operativa ({tranquility_avg:.2f}).")
+
+    if not strengths and not risks:
+        return ""
+
+    strengths_html = (
+        "".join(
+            "<article class='fw-card fw-strong'>"
+            f"<div class='fw-icon'>{renderer._icon_slot('strength')}</div>"
+            "<div>"
+            f"<div class='fw-title'>{html.escape(text)}</div>"
+            "</div>"
+            "</article>"
+            for text in strengths[:4]
+        )
+        if strengths
+        else "<p class='muted'>No se detectan palancas fuertes adicionales en este corte.</p>"
+    )
+    risks_html = (
+        "".join(
+            "<article class='fw-card fw-weak'>"
+            f"<div class='fw-icon'>{renderer._icon_slot('warning')}</div>"
+            "<div>"
+            f"<div class='fw-title'>{html.escape(text)}</div>"
+            "</div>"
+            "</article>"
+            for text in risks[:4]
+        )
+        if risks
+        else "<p class='muted'>No aparece un freno claro en los componentes actuales.</p>"
+    )
+
+    return (
+        "<h3>Por qué sale esta puntuación</h3>"
+        "<div class='fw-grid'>"
+        "<div>"
+        "<div class='fw-col-title fw-col-strong'>Qué empuja el score</div>"
+        f"{strengths_html}"
+        "</div>"
+        "<div>"
+        "<div class='fw-col-title fw-col-weak'>Qué hoy lo frena</div>"
+        f"{risks_html}"
+        "</div>"
+        "</div>"
+    )

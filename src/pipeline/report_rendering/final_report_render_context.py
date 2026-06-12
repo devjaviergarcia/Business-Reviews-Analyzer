@@ -54,6 +54,37 @@ def build_final_report_render_context(
     report_metadata = report_payload.get("report_metadata")
     if not isinstance(report_metadata, dict):
         report_metadata = {}
+    source_availability = (
+        report_metadata.get("source_availability")
+        if isinstance(report_metadata.get("source_availability"), dict)
+        else {}
+    )
+    tripadvisor_availability = (
+        source_availability.get("tripadvisor")
+        if isinstance(source_availability.get("tripadvisor"), dict)
+        else None
+    )
+
+    executive_summary_payload = (
+        render_sections.get("1_resumen_ejecutivo")
+        if isinstance(render_sections.get("1_resumen_ejecutivo"), dict)
+        else None
+    )
+    if executive_summary_payload is not None and source_availability:
+        render_sections["1_resumen_ejecutivo"] = {
+            **executive_summary_payload,
+            "source_availability": source_availability,
+        }
+
+    if (
+        not tripadvisor_source_payload
+        and tripadvisor_availability
+        and str(tripadvisor_availability.get("status") or "").strip().lower() in {"omitted", "not_found"}
+    ):
+        render_sections["5_lectura_fuente_tripadvisor"] = {
+            "availability_notice": tripadvisor_availability,
+        }
+
     metadata_source_counts = (
         report_metadata.get("source_counts")
         if isinstance(report_metadata.get("source_counts"), dict)

@@ -1,6 +1,7 @@
 import { AnimationController } from "../animations/controller";
 import { createButton } from "../components/atoms/button";
 import { ApiClient } from "../core/api-client";
+import { extractLocalArtifactPath, normalizeArtifactOutputUrl } from "../core/artifact-url";
 import { clearElement, createElement, formatError, parseOptionalFloat, parseOptionalInteger } from "../core/dom";
 import type { AnalyzeJobItem, JobEventItem, PaginatedResponse, ViewModule } from "../core/types";
 
@@ -21,6 +22,7 @@ type NodeStatus = "idle" | "queued" | "running" | "done" | "failed" | "needs_hum
 type ConnectorState = "idle" | "active" | "done" | "failed" | "waiting" | "human";
 type ScrapeSource = "google_maps" | "tripadvisor";
 type LiveDisplayMode = "native" | "xvfb";
+const LOCAL_ARTIFACT_OPENER_URL = "http://127.0.0.1:8766/open";
 
 type BusinessScrapeGroup = {
   key: string;
@@ -317,6 +319,10 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
   const drawerRelaunchButton = createButton({ label: "Relanzar", tone: "turquoise" });
   const drawerRelaunchFromZeroButton = createButton({ label: "Relanzar de 0", tone: "turquoise" });
   const drawerLaunchLiveButton = createButton({ label: "Lanzar Live TA", tone: "turquoise" });
+  const drawerSkipTripadvisorButton = createButton({
+    label: "Omitir TA y continuar",
+    tone: "orange",
+  });
   const drawerDeleteButton = createButton({ label: "Eliminar job", tone: "white" });
   const drawerManualButton = createButton({ label: "Marcar manual TA", tone: "white" });
   const drawerOutputButton = createButton({ label: "Abrir output", tone: "white" });
@@ -325,6 +331,7 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     drawerRelaunchButton,
     drawerRelaunchFromZeroButton,
     drawerLaunchLiveButton,
+    drawerSkipTripadvisorButton,
     drawerDeleteButton,
     drawerManualButton,
     drawerOutputButton,
@@ -481,6 +488,9 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
   drawerLaunchLiveButton.addEventListener("click", () => {
     void launchCurrentScrapeJobLive();
   });
+  drawerSkipTripadvisorButton.addEventListener("click", () => {
+    void skipCurrentTripadvisorNode();
+  });
   drawerDeleteButton.addEventListener("click", () => {
     void deleteCurrentDrawerNodeJob();
   });
@@ -493,6 +503,28 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     const node = getDrawerNode();
     if (!node?.outputUrl) {
       drawerActionStatus.textContent = "No hay URL de salida para este nodo.";
+      return;
+    }
+    const localPath = extractLocalArtifactPath(node.outputUrl);
+    if (localPath) {
+      drawerActionStatus.textContent = "Abriendo archivo local...";
+      void fetch(LOCAL_ARTIFACT_OPENER_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: localPath }),
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(await response.text());
+          }
+          return response.json();
+        })
+        .then(() => {
+          drawerActionStatus.textContent = "Archivo abierto con la aplicación local.";
+        })
+        .catch((error: unknown) => {
+          drawerActionStatus.textContent = formatError(error);
+        });
       return;
     }
     window.open(node.outputUrl, "_blank", "noopener");
@@ -1434,10 +1466,12 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
       drawerActionStatus.textContent = "";
       drawerManualButton.classList.add("hidden");
       drawerLaunchLiveButton.classList.add("hidden");
+      drawerSkipTripadvisorButton.classList.add("hidden");
       drawerRelaunchButton.removeAttribute("disabled");
       drawerRelaunchFromZeroButton.removeAttribute("disabled");
       drawerRelaunchFromZeroButton.classList.remove("hidden");
       drawerLaunchLiveButton.removeAttribute("disabled");
+      drawerSkipTripadvisorButton.removeAttribute("disabled");
       drawerDeleteButton.removeAttribute("disabled");
       drawerOutputButton.removeAttribute("disabled");
       drawerCopyJobButton.removeAttribute("disabled");
@@ -1469,6 +1503,7 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
 
     drawerManualButton.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
     drawerLaunchLiveButton.classList.toggle("hidden", node.key === "analysis" || node.key === "report");
+    drawerSkipTripadvisorButton.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
     drawerLaunchLiveButton.textContent =
       node.key === "scrape_tripadvisor" ? "Abrir Needs Human TA" : "Lanzar Live";
     drawerLiveModeTitle.classList.toggle("hidden", node.key === "analysis" || node.key === "report");
@@ -1483,6 +1518,7 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     drawerRelaunchButton.toggleAttribute("disabled", !node.jobId);
     drawerRelaunchFromZeroButton.toggleAttribute("disabled", !node.jobId || node.key === "analysis" || node.key === "report");
     drawerLaunchLiveButton.toggleAttribute("disabled", (node.key === "analysis" || node.key === "report") || !node.jobId);
+    drawerSkipTripadvisorButton.toggleAttribute("disabled", node.key !== "scrape_tripadvisor" || !node.jobId);
     drawerDeleteButton.toggleAttribute("disabled", !node.jobId);
     drawerOutputButton.toggleAttribute("disabled", !node.outputUrl);
     drawerCopyJobButton.toggleAttribute("disabled", !node.jobId);
@@ -1970,6 +2006,62 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     }
   }
 
+  function isCurrentTripadvisorLiveSessionForJob(jobId: string): boolean {
+    const normalizedJobId = String(jobId || "").trim();
+    if (!normalizedJobId) return false;
+    const liveSession = tripadvisorLiveSessionTail?.live_session;
+    if (!liveSession?.running) return false;
+    return String(liveSession.job_id || "").trim() === normalizedJobId;
+  }
+
+  async function skipCurrentTripadvisorNode(): Promise<void> {
+    const node = getDrawerNode();
+    if (!node || node.key !== "scrape_tripadvisor" || !node.jobId) {
+      drawerActionStatus.textContent = "Omitir solo aplica al nodo de TripAdvisor.";
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Se omitirá TripAdvisor para este job y la pipeline seguirá con analysis/report cuando ya pueda continuar.\n\n¿Continuar?"
+    );
+    if (!confirmed) {
+      drawerActionStatus.textContent = "Omisión cancelada por el usuario.";
+      return;
+    }
+
+    drawerActionStatus.textContent = "Omitiendo TripAdvisor y continuando pipeline...";
+    try {
+      await loadTripadvisorLiveSessionTail({ force: true });
+      if (isCurrentTripadvisorLiveSessionForJob(node.jobId)) {
+        drawerActionStatus.textContent = "Parando sesión live TA antes de omitir...";
+        await deps.apiClient.post("/tripadvisor/live-session/stop", {});
+        await loadTripadvisorLiveSessionTail({ force: true });
+      }
+
+      await deps.apiClient.post(
+        `/business/scrape/jobs/${encodeURIComponent(node.jobId)}/resolve-live`,
+        {
+          resolution: "manual_skip",
+          metadata: {
+            source: "tripadvisor",
+            trigger: "manager_ui_manual_skip",
+            skipped_by_user: true,
+            continue_pipeline: true,
+          },
+        }
+      );
+
+      drawerActionStatus.textContent = `TripAdvisor omitido para job ${node.jobId}.`;
+      await loadJobsList();
+      if (selectedBusinessKey) {
+        await loadSelectedBusiness(selectedBusinessKey);
+      }
+      await loadTripadvisorLiveSessionTail({ force: true });
+    } catch (error) {
+      drawerActionStatus.textContent = `ERROR: ${formatError(error)}`;
+    }
+  }
+
   function renderSessionState(): void {
     const state = sessionState;
     if (!state) return;
@@ -2373,31 +2465,17 @@ function resolveReportOutputPath(result: Record<string, unknown>, apiBaseUrl: st
 
   const preferredPath = String((pdf?.path as string | undefined) || "").trim();
   if (preferredPath) {
-    return normalizeOutputUrl(preferredPath, apiBaseUrl);
+    return normalizeArtifactOutputUrl(preferredPath, apiBaseUrl);
   }
   const htmlPath = String((html?.path as string | undefined) || "").trim();
   if (htmlPath) {
-    return normalizeOutputUrl(htmlPath, apiBaseUrl);
+    return normalizeArtifactOutputUrl(htmlPath, apiBaseUrl);
   }
   const jsonPath = String((json?.path as string | undefined) || "").trim();
   if (jsonPath) {
-    return normalizeOutputUrl(jsonPath, apiBaseUrl);
+    return normalizeArtifactOutputUrl(jsonPath, apiBaseUrl);
   }
   return null;
-}
-
-function normalizeOutputUrl(pathOrUrl: string, apiBaseUrl: string): string {
-  const value = String(pathOrUrl || "").trim();
-  if (!value) return "";
-  if (value.startsWith("http://") || value.startsWith("https://") || value.startsWith("blob:")) {
-    return value;
-  }
-  const normalizedPath = value.startsWith("file://") ? value.slice("file://".length) : value;
-  const normalizedBase = String(apiBaseUrl || "").trim().replace(/\/+$/, "");
-  if (normalizedPath.startsWith("/business/report/artifacts")) {
-    return `${normalizedBase}${normalizedPath}`;
-  }
-  return `${normalizedBase}/business/report/artifacts?path=${encodeURIComponent(normalizedPath)}`;
 }
 
 function sortByUpdated(job: AnalyzeJobItem): number {

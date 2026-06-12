@@ -15,6 +15,37 @@ class SourceNarrativeSectionGenerator(_BaseSectionGenerator):
         r = self.renderer
         if not isinstance(payload, dict):
             return ""
+        availability_notice = (
+            payload.get("availability_notice")
+            if isinstance(payload.get("availability_notice"), dict)
+            else None
+        )
+        if availability_notice is not None:
+            flag = str(availability_notice.get("flag", "") or "").strip() or "Fuente no disponible"
+            label = str(availability_notice.get("label", "") or "").strip()
+            detail = r._clean_narrative_text(str(availability_notice.get("detail", "") or "").strip())
+            resolution = str(availability_notice.get("resolution", "") or "").strip().lower()
+            resolution_label = {
+                "business_not_found": "no encontrado",
+                "manual_skip": "omitido manualmente",
+                "manual_close": "cerrado manualmente",
+            }.get(resolution, "")
+            parts = [
+                "<div class='fw-card fw-weak'>",
+                f"<div class='fw-icon'>{r._icon_slot('improvement')}</div>",
+                "<div>",
+                f"<div class='fw-title'>{html.escape(flag)}</div>",
+            ]
+            if label:
+                parts.append(f"<div class='fw-desc'>{html.escape(label)}</div>")
+            if detail:
+                parts.append(f"<div class='fw-action'>{html.escape(detail)}</div>")
+            if resolution_label:
+                parts.append(
+                    f"<div class='muted' style='margin-top:6px'><strong>Estado:</strong> {html.escape(resolution_label)}</div>"
+                )
+            parts.extend(["</div>", "</div>"])
+            return "".join(parts)
         narrative = payload.get("narrativa") if isinstance(payload.get("narrativa"), dict) else {}
         stats = payload.get("stats") if isinstance(payload.get("stats"), dict) else {}
         problem_clusters = (
@@ -24,9 +55,13 @@ class SourceNarrativeSectionGenerator(_BaseSectionGenerator):
         )
         review_metrics = payload.get("review_metrics") if isinstance(payload.get("review_metrics"), list) else []
         main_text = r._clean_narrative_text(str(narrative.get("narrativa", "") or "").strip())
-        note_text = r._clean_narrative_text(str(narrative.get("nota_sesgo", "") or "").strip())
+        note_text = _normalize_source_note(
+            r._clean_narrative_text(str(narrative.get("nota_sesgo", "") or "").strip())
+        )
         strengths = narrative.get("top_fortalezas") if isinstance(narrative.get("top_fortalezas"), list) else []
-        problems = narrative.get("top_problemas") if isinstance(narrative.get("top_problemas"), list) else []
+        problems = _normalize_render_problem_items(
+            narrative.get("top_problemas") if isinstance(narrative.get("top_problemas"), list) else []
+        )
 
         def _negative_ratio_local(metrics: list[dict[str, Any]]) -> float:
             if not metrics:
@@ -226,3 +261,40 @@ class SourceComparisonSectionGenerator(_BaseSectionGenerator):
                 + "</ol>"
             )
         return "".join(parts)
+
+
+def _normalize_render_problem_items(items: list[Any]) -> list[str]:
+    generic_keys = {
+        "experiencia general",
+        "experiencia del cliente",
+        "general",
+    }
+    cleaned_items = [str(item or "").strip(" .,:;") for item in items if str(item or "").strip(" .,:;")]
+    has_specific = any(item.casefold() not in generic_keys for item in cleaned_items)
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    generic_seen = False
+    for cleaned in cleaned_items:
+        key = cleaned.casefold()
+        is_generic = key in generic_keys
+        if has_specific and is_generic:
+            continue
+        if key in seen:
+            continue
+        if is_generic and generic_seen:
+            continue
+        seen.add(key)
+        if is_generic:
+            generic_seen = True
+        normalized.append(cleaned)
+    return normalized[:3]
+
+
+def _normalize_source_note(value: str) -> str:
+    cleaned = str(value or "").strip(" .,:;")
+    if len(cleaned) < 12:
+        return ""
+    if len(cleaned.split()) < 3:
+        return ""
+    return cleaned

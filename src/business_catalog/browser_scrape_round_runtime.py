@@ -15,6 +15,7 @@ DatabaseFactory = Callable[[], Any]
 class BrowserScrapeRoundRuntime:
     _COLLECTION = "browser_scrape_rounds"
     _SUPPORTED_SOURCES = {"google_maps", "tripadvisor"}
+    _RESOLVED_SOURCE_STATUSES = frozenset({"done", "omitted", "not_found"})
 
     def __init__(
         self,
@@ -105,29 +106,34 @@ class BrowserScrapeRoundRuntime:
         scrape_round_id: str,
         source: str,
         source_job_id: str,
-        business_id: str,
+        business_id: str | None,
         dataset_id: str | None,
         source_profile_id: str | None,
         scrape_run_id: str | None,
+        completion_mode: str | None = None,
+        resolution: str | None = None,
+        resolution_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_round_id = self._normalize_round_id(scrape_round_id)
         normalized_source = self._normalize_source(source)
-        normalized_business_id = str(business_id or "").strip()
-        if not normalized_business_id:
-            raise ValueError("business_id cannot be empty when completing a browser scrape round source.")
+        normalized_business_id = str(business_id or "").strip() or None
 
         normalized_source_job_id = str(source_job_id or "").strip()
         if not normalized_source_job_id:
             raise ValueError("source_job_id cannot be empty when completing a browser scrape round source.")
 
         now = datetime.now(timezone.utc)
+        resolved_status = self._resolve_source_status(
+            completion_mode=completion_mode,
+            resolution=resolution,
+        )
         updated_doc = await self._collection.find_one_and_update(
             {"_id": normalized_round_id},
             {
                 "$set": {
                     f"source_jobs.{normalized_source}.source": normalized_source,
                     f"source_jobs.{normalized_source}.job_id": normalized_source_job_id,
-                    f"source_jobs.{normalized_source}.status": "done",
+                    f"source_jobs.{normalized_source}.status": resolved_status,
                     f"source_jobs.{normalized_source}.completed_at": now,
                     f"source_jobs.{normalized_source}.business_id": normalized_business_id,
                     f"source_jobs.{normalized_source}.dataset_id": str(dataset_id or "").strip() or None,
@@ -135,6 +141,13 @@ class BrowserScrapeRoundRuntime:
                         str(source_profile_id or "").strip() or None
                     ),
                     f"source_jobs.{normalized_source}.scrape_run_id": str(scrape_run_id or "").strip() or None,
+                    f"source_jobs.{normalized_source}.completion_mode": (
+                        str(completion_mode or "").strip().lower() or "captured"
+                    ),
+                    f"source_jobs.{normalized_source}.resolution": str(resolution or "").strip().lower() or None,
+                    f"source_jobs.{normalized_source}.resolution_metadata": (
+                        dict(resolution_metadata) if isinstance(resolution_metadata, dict) else None
+                    ),
                     "updated_at": now,
                 }
             },
@@ -142,6 +155,12 @@ class BrowserScrapeRoundRuntime:
         )
         if updated_doc is None:
             raise LookupError(f"Browser scrape round '{normalized_round_id}' not found.")
+
+        resolved_business_id = normalized_business_id or self._resolve_business_id_for_analysis(round_doc=updated_doc)
+        if not resolved_business_id:
+            raise ValueError(
+                "business_id could not be resolved when completing a browser scrape round source."
+            )
 
         expected_sources = self._normalize_sources(updated_doc.get("requested_sources") or [])
         completed_sources = self._completed_sources(updated_doc, expected_sources)
@@ -155,6 +174,8 @@ class BrowserScrapeRoundRuntime:
                 "claim_in_progress": False,
                 "completed_sources": completed_sources,
                 "pending_sources": pending_sources,
+                "resolved_business_id": resolved_business_id,
+                "source_status": resolved_status,
                 "analysis_job_id": None,
                 "analysis_queue_name": None,
                 "analysis_job_type": None,
@@ -170,7 +191,9 @@ class BrowserScrapeRoundRuntime:
             ],
         }
         for expected_source in expected_sources:
-            claim_query[f"source_jobs.{expected_source}.status"] = "done"
+            claim_query[f"source_jobs.{expected_source}.status"] = {
+                "$in": list(self._RESOLVED_SOURCE_STATUSES)
+            }
 
         claimed_doc = await self._collection.find_one_and_update(
             claim_query,
@@ -201,6 +224,7 @@ class BrowserScrapeRoundRuntime:
                 "claim_in_progress": str(analysis_handoff.get("status") or "").strip().lower() == "claiming",
                 "completed_sources": completed_sources,
                 "pending_sources": [],
+                "source_status": resolved_status,
                 "analysis_job_id": str(analysis_handoff.get("analysis_job_id") or "").strip() or None,
                 "analysis_queue_name": str(analysis_handoff.get("queue_name") or "").strip() or None,
                 "analysis_job_type": str(analysis_handoff.get("job_type") or "").strip() or None,
@@ -211,7 +235,7 @@ class BrowserScrapeRoundRuntime:
             round_doc=claimed_doc,
             source=normalized_source,
             source_job_id=normalized_source_job_id,
-            business_id=normalized_business_id,
+            business_id=resolved_business_id,
             dataset_id=str(dataset_id or "").strip() or None,
             source_profile_id=str(source_profile_id or "").strip() or None,
             scrape_run_id=str(scrape_run_id or "").strip() or None,
@@ -266,6 +290,8 @@ class BrowserScrapeRoundRuntime:
             "claim_in_progress": False,
             "completed_sources": completed_sources,
             "pending_sources": [],
+            "resolved_business_id": resolved_business_id,
+            "source_status": resolved_status,
             "analysis_job_id": analysis_job_id,
             "analysis_queue_name": analysis_enqueue_result.get("queue_name"),
             "analysis_job_type": analysis_enqueue_result.get("job_type"),
@@ -289,7 +315,12 @@ class BrowserScrapeRoundRuntime:
     ) -> AnalysisGenerateTaskPayload:
         requested_sources = self._normalize_sources(round_doc.get("requested_sources") or [])
         single_source = requested_sources[0] if len(requested_sources) == 1 else None
-        source_mode = "single" if single_source in self._SUPPORTED_SOURCES else "auto"
+        can_scope_single_source = bool(dataset_id or source_profile_id or scrape_run_id)
+        source_mode = (
+            "single"
+            if single_source in self._SUPPORTED_SOURCES and can_scope_single_source
+            else "auto"
+        )
         selected_source = single_source if source_mode == "single" else None
         payload_dataset_id = dataset_id if source_mode == "single" else None
         payload_source_profile_id = source_profile_id if source_mode == "single" else None
@@ -314,9 +345,47 @@ class BrowserScrapeRoundRuntime:
         completed: list[str] = []
         for source in expected_sources:
             source_state = source_jobs.get(source) if isinstance(source_jobs.get(source), dict) else {}
-            if str(source_state.get("status") or "").strip().lower() == "done":
+            if self._is_resolved_source_status(source_state.get("status")):
                 completed.append(source)
         return completed
+
+    def _is_resolved_source_status(self, value: Any) -> bool:
+        return str(value or "").strip().lower() in self._RESOLVED_SOURCE_STATUSES
+
+    def _resolve_source_status(
+        self,
+        *,
+        completion_mode: str | None,
+        resolution: str | None,
+    ) -> str:
+        normalized_resolution = str(resolution or "").strip().lower()
+        normalized_completion_mode = str(completion_mode or "").strip().lower()
+        if normalized_resolution == "business_not_found":
+            return "not_found"
+        if normalized_resolution in {"manual_skip", "manual_close"}:
+            return "omitted"
+        if normalized_completion_mode == "resolved_without_capture":
+            return "omitted"
+        return "done"
+
+    def _resolve_business_id_for_analysis(self, *, round_doc: dict[str, Any]) -> str | None:
+        source_jobs = round_doc.get("source_jobs") if isinstance(round_doc.get("source_jobs"), dict) else {}
+        requested_sources = self._normalize_sources(round_doc.get("requested_sources") or [])
+        for source in requested_sources:
+            source_state = source_jobs.get(source) if isinstance(source_jobs.get(source), dict) else {}
+            business_id = str(source_state.get("business_id") or "").strip()
+            if business_id:
+                return business_id
+
+        for source_state in source_jobs.values():
+            if not isinstance(source_state, dict):
+                continue
+            business_id = str(source_state.get("business_id") or "").strip()
+            if business_id:
+                return business_id
+
+        root_business_id = str(round_doc.get("root_business_id") or "").strip()
+        return root_business_id or None
 
     def _normalize_sources(self, requested_sources: Iterable[str]) -> tuple[str, ...]:
         normalized: list[str] = []

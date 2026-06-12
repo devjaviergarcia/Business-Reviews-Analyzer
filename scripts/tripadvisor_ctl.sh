@@ -893,9 +893,11 @@ cmd_replay_headfull() {
 
   cd "$REPO_ROOT"
   local replay_exit=0
+  local replay_log_file
+  replay_log_file="$(mktemp)"
   set +e
-  "${cmd[@]}" "$@"
-  replay_exit=$?
+  "${cmd[@]}" "$@" 2>&1 | tee "$replay_log_file"
+  replay_exit=${PIPESTATUS[0]}
   set -e
 
   if [[ "$was_running" == "true" ]]; then
@@ -912,8 +914,12 @@ cmd_replay_headfull() {
     local live_commit_done="false"
     local live_capture_success="false"
     local live_commit_failed_after_capture="false"
+    local live_capture_error=""
+    local replay_live_exit_reason=""
+    replay_live_exit_reason="$(grep -oE '\[live-session-exit\] reason=[^[:space:]]+' "$replay_log_file" | tail -n 1 | sed 's/.*reason=//' || true)"
     if [[ -f "$live_capture_json" ]]; then
       live_capture_success="$(jq -r '.success // false' "$live_capture_json" 2>/dev/null || printf 'false')"
+      live_capture_error="$(jq -r '.error // ""' "$live_capture_json" 2>/dev/null || printf '')"
       if [[ "$live_capture_success" == "true" ]]; then
         echo
         echo "Committing live captured reviews directly into DB for job: $job_id"
@@ -1000,53 +1006,114 @@ cmd_replay_headfull() {
     replay_available="$(printf '%s' "$replay_confirm_output" | jq -r '.session_state.availability_now // false' 2>/dev/null || printf 'false')"
     replay_session_state="$(printf '%s' "$replay_confirm_output" | jq -r '.session_state.session_state // "unknown"' 2>/dev/null || printf 'unknown')"
     replay_validation_result="$(printf '%s' "$replay_confirm_output" | jq -r '.session_state.last_validation_result // "unknown"' 2>/dev/null || printf 'unknown')"
-    echo "Replay session state: session_state=$replay_session_state availability_now=$replay_available last_validation_result=$replay_validation_result"
+    echo "Replay session state: session_state=$replay_session_state availability_now=$replay_available last_validation_result=$replay_validation_result live_exit_reason=${replay_live_exit_reason:-unknown}"
 
     if [[ "$live_commit_done" == "true" ]]; then
       echo "Live commit completed successfully. Skipping automatic relaunch for job: $job_id"
     else
-      local mark_needs_human_payload mark_needs_human_tmp mark_needs_human_http_status mark_needs_human_output mark_reason
-      if [[ "$live_commit_failed_after_capture" == "true" ]]; then
-        mark_reason="TripAdvisor live replay captured reviews but commit did not complete. Retry from the same needs_human flow."
-      elif [[ "$live_capture_success" == "true" ]]; then
-        mark_reason="TripAdvisor live replay captured reviews but did not finish the live commit. Retry from the same needs_human flow."
-      else
-        mark_reason="TripAdvisor live replay finished without a successful capture. Retry from the same needs_human flow."
+      local resolve_live_resolution=""
+      if [[ "$replay_live_exit_reason" == "window-close" ]] || [[ "$replay_live_exit_reason" == "manual-quit" ]] || [[ "$replay_live_exit_reason" == "keyboard-interrupt" ]]; then
+        resolve_live_resolution="manual_close"
+      elif [[ "$live_capture_success" != "true" ]] && printf '%s' "$live_capture_error" | grep -Eqi 'No Tripadvisor result was similar enough|did not render result cards|returned no selectable candidates'; then
+        resolve_live_resolution="business_not_found"
       fi
-      mark_needs_human_payload="$(jq -n \
-        --arg reason "$mark_reason" \
-        --arg replay_available "$replay_available" \
-        --arg replay_session_state "$replay_session_state" \
-        --arg replay_validation_result "$replay_validation_result" \
-        --arg capture_json_path "$live_capture_json" \
-        --arg capture_success "$live_capture_success" \
-        '{
-          reason: $reason,
-          data: {
-            source: "tripadvisor",
-            replay_headfull: true,
-            automatic_relaunch_disabled: true,
-            replay_session_state: $replay_session_state,
-            replay_available: ($replay_available == "true"),
-            replay_validation_result: $replay_validation_result,
-            live_capture_json_path: $capture_json_path,
-            live_capture_success: ($capture_success == "true")
-          }
-        }')"
-      mark_needs_human_tmp="$(mktemp)"
-      mark_needs_human_http_status="$(curl -sS -o "$mark_needs_human_tmp" -w '%{http_code}' -X POST \
-        "$API_BASE_URL/business/scrape/jobs/$job_id/mark-needs-human" \
-        -H "accept: application/json" \
-        -H "Content-Type: application/json" \
-        -d "$mark_needs_human_payload" || true)"
-      mark_needs_human_output="$(cat "$mark_needs_human_tmp")"
-      rm -f "$mark_needs_human_tmp"
-      if [[ "$mark_needs_human_http_status" == "200" ]]; then
-        echo "Marked job as needs_human after replay-headfull. Automatic relaunch remains disabled for job: $job_id"
-        printf '%s\n' "$mark_needs_human_output" | jq '{job_id,status,error,last_event}' 2>/dev/null || printf '%s\n' "$mark_needs_human_output"
-      else
-        echo "Warning: could not mark job as needs_human after replay-headfull (HTTP $mark_needs_human_http_status)." >&2
-        printf '%s\n' "$mark_needs_human_output" >&2
+
+      if [[ -n "$resolve_live_resolution" ]]; then
+        local resolve_live_payload resolve_live_tmp resolve_live_http_status resolve_live_output
+        resolve_live_payload="$(jq -n \
+          --arg resolution "$resolve_live_resolution" \
+          --arg replay_available "$replay_available" \
+          --arg replay_session_state "$replay_session_state" \
+          --arg replay_validation_result "$replay_validation_result" \
+          --arg capture_json_path "$live_capture_json" \
+          --arg capture_success "$live_capture_success" \
+          --arg capture_error "$live_capture_error" \
+          --arg live_exit_reason "$replay_live_exit_reason" \
+          --arg replay_log_path "$replay_log_file" \
+          '{
+            resolution: $resolution,
+            metadata: {
+              source: "tripadvisor",
+              replay_headfull: true,
+              automatic_relaunch_disabled: true,
+              replay_session_state: $replay_session_state,
+              replay_available: ($replay_available == "true"),
+              replay_validation_result: $replay_validation_result,
+              live_capture_json_path: $capture_json_path,
+              live_capture_success: ($capture_success == "true"),
+              live_capture_error: ($capture_error | select(. != "")),
+              live_exit_reason: ($live_exit_reason | select(. != "")),
+              replay_log_path: $replay_log_path
+            }
+          }')"
+        resolve_live_tmp="$(mktemp)"
+        resolve_live_http_status="$(curl -sS -o "$resolve_live_tmp" -w '%{http_code}' -X POST \
+          "$API_BASE_URL/business/scrape/jobs/$job_id/resolve-live" \
+          -H "accept: application/json" \
+          -H "Content-Type: application/json" \
+          -d "$resolve_live_payload" || true)"
+        resolve_live_output="$(cat "$resolve_live_tmp")"
+        rm -f "$resolve_live_tmp"
+        if [[ "$resolve_live_http_status" == "200" ]]; then
+          echo "Resolved TripAdvisor live replay without capture ($resolve_live_resolution). The pipeline can continue for job: $job_id"
+          printf '%s\n' "$resolve_live_output" | jq '{job_id,status,already_done,result}' 2>/dev/null || printf '%s\n' "$resolve_live_output"
+        else
+          echo "Warning: could not resolve TripAdvisor live replay without capture (HTTP $resolve_live_http_status)." >&2
+          printf '%s\n' "$resolve_live_output" >&2
+          resolve_live_resolution=""
+        fi
+      fi
+
+      if [[ -z "$resolve_live_resolution" ]]; then
+        local mark_needs_human_payload mark_needs_human_tmp mark_needs_human_http_status mark_needs_human_output mark_reason
+        if [[ "$live_commit_failed_after_capture" == "true" ]]; then
+          mark_reason="TripAdvisor live replay captured reviews but commit did not complete. Retry from the same needs_human flow."
+        elif [[ "$live_capture_success" == "true" ]]; then
+          mark_reason="TripAdvisor live replay captured reviews but did not finish the live commit. Retry from the same needs_human flow."
+        else
+          mark_reason="TripAdvisor live replay finished without a successful capture. Retry from the same needs_human flow."
+        fi
+        mark_needs_human_payload="$(jq -n \
+          --arg reason "$mark_reason" \
+          --arg replay_available "$replay_available" \
+          --arg replay_session_state "$replay_session_state" \
+          --arg replay_validation_result "$replay_validation_result" \
+          --arg capture_json_path "$live_capture_json" \
+          --arg capture_success "$live_capture_success" \
+          --arg capture_error "$live_capture_error" \
+          --arg live_exit_reason "$replay_live_exit_reason" \
+          --arg replay_log_path "$replay_log_file" \
+          '{
+            reason: $reason,
+            data: {
+              source: "tripadvisor",
+              replay_headfull: true,
+              automatic_relaunch_disabled: true,
+              replay_session_state: $replay_session_state,
+              replay_available: ($replay_available == "true"),
+              replay_validation_result: $replay_validation_result,
+              live_capture_json_path: $capture_json_path,
+              live_capture_success: ($capture_success == "true"),
+              live_capture_error: ($capture_error | select(. != "")),
+              live_exit_reason: ($live_exit_reason | select(. != "")),
+              replay_log_path: $replay_log_path
+            }
+          }')"
+        mark_needs_human_tmp="$(mktemp)"
+        mark_needs_human_http_status="$(curl -sS -o "$mark_needs_human_tmp" -w '%{http_code}' -X POST \
+          "$API_BASE_URL/business/scrape/jobs/$job_id/mark-needs-human" \
+          -H "accept: application/json" \
+          -H "Content-Type: application/json" \
+          -d "$mark_needs_human_payload" || true)"
+        mark_needs_human_output="$(cat "$mark_needs_human_tmp")"
+        rm -f "$mark_needs_human_tmp"
+        if [[ "$mark_needs_human_http_status" == "200" ]]; then
+          echo "Marked job as needs_human after replay-headfull. Automatic relaunch remains disabled for job: $job_id"
+          printf '%s\n' "$mark_needs_human_output" | jq '{job_id,status,error,last_event}' 2>/dev/null || printf '%s\n' "$mark_needs_human_output"
+        else
+          echo "Warning: could not mark job as needs_human after replay-headfull (HTTP $mark_needs_human_http_status)." >&2
+          printf '%s\n' "$mark_needs_human_output" >&2
+        fi
       fi
     fi
   fi

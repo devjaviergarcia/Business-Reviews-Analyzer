@@ -32,6 +32,8 @@ class ReportWorker(QueuedJobWorkerBase):
     _BUSINESSES_COLLECTION = "businesses"
     _REVIEWS_COLLECTION = "reviews"
     _ANALYSES_COLLECTION = "analyses"
+    _JOBS_COLLECTION = "analysis_jobs"
+    _SCRAPE_ROUNDS_COLLECTION = "browser_scrape_rounds"
     _REPORT_REVIEWS_LIMIT = 800
     _REPORT_BALANCED_SOURCES = ("google_maps", "tripadvisor")
 
@@ -75,6 +77,8 @@ class ReportWorker(QueuedJobWorkerBase):
             analyses = database[self._ANALYSES_COLLECTION]
             businesses = database[self._BUSINESSES_COLLECTION]
             reviews = database[self._REVIEWS_COLLECTION]
+            jobs = database[self._JOBS_COLLECTION]
+            scrape_rounds = database[self._SCRAPE_ROUNDS_COLLECTION]
 
             analysis_id = self._parse_object_id(task_payload.analysis_id, field_name="analysis_id")
             analysis_doc = await analyses.find_one({"_id": analysis_id})
@@ -87,6 +91,12 @@ class ReportWorker(QueuedJobWorkerBase):
                 raise LookupError(f"Business '{business_id}' not found.")
 
             dataset_id = str(analysis_doc.get("dataset_id") or "").strip() or None
+            source_availability = await self._load_source_availability_metadata(
+                analysis_doc=analysis_doc,
+                report_source_job_id=str(task_payload.source_job_id or "").strip() or None,
+                jobs_collection=jobs,
+                scrape_rounds_collection=scrape_rounds,
+            )
             (
                 review_docs,
                 report_source_mode,
@@ -126,6 +136,7 @@ class ReportWorker(QueuedJobWorkerBase):
                 "report_sources_included": list(report_sources_included),
                 "source_counts": dict(report_source_counts),
                 "dataset_id": dataset_id,
+                "source_availability": source_availability,
             }
             advanced_report = {
                 **advanced_report,
@@ -322,6 +333,93 @@ class ReportWorker(QueuedJobWorkerBase):
             if isinstance(doc, dict)
         )
         return {source: int(count) for source, count in sorted(source_counter.items(), key=lambda item: item[0])}
+
+    async def _load_source_availability_metadata(
+        self,
+        *,
+        analysis_doc: dict[str, Any],
+        report_source_job_id: str | None,
+        jobs_collection: Any,
+        scrape_rounds_collection: Any,
+    ) -> dict[str, Any]:
+        scrape_round_id = str(analysis_doc.get("scrape_round_id") or "").strip() or None
+        if not scrape_round_id and report_source_job_id:
+            scrape_round_id = await self._load_scrape_round_id_from_analysis_job(
+                analysis_job_id=report_source_job_id,
+                jobs_collection=jobs_collection,
+            )
+        if not scrape_round_id:
+            return {}
+
+        round_doc = await scrape_rounds_collection.find_one({"_id": scrape_round_id})
+        if not isinstance(round_doc, dict):
+            return {}
+
+        source_jobs = round_doc.get("source_jobs") if isinstance(round_doc.get("source_jobs"), dict) else {}
+        tripadvisor_state = (
+            source_jobs.get("tripadvisor")
+            if isinstance(source_jobs.get("tripadvisor"), dict)
+            else {}
+        )
+        if not tripadvisor_state:
+            return {}
+
+        tripadvisor_status = str(tripadvisor_state.get("status") or "").strip().lower()
+        tripadvisor_resolution = str(tripadvisor_state.get("resolution") or "").strip().lower()
+        if tripadvisor_status not in {"omitted", "not_found"} and tripadvisor_resolution not in {
+            "business_not_found",
+            "manual_skip",
+            "manual_close",
+        }:
+            return {}
+
+        normalized_status = tripadvisor_status or (
+            "not_found" if tripadvisor_resolution == "business_not_found" else "omitted"
+        )
+        detail = self._tripadvisor_unavailable_detail(
+            status=normalized_status,
+            resolution=tripadvisor_resolution,
+        )
+        return {
+            "tripadvisor": {
+                "source": "tripadvisor",
+                "status": normalized_status,
+                "flag": "NO TIENE TRIPADVISOR",
+                "label": "Tripadvisor no disponible para este informe",
+                "detail": detail,
+                "resolution": tripadvisor_resolution or None,
+                "completion_mode": str(tripadvisor_state.get("completion_mode") or "").strip().lower() or None,
+            }
+        }
+
+    async def _load_scrape_round_id_from_analysis_job(
+        self,
+        *,
+        analysis_job_id: str,
+        jobs_collection: Any,
+    ) -> str | None:
+        try:
+            job_object_id = self._parse_object_id(analysis_job_id, field_name="analysis_job_id")
+        except ValueError:
+            return None
+        job_doc = await jobs_collection.find_one({"_id": job_object_id}, projection={"scrape_round_id": 1})
+        if not isinstance(job_doc, dict):
+            return None
+        return str(job_doc.get("scrape_round_id") or "").strip() or None
+
+    def _tripadvisor_unavailable_detail(self, *, status: str, resolution: str) -> str:
+        if status == "not_found" or resolution == "business_not_found":
+            return (
+                "Durante la captura no se encontró una ficha válida del negocio en Tripadvisor, "
+                "así que el análisis se ha generado sin esa fuente."
+            )
+        if resolution == "manual_close":
+            return (
+                "La sesión de Tripadvisor se cerró sin captura final y la pipeline continuó sin esa fuente."
+            )
+        return (
+            "La fuente de Tripadvisor se omitió durante la captura y el informe se ha generado solo con las fuentes disponibles."
+        )
 
     def _review_sort_key(self, review_doc: dict[str, Any]) -> tuple[float, str]:
         raw_scraped_at = review_doc.get("scraped_at") if isinstance(review_doc, dict) else None

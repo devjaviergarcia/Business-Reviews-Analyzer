@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -31,6 +33,7 @@ class StructuredReportRenderer(ReportRenderingSectionsMixin):
 
     def __init__(self, *, artifacts_root: str | Path = "artifacts/reports") -> None:
         self.artifacts_root = Path(artifacts_root)
+        self._resolved_artifacts_root: Path | None = None
 
     async def render(
         self,
@@ -43,8 +46,9 @@ class StructuredReportRenderer(ReportRenderingSectionsMixin):
     ) -> dict[str, Any]:
         normalized_format = str(output_format or "pdf").strip().lower() or "pdf"
         business_name = str(report_payload.get("business_name", "") or "").strip() or "negocio"
+        artifacts_root = self._resolve_writable_artifacts_root()
         artifact_layout = build_final_report_artifact_layout(
-            artifacts_root=self.artifacts_root,
+            artifacts_root=artifacts_root,
             business_name=business_name,
             business_id=str(business_id),
             analysis_id=str(analysis_id),
@@ -152,8 +156,9 @@ class StructuredReportRenderer(ReportRenderingSectionsMixin):
     ) -> dict[str, Any]:
         normalized_format = str(output_format or "pdf").strip().lower() or "pdf"
         business_name = str(preview_payload.get("business_name", "") or "").strip() or "negocio"
+        artifacts_root = self._resolve_writable_artifacts_root()
         artifact_layout = build_preview_report_artifact_layout(
-            artifacts_root=self.artifacts_root,
+            artifacts_root=artifacts_root,
             business_name=business_name,
             business_id=str(business_id),
             analysis_id=str(analysis_id),
@@ -205,3 +210,32 @@ class StructuredReportRenderer(ReportRenderingSectionsMixin):
                 "error": pdf_error,
             },
         }
+
+    def _resolve_writable_artifacts_root(self) -> Path:
+        if self._resolved_artifacts_root is not None:
+            return self._resolved_artifacts_root
+
+        primary_root = self.artifacts_root
+        if self._ensure_directory_is_writable(primary_root):
+            self._resolved_artifacts_root = primary_root
+            return primary_root
+
+        fallback_root = primary_root.parent / f"{primary_root.name}_local"
+        if self._ensure_directory_is_writable(fallback_root):
+            self._resolved_artifacts_root = fallback_root
+            return fallback_root
+
+        raise PermissionError(
+            "No writable reports artifact directory is available. "
+            f"Tried '{primary_root}' and fallback '{fallback_root}'."
+        )
+
+    def _ensure_directory_is_writable(self, path: Path) -> bool:
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            probe_path = path / f".write_probe_{os.getpid()}_{uuid.uuid4().hex}"
+            probe_path.write_text("ok", encoding="utf-8")
+            probe_path.unlink(missing_ok=True)
+            return True
+        except PermissionError:
+            return False
