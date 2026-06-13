@@ -6,6 +6,8 @@ import logging
 from src.config import settings
 from src.database import close_mongo_connection, connect_to_mongo
 from src.dependencies import create_crm_service, create_worker_job_broker
+from src.pipeline.client_audit import ClientAuditPreparationRuntime
+from src.services.analysis_job_service import AnalysisJobService
 from src.services.crm_service import CRMService
 from src.workers.broker import WorkerJobBroker
 from src.workers.contracts import (
@@ -38,6 +40,10 @@ class CRMWorker:
         self._idle_log_seconds = max(5, int(settings.worker_idle_log_seconds))
         self._idle_log_every_ticks = max(1, self._idle_log_seconds // self._poll_seconds)
         self._scheduler_batch_size = max(1, int(settings.crm_scheduler_batch_size))
+        self._client_audit_preparation_runtime = ClientAuditPreparationRuntime(
+            job_service=AnalysisJobService(),
+            crm_service=self._service,
+        )
 
     async def run_forever(self) -> None:
         await connect_to_mongo()
@@ -100,6 +106,7 @@ class CRMWorker:
     async def _process_job(self, job: dict[str, object]) -> None:
         job_id = job.get("_id")
         job_type = str(job.get("job_type") or "").strip().lower() or "unknown"
+        benchmark_payload = None
         try:
             await self._job_broker.append_event(
                 job_id=job_id,
@@ -117,7 +124,17 @@ class CRMWorker:
                 result = await self._service.process_discovery_task(task_payload=payload, job_id=job_id)
             elif job_type == "benchmark_local_study":
                 payload = parse_benchmark_local_study_payload(job)
+                benchmark_payload = payload
                 result = await self._service.process_benchmark_study_task(task_payload=payload, job_id=job_id)
+                if payload.benchmark_run_id:
+                    resume_result = (
+                        await self._client_audit_preparation_runtime.resume_preparations_for_benchmark_run(
+                            benchmark_run_id=payload.benchmark_run_id,
+                            dependency_status="completed",
+                        )
+                    )
+                    if int(resume_result.get("resumed_preparations") or 0) > 0:
+                        result["client_audit_resume"] = resume_result
             elif job_type == "crm_lead_pipeline":
                 payload = parse_crm_lead_pipeline_payload(job)
                 result = await self._service.process_lead_pipeline_task(task_payload=payload, job_id=job_id)
@@ -140,6 +157,22 @@ class CRMWorker:
             )
             await self._job_broker.mark_done(job_id=job_id, result=result)
         except Exception as exc:  # noqa: BLE001
+            if job_type == "benchmark_local_study" and benchmark_payload is None:
+                try:
+                    benchmark_payload = parse_benchmark_local_study_payload(job)
+                except Exception:  # noqa: BLE001
+                    benchmark_payload = None
+            if benchmark_payload is not None and benchmark_payload.benchmark_run_id:
+                try:
+                    await self._client_audit_preparation_runtime.resume_preparations_for_benchmark_run(
+                        benchmark_run_id=benchmark_payload.benchmark_run_id,
+                        dependency_status="failed",
+                    )
+                except Exception:  # noqa: BLE001
+                    LOGGER.exception(
+                        "Could not resume client audit preparations after benchmark failure. benchmark_run_id=%s",
+                        benchmark_payload.benchmark_run_id,
+                    )
             await self._job_broker.mark_failed(job_id=job_id, error=str(exc))
             LOGGER.exception("CRM job failed id=%s job_type=%s error=%s", job_id, job_type, exc)
 

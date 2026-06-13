@@ -36,6 +36,7 @@ class BrowserScrapeRoundRuntime:
         root_business_id: str | None,
         requested_sources: Iterable[str],
         requested_by: str | None,
+        analysis_request: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_sources = self._normalize_sources(requested_sources)
         if not normalized_sources:
@@ -43,6 +44,7 @@ class BrowserScrapeRoundRuntime:
 
         now = datetime.now(timezone.utc)
         round_id = uuid4().hex
+        normalized_analysis_request = self._normalize_analysis_request(analysis_request)
         doc = {
             "_id": round_id,
             "canonical_name": str(canonical_name).strip(),
@@ -50,6 +52,7 @@ class BrowserScrapeRoundRuntime:
             "root_business_id": str(root_business_id or "").strip() or None,
             "requested_sources": list(normalized_sources),
             "requested_by": str(requested_by or "").strip().lower() or None,
+            "analysis_request": normalized_analysis_request,
             "source_jobs": {},
             "analysis_handoff": {
                 "status": "pending",
@@ -325,6 +328,7 @@ class BrowserScrapeRoundRuntime:
         payload_dataset_id = dataset_id if source_mode == "single" else None
         payload_source_profile_id = source_profile_id if source_mode == "single" else None
         payload_scrape_run_id = scrape_run_id if source_mode == "single" else None
+        analysis_request = self._normalize_analysis_request(round_doc.get("analysis_request"))
         return AnalysisGenerateTaskPayload(
             business_id=business_id,
             dataset_id=payload_dataset_id,
@@ -334,6 +338,12 @@ class BrowserScrapeRoundRuntime:
             source_mode=source_mode,
             selected_source=selected_source,
             scrape_round_id=str(round_doc.get("_id") or "").strip() or None,
+            report_profile=str(analysis_request.get("report_profile") or "client_audit"),
+            report_complexity=str(analysis_request.get("report_complexity") or "basic"),
+            report_cadence=str(analysis_request.get("report_cadence") or "one_off"),
+            study_resolution_mode=str(analysis_request.get("study_resolution_mode") or "auto_ttl"),
+            include_competitors=bool(analysis_request.get("include_competitors", True)),
+            include_geogrid=bool(analysis_request.get("include_geogrid", False)),
         )
 
     def _completed_sources(
@@ -401,6 +411,23 @@ class BrowserScrapeRoundRuntime:
         if not normalized_round_id:
             raise ValueError("scrape_round_id cannot be empty.")
         return normalized_round_id
+
+    def _normalize_analysis_request(self, payload: Any) -> dict[str, Any]:
+        raw = payload if isinstance(payload, dict) else {}
+        return {
+            "report_profile": str(raw.get("report_profile") or "client_audit").strip().lower()
+            or "client_audit",
+            "report_complexity": str(raw.get("report_complexity") or "basic").strip().lower()
+            or "basic",
+            "report_cadence": str(raw.get("report_cadence") or "one_off").strip().lower()
+            or "one_off",
+            "study_resolution_mode": str(raw.get("study_resolution_mode") or "auto_ttl")
+            .strip()
+            .lower()
+            or "auto_ttl",
+            "include_competitors": bool(raw.get("include_competitors", True)),
+            "include_geogrid": bool(raw.get("include_geogrid", False)),
+        }
 
     def _normalize_source(self, source: str) -> str:
         normalized_source = str(source or "").strip().lower()

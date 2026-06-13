@@ -19,6 +19,7 @@ from src.job_runtime.browser_job_contracts import (
     normalize_browser_source,
 )
 from src.job_runtime.local_browser_job_coordinator import LocalBrowserJobCoordinator
+from src.pipeline.client_audit import ClientAuditPreparationRuntime
 from src.scraping_google_maps.google_maps_browser_adapter import GoogleMapsBrowserAdapter
 from src.scraping_shared.browser_scrape_errors import (
     ScrapeBotDetectedError,
@@ -31,6 +32,7 @@ from src.services.crm_service import CRMService
 from src.workers.contracts import (
     AnalysisJobStatus,
     parse_analyze_business_payload,
+    parse_benchmark_local_study_payload,
     parse_crm_lead_discovery_payload,
     parse_geo_grid_study_payload,
 )
@@ -79,6 +81,10 @@ class LocalBrowserRuntimeWorker:
         self._job_service = job_service
         self._business_service = business_service
         self._crm_service = crm_service
+        self._client_audit_preparation_runtime = ClientAuditPreparationRuntime(
+            job_service=job_service,
+            crm_service=crm_service,
+        )
         self._local_browser_jobs = local_browser_jobs
         self._local_browser_registry = local_browser_registry
         self._google_maps_adapter = google_maps_adapter
@@ -161,6 +167,9 @@ class LocalBrowserRuntimeWorker:
             return
         if job_type == "crm_lead_discovery":
             await self._process_crm_discovery_job(job)
+            return
+        if job_type == "benchmark_local_study":
+            await self._process_benchmark_study_job(job)
             return
         if job_type == "geo_grid_study":
             await self._process_geo_grid_study_job(job)
@@ -511,29 +520,129 @@ class LocalBrowserRuntimeWorker:
 
     async def _process_geo_grid_study_job(self, job: dict[str, Any]) -> None:
         job_id = job.get("_id")
+        execution_mode = str(job.get("execution_mode") or DEFAULT_BROWSER_EXECUTION_MODE).strip().lower()
+        execution_mode = execution_mode or DEFAULT_BROWSER_EXECUTION_MODE
+        live_display_mode = (
+            str(job.get("live_display_mode") or DEFAULT_BROWSER_LIVE_DISPLAY_MODE).strip().lower()
+            or DEFAULT_BROWSER_LIVE_DISPLAY_MODE
+        )
         self._current_job_state.update(
             {
                 "state": "running",
                 "job_id": str(job_id),
                 "source": "google_maps",
-                "execution_mode": "automatic",
+                "execution_mode": execution_mode,
             }
         )
-        self._configure_browser_mode(execution_mode="automatic")
+        self._configure_browser_mode(execution_mode=execution_mode)
         try:
             await self._job_service.append_event(
                 job_id=job_id,
                 stage="geo_grid_local_browser_started",
                 message="Geo grid study started on local browser runtime worker.",
                 status=AnalysisJobStatus.RUNNING,
-                data={"runtime_target": DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET, "source": "google_maps"},
+                data={
+                    "runtime_target": DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
+                    "source": "google_maps",
+                    "execution_mode": execution_mode,
+                    "live_display_mode": live_display_mode,
+                },
             )
             payload = parse_geo_grid_study_payload(job)
-            result = await self._crm_service.process_geo_grid_study_task(task_payload=payload, job_id=job_id)
+            with self._live_display_runtime.activate_for_job(
+                execution_mode=execution_mode,
+                live_display_mode=live_display_mode,
+            ):
+                result = await self._crm_service.process_geo_grid_study_task(
+                    task_payload=payload,
+                    job_id=job_id,
+                )
+            if payload.geo_grid_run_id:
+                resume_result = await self._client_audit_preparation_runtime.resume_preparations_for_geo_grid_run(
+                    geo_grid_run_id=payload.geo_grid_run_id,
+                    dependency_status="completed",
+                )
+                if int(resume_result.get("resumed_preparations") or 0) > 0:
+                    result["client_audit_resume"] = resume_result
             await self._job_service.mark_done(job_id=job_id, result=result)
         except Exception as exc:  # noqa: BLE001
+            if "payload" in locals() and payload.geo_grid_run_id:
+                try:
+                    await self._client_audit_preparation_runtime.resume_preparations_for_geo_grid_run(
+                        geo_grid_run_id=payload.geo_grid_run_id,
+                        dependency_status="failed",
+                    )
+                except Exception:  # noqa: BLE001
+                    LOGGER.exception(
+                        "Could not resume client audit preparations after local geo grid failure. geo_grid_run_id=%s",
+                        payload.geo_grid_run_id,
+                    )
             await self._job_service.mark_failed(job_id=job_id, error=str(exc))
             LOGGER.exception("Geo grid job failed on local browser runtime id=%s error=%s", job_id, exc)
+        finally:
+            self._current_job_state.update({"state": "idle", "job_id": None, "source": None, "execution_mode": None})
+
+    async def _process_benchmark_study_job(self, job: dict[str, Any]) -> None:
+        job_id = job.get("_id")
+        execution_mode = str(job.get("execution_mode") or DEFAULT_BROWSER_EXECUTION_MODE).strip().lower()
+        execution_mode = execution_mode or DEFAULT_BROWSER_EXECUTION_MODE
+        live_display_mode = (
+            str(job.get("live_display_mode") or DEFAULT_BROWSER_LIVE_DISPLAY_MODE).strip().lower()
+            or DEFAULT_BROWSER_LIVE_DISPLAY_MODE
+        )
+        self._current_job_state.update(
+            {
+                "state": "running",
+                "job_id": str(job_id),
+                "source": "google_maps",
+                "execution_mode": execution_mode,
+            }
+        )
+        self._configure_browser_mode(execution_mode=execution_mode)
+        try:
+            await self._job_service.append_event(
+                job_id=job_id,
+                stage="benchmark_local_browser_started",
+                message="Benchmark study started on local browser runtime worker.",
+                status=AnalysisJobStatus.RUNNING,
+                data={
+                    "runtime_target": DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
+                    "source": "google_maps",
+                    "execution_mode": execution_mode,
+                    "live_display_mode": live_display_mode,
+                },
+            )
+            payload = parse_benchmark_local_study_payload(job)
+            with self._live_display_runtime.activate_for_job(
+                execution_mode=execution_mode,
+                live_display_mode=live_display_mode,
+            ):
+                result = await self._crm_service.process_benchmark_study_task(
+                    task_payload=payload,
+                    job_id=job_id,
+                )
+            if payload.benchmark_run_id:
+                resume_result = await self._client_audit_preparation_runtime.resume_preparations_for_benchmark_run(
+                    benchmark_run_id=payload.benchmark_run_id,
+                    dependency_status="completed",
+                )
+                if int(resume_result.get("resumed_preparations") or 0) > 0:
+                    result["client_audit_resume"] = resume_result
+            await self._job_service.mark_done(job_id=job_id, result=result)
+        except Exception as exc:  # noqa: BLE001
+            if "payload" in locals() and payload.benchmark_run_id:
+                try:
+                    await self._client_audit_preparation_runtime.resume_preparations_for_benchmark_run(
+                        benchmark_run_id=payload.benchmark_run_id,
+                        dependency_status="failed",
+                    )
+                except Exception:  # noqa: BLE001
+                    LOGGER.exception(
+                        "Could not resume client audit preparations after local benchmark failure. benchmark_run_id=%s",
+                        payload.benchmark_run_id,
+                    )
+            await self._job_service.mark_failed(job_id=job_id, error=str(exc))
+            LOGGER.exception("Benchmark job failed on local browser runtime id=%s error=%s", job_id, exc)
         finally:
             self._current_job_state.update({"state": "idle", "job_id": None, "source": None, "execution_mode": None})
 

@@ -14,10 +14,12 @@ from src.config import settings
 from src.database import close_mongo_connection, connect_to_mongo
 from src.dependencies import create_business_service, create_crm_service, create_worker_job_broker
 from src.job_runtime.browser_job_contracts import DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET
+from src.pipeline.client_audit import ClientAuditPreparationRuntime
 from src.scraping_shared.browser_scrape_errors import (
     ScrapeBotDetectedError,
     ScrapeNeedsHumanInterventionError,
 )
+from src.services.analysis_job_service import AnalysisJobService
 from src.services.business_service import BusinessService
 from src.services.crm_service import CRMService
 from src.services.tripadvisor_session_service import TripadvisorSessionService
@@ -53,6 +55,10 @@ class ScraperWorker(QueuedJobWorkerBase):
         self._service = service or create_business_service()
         self._crm_service = crm_service or create_crm_service()
         self._tripadvisor_session_service = TripadvisorSessionService()
+        self._client_audit_preparation_runtime = ClientAuditPreparationRuntime(
+            job_service=AnalysisJobService(),
+            crm_service=self._crm_service,
+        )
         self.queue_name = self._resolve_queue_name(settings.worker_scrape_queue)
         self._scrape_source = self._resolve_scrape_source(settings.worker_scrape_source)
         self._selected_sources = None if self._scrape_source == "all" else (self._scrape_source,)
@@ -836,6 +842,7 @@ class ScraperWorker(QueuedJobWorkerBase):
 
     async def _process_geo_grid_study_job(self, job: dict[str, Any]) -> None:
         job_id = job.get("_id")
+        payload = None
         try:
             await self._job_broker.append_event(
                 job_id=job_id,
@@ -849,6 +856,13 @@ class ScraperWorker(QueuedJobWorkerBase):
             )
             payload = parse_geo_grid_study_payload(job)
             result = await self._crm_service.process_geo_grid_study_task(task_payload=payload, job_id=job_id)
+            if payload.geo_grid_run_id:
+                resume_result = await self._client_audit_preparation_runtime.resume_preparations_for_geo_grid_run(
+                    geo_grid_run_id=payload.geo_grid_run_id,
+                    dependency_status="completed",
+                )
+                if int(resume_result.get("resumed_preparations") or 0) > 0:
+                    result["client_audit_resume"] = resume_result
             await self._job_broker.append_event(
                 job_id=job_id,
                 stage="geo_grid_worker_completed",
@@ -862,6 +876,22 @@ class ScraperWorker(QueuedJobWorkerBase):
             )
             await self._job_broker.mark_done(job_id=job_id, result=result)
         except Exception as exc:  # noqa: BLE001
+            if payload is None:
+                try:
+                    payload = parse_geo_grid_study_payload(job)
+                except Exception:  # noqa: BLE001
+                    payload = None
+            if payload is not None and payload.geo_grid_run_id:
+                try:
+                    await self._client_audit_preparation_runtime.resume_preparations_for_geo_grid_run(
+                        geo_grid_run_id=payload.geo_grid_run_id,
+                        dependency_status="failed",
+                    )
+                except Exception:  # noqa: BLE001
+                    LOGGER.exception(
+                        "Could not resume client audit preparations after geo grid failure. geo_grid_run_id=%s",
+                        payload.geo_grid_run_id,
+                    )
             await self._job_broker.mark_failed(job_id=job_id, error=str(exc))
             LOGGER.exception(
                 "GeoGrid study job failed on scrape worker id=%s queue=%s error=%s",

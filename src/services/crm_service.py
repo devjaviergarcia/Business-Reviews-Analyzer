@@ -227,7 +227,7 @@ class CRMService(
             replace_geo_grid_point_results=self._geo_grid_result_repository.replace_point_results,
             discover_geo_grid_point_results=lambda **kwargs: self._discover_geo_grid_point_results(**kwargs),
             discover_geo_grid_point_results_uule=lambda **kwargs: self._discover_geo_grid_point_results_uule(**kwargs),
-            scraper_factory=BusinessService.build_default_scraper,
+            scraper_factory=BusinessService.build_geo_grid_scraper,
             record_event=self._record_event,
             sanitize_payload=self._sanitize_payload,
             default_provider_mode=lambda: settings.geo_grid_provider_mode,

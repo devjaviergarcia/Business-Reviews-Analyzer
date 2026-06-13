@@ -16,6 +16,9 @@ class CRMServiceStudiesFacet:
         limit: int = 100,
         source: str = "auto_live_google_maps",
         title: str | None = None,
+        execution_mode: str | None = None,
+        live_display_mode: str | None = None,
+        requested_by: str | None = None,
     ) -> dict[str, Any]:
         if self._enqueue_benchmark_study_job_use_case is not None:
             return await self._enqueue_benchmark_study_job_use_case.execute(
@@ -25,6 +28,9 @@ class CRMServiceStudiesFacet:
                 limit=limit,
                 source=source,
                 title=title,
+                execution_mode=execution_mode,
+                live_display_mode=live_display_mode,
+                requested_by=requested_by,
             )
         await self.ensure_indexes()
         return await self._study_job_enqueue_runtime.enqueue_benchmark_study_job(
@@ -34,6 +40,9 @@ class CRMServiceStudiesFacet:
             limit=limit,
             source=source,
             title=title,
+            execution_mode=execution_mode,
+            live_display_mode=live_display_mode,
+            requested_by=requested_by,
         )
 
     async def list_geo_cities(self) -> list[dict[str, Any]]:
@@ -53,6 +62,9 @@ class CRMServiceStudiesFacet:
         grid_spacing_km: float | None = None,
         uule_radius_m: int | None = None,
         throttle_ms: int | None = None,
+        execution_mode: str | None = None,
+        live_display_mode: str | None = None,
+        requested_by: str | None = None,
     ) -> dict[str, Any]:
         if self._enqueue_geo_grid_study_job_use_case is not None:
             return await self._enqueue_geo_grid_study_job_use_case.execute(
@@ -64,6 +76,9 @@ class CRMServiceStudiesFacet:
                 grid_spacing_km=grid_spacing_km,
                 uule_radius_m=uule_radius_m,
                 throttle_ms=throttle_ms,
+                execution_mode=execution_mode,
+                live_display_mode=live_display_mode,
+                requested_by=requested_by,
             )
         await self.ensure_indexes()
         return await self._study_job_enqueue_runtime.enqueue_geo_grid_study_job(
@@ -75,6 +90,9 @@ class CRMServiceStudiesFacet:
             grid_spacing_km=grid_spacing_km,
             uule_radius_m=uule_radius_m,
             throttle_ms=throttle_ms,
+            execution_mode=execution_mode,
+            live_display_mode=live_display_mode,
+            requested_by=requested_by,
         )
 
     async def list_geo_grid_runs(

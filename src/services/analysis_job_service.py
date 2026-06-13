@@ -33,6 +33,7 @@ from src.workers.contracts import (
     JobType,
     JobQueueName,
     ReportGenerateTaskPayload,
+    ReportPreparationTaskPayload,
     WorkerTaskPayload,
     build_worker_job_envelope,
 )
@@ -93,6 +94,23 @@ class AnalysisJobService:
             task_payload=task_payload,
             queue_name="report",
             job_type="report_generate",
+            payload_override=payload_override,
+        )
+
+    async def enqueue_report_prepare_job(
+        self,
+        *,
+        task_payload: ReportPreparationTaskPayload,
+    ) -> dict[str, Any]:
+        payload_override = task_payload.model_dump(mode="python")
+        if str(payload_override.get("source_mode") or "").strip().lower() == "auto":
+            payload_override.pop("source_mode", None)
+        if payload_override.get("selected_source") is None:
+            payload_override.pop("selected_source", None)
+        return await self.enqueue_job(
+            task_payload=task_payload,
+            queue_name="report",
+            job_type="report_prepare",
             payload_override=payload_override,
         )
 
@@ -361,6 +379,33 @@ class AnalysisJobService:
         if job_doc is None:
             raise LookupError(f"Job '{job_id}' not found.")
 
+        return self._sanitize_response_payload(self._serialize_analysis_job_doc(job_doc))
+
+    async def find_latest_analysis_job_for_business(
+        self,
+        *,
+        business_id: str,
+    ) -> dict[str, Any] | None:
+        normalized_business_id = str(business_id or "").strip()
+        if not normalized_business_id:
+            raise ValueError("business_id cannot be empty.")
+
+        database = get_database()
+        jobs = database[self._JOBS_COLLECTION]
+        job_doc = await jobs.find_one(
+            {
+                "queue_name": "analysis",
+                "job_type": "analysis_generate",
+                "$or": [
+                    {"payload.business_id": normalized_business_id},
+                    {"business_id": normalized_business_id},
+                    {"result.business_id": normalized_business_id},
+                ],
+            },
+            sort=[("created_at", -1), ("_id", -1)],
+        )
+        if job_doc is None:
+            return None
         return self._sanitize_response_payload(self._serialize_analysis_job_doc(job_doc))
 
     async def list_jobs(
@@ -1242,6 +1287,38 @@ class AnalysisJobService:
                             if payload.get("selected_source") is not None
                             else None
                         ),
+                        "report_profile": str(payload.get("report_profile") or "client_audit"),
+                        "report_complexity": str(payload.get("report_complexity") or "basic"),
+                        "report_cadence": str(payload.get("report_cadence") or "one_off"),
+                        "study_resolution_mode": str(payload.get("study_resolution_mode") or "auto_ttl"),
+                        "include_competitors": bool(payload.get("include_competitors", True)),
+                        "include_geogrid": bool(payload.get("include_geogrid", False)),
+                    }
+                )
+                return task.model_dump(mode="python")
+
+            if job_type == "report_prepare":
+                task = ReportPreparationTaskPayload.model_validate(
+                    {
+                        "preparation_id": str(payload.get("preparation_id", "")).strip(),
+                        "business_id": str(payload.get("business_id", "")).strip(),
+                        "analysis_id": str(payload.get("analysis_id", "")).strip(),
+                        "output_format": str(payload.get("output_format") or payload.get("format") or "pdf"),
+                        "locale": str(payload.get("locale") or "").strip() or None,
+                        "template_id": str(payload.get("template_id") or "").strip() or None,
+                        "source_job_id": str(payload.get("source_job_id") or "").strip() or None,
+                        "source_mode": str(payload.get("source_mode") or "auto"),
+                        "selected_source": (
+                            str(payload.get("selected_source")).strip()
+                            if payload.get("selected_source") is not None
+                            else None
+                        ),
+                        "report_profile": str(payload.get("report_profile") or "client_audit"),
+                        "report_complexity": str(payload.get("report_complexity") or "hydrated"),
+                        "report_cadence": str(payload.get("report_cadence") or "one_off"),
+                        "study_resolution_mode": str(payload.get("study_resolution_mode") or "auto_ttl"),
+                        "include_competitors": bool(payload.get("include_competitors", True)),
+                        "include_geogrid": bool(payload.get("include_geogrid", False)),
                     }
                 )
                 return task.model_dump(mode="python")
@@ -1261,6 +1338,13 @@ class AnalysisJobService:
                             if payload.get("selected_source") is not None
                             else None
                         ),
+                        "report_profile": str(payload.get("report_profile") or "client_audit"),
+                        "report_complexity": str(payload.get("report_complexity") or "basic"),
+                        "report_cadence": str(payload.get("report_cadence") or "one_off"),
+                        "study_resolution_mode": str(payload.get("study_resolution_mode") or "auto_ttl"),
+                        "include_competitors": bool(payload.get("include_competitors", True)),
+                        "include_geogrid": bool(payload.get("include_geogrid", False)),
+                        "preparation_id": str(payload.get("preparation_id") or "").strip() or None,
                     }
                 )
                 return task.model_dump(mode="python")

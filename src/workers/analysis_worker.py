@@ -6,13 +6,15 @@ import logging
 from typing import Any
 
 from src.config import settings
-from src.dependencies import create_business_service, create_worker_job_broker
+from src.dependencies import create_business_service, create_crm_service, create_worker_job_broker
+from src.pipeline.client_audit import ClientAuditPreparationRuntime
 from src.services.business_service import BusinessService
 from src.workers.base_queue_worker import QueuedJobWorkerBase
 from src.workers.broker import WorkerJobBroker
 from src.workers.contracts import (
     AnalysisJobStatus,
     ReportGenerateTaskPayload,
+    ReportPreparationTaskPayload,
     parse_analysis_generate_payload,
 )
 
@@ -36,6 +38,10 @@ class AnalysisWorker(QueuedJobWorkerBase):
     ) -> None:
         super().__init__(job_broker=job_broker or create_worker_job_broker())
         self._service = service or create_business_service()
+        self._client_audit_preparation_runtime = ClientAuditPreparationRuntime(
+            job_service=self._service.job_service,
+            crm_service=create_crm_service(),
+        )
 
     async def _process_job(self, job: dict) -> None:
         job_id = job.get("_id")
@@ -135,36 +141,99 @@ class AnalysisWorker(QueuedJobWorkerBase):
             )
 
             report_handoff: dict[str, Any] | None = None
+            report_preparation_handoff: dict[str, Any] | None = None
             analysis_payload = result.get("analysis") if isinstance(result.get("analysis"), dict) else {}
             analysis_id = str(
                 (analysis_payload.get("id") or analysis_payload.get("_id") or "")
             ).strip()
             if analysis_id:
                 try:
-                    report_payload = ReportGenerateTaskPayload(
-                        business_id=task_payload.business_id,
-                        analysis_id=analysis_id,
-                        output_format="pdf",
-                        locale="es-ES",
-                        source_job_id=str(job_id),
-                        source_mode=task_payload.source_mode,
-                        selected_source=task_payload.selected_source,
-                    )
-                    report_handoff = await self._service.job_service.enqueue_report_generate_job(
-                        task_payload=report_payload
-                    )
-                    await self._job_broker.append_event(
-                        job_id=job_id,
-                        stage="report_handoff_queued",
-                        message="Report job enqueued after analysis completion.",
-                        status=AnalysisJobStatus.RUNNING,
-                        data={
-                            "analysis_id": analysis_id,
-                            "report_job_id": report_handoff.get("job_id"),
-                            "report_queue_name": report_handoff.get("queue_name"),
-                            "report_job_type": report_handoff.get("job_type"),
-                        },
-                    )
+                    if (
+                        task_payload.report_profile == "client_audit"
+                        and task_payload.report_complexity == "hydrated"
+                    ):
+                        preparation = await self._client_audit_preparation_runtime.create_preparation(
+                            business_id=task_payload.business_id,
+                            analysis_id=analysis_id,
+                            output_format="pdf",
+                            locale="es-ES",
+                            template_id=None,
+                            source_job_id=str(job_id),
+                            source_mode=task_payload.source_mode,
+                            selected_source=task_payload.selected_source,
+                            report_profile=task_payload.report_profile,
+                            report_complexity=task_payload.report_complexity,
+                            report_cadence=task_payload.report_cadence,
+                            study_resolution_mode=task_payload.study_resolution_mode,
+                            include_competitors=task_payload.include_competitors,
+                            include_geogrid=task_payload.include_geogrid,
+                        )
+                        preparation_id = str(preparation.get("report_preparation_id") or "").strip()
+                        preparation_payload = ReportPreparationTaskPayload(
+                            preparation_id=preparation_id,
+                            business_id=task_payload.business_id,
+                            analysis_id=analysis_id,
+                            output_format="pdf",
+                            locale="es-ES",
+                            source_job_id=str(job_id),
+                            source_mode=task_payload.source_mode,
+                            selected_source=task_payload.selected_source,
+                            report_profile=task_payload.report_profile,
+                            report_complexity=task_payload.report_complexity,
+                            report_cadence=task_payload.report_cadence,
+                            study_resolution_mode=task_payload.study_resolution_mode,
+                            include_competitors=task_payload.include_competitors,
+                            include_geogrid=task_payload.include_geogrid,
+                        )
+                        report_preparation_handoff = (
+                            await self._service.job_service.enqueue_report_prepare_job(
+                                task_payload=preparation_payload
+                            )
+                        )
+                        await self._job_broker.append_event(
+                            job_id=job_id,
+                            stage="study_hydration_queued",
+                            message="Hydrated client audit preparation queued after analysis completion.",
+                            status=AnalysisJobStatus.RUNNING,
+                            data={
+                                "analysis_id": analysis_id,
+                                "report_preparation_id": preparation_id,
+                                "preparation_job_id": report_preparation_handoff.get("job_id"),
+                                "report_queue_name": report_preparation_handoff.get("queue_name"),
+                                "report_job_type": report_preparation_handoff.get("job_type"),
+                            },
+                        )
+                    else:
+                        report_payload = ReportGenerateTaskPayload(
+                            business_id=task_payload.business_id,
+                            analysis_id=analysis_id,
+                            output_format="pdf",
+                            locale="es-ES",
+                            source_job_id=str(job_id),
+                            source_mode=task_payload.source_mode,
+                            selected_source=task_payload.selected_source,
+                            report_profile=task_payload.report_profile,
+                            report_complexity=task_payload.report_complexity,
+                            report_cadence=task_payload.report_cadence,
+                            study_resolution_mode=task_payload.study_resolution_mode,
+                            include_competitors=task_payload.include_competitors,
+                            include_geogrid=task_payload.include_geogrid,
+                        )
+                        report_handoff = await self._service.job_service.enqueue_report_generate_job(
+                            task_payload=report_payload
+                        )
+                        await self._job_broker.append_event(
+                            job_id=job_id,
+                            stage="report_handoff_queued",
+                            message="Report job enqueued after analysis completion.",
+                            status=AnalysisJobStatus.RUNNING,
+                            data={
+                                "analysis_id": analysis_id,
+                                "report_job_id": report_handoff.get("job_id"),
+                                "report_queue_name": report_handoff.get("queue_name"),
+                                "report_job_type": report_handoff.get("job_type"),
+                            },
+                        )
                 except Exception as report_exc:  # noqa: BLE001
                     await self._job_broker.append_event(
                         job_id=job_id,
@@ -179,6 +248,12 @@ class AnalysisWorker(QueuedJobWorkerBase):
                 "worker": "analysis",
                 "source_mode": task_payload.source_mode,
                 "selected_source": task_payload.selected_source,
+                "report_profile": task_payload.report_profile,
+                "report_complexity": task_payload.report_complexity,
+                "report_cadence": task_payload.report_cadence,
+                "study_resolution_mode": task_payload.study_resolution_mode,
+                "include_competitors": task_payload.include_competitors,
+                "include_geogrid": task_payload.include_geogrid,
             }
             if report_handoff:
                 result["report_handoff"] = {
@@ -186,6 +261,14 @@ class AnalysisWorker(QueuedJobWorkerBase):
                     "queue_name": report_handoff.get("queue_name"),
                     "job_type": report_handoff.get("job_type"),
                     "status": report_handoff.get("status"),
+                }
+            if report_preparation_handoff:
+                result["study_hydration_handoff"] = {
+                    "preparation_job_id": report_preparation_handoff.get("job_id"),
+                    "queue_name": report_preparation_handoff.get("queue_name"),
+                    "job_type": report_preparation_handoff.get("job_type"),
+                    "status": report_preparation_handoff.get("status"),
+                    "report_preparation_id": preparation_id,
                 }
             await self._job_broker.mark_done(job_id=job_id, result=result)
             LOGGER.info("Analysis job done=%s business_id=%s", job_id, task_payload.business_id)

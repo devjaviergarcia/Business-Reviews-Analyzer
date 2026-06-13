@@ -187,7 +187,9 @@ class BusinessQueryService:
         if analysis_doc is None:
             raise LookupError(f"Analysis for business '{business_id}' not found.")
 
-        report_payload = analysis_doc.get("advanced_report")
+        report_payload = analysis_doc.get("final_report_payload")
+        if not isinstance(report_payload, dict):
+            report_payload = analysis_doc.get("advanced_report")
         if not isinstance(report_payload, dict):
             raise LookupError(
                 f"Structured report for business '{business_id}' is not available yet."
@@ -198,6 +200,9 @@ class BusinessQueryService:
             "analysis_id": str(analysis_doc.get("_id")),
             "analysis_created_at": analysis_doc.get("created_at"),
             "report_generated_at": analysis_doc.get("report_generated_at"),
+            "report_profile": analysis_doc.get("report_profile"),
+            "report_complexity": analysis_doc.get("report_complexity"),
+            "report_cadence": analysis_doc.get("report_cadence"),
             "report_intro_context": analysis_doc.get("report_intro_context"),
             "report_artifacts": analysis_doc.get("report_artifacts"),
             "report": report_payload,

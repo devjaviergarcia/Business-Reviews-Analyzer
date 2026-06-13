@@ -24,6 +24,9 @@ class EnqueueBenchmarkStudyJobUseCase:
         limit: int = 100,
         source: str = "auto_live_google_maps",
         title: str | None = None,
+        execution_mode: str | None = None,
+        live_display_mode: str | None = None,
+        requested_by: str | None = None,
     ) -> dict[str, Any]:
         await self._ensure_indexes()
         return await self._study_job_enqueue_runtime.enqueue_benchmark_study_job(
@@ -33,4 +36,7 @@ class EnqueueBenchmarkStudyJobUseCase:
             limit=limit,
             source=source,
             title=title,
+            execution_mode=execution_mode,
+            live_display_mode=live_display_mode,
+            requested_by=requested_by,
         )

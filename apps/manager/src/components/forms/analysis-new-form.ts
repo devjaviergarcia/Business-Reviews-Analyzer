@@ -17,6 +17,12 @@ export type AnalysisNewFormValues = {
   stableRounds: string;
   tripadvisorMaxPages: string;
   tripadvisorPagesPercent: string;
+  reportProfile: "classic" | "client_audit";
+  reportComplexity: "basic" | "hydrated";
+  reportCadence: "one_off" | "monthly" | "quarterly";
+  studyResolutionMode: "auto_ttl" | "reuse_latest" | "refresh_now";
+  includeCompetitors: boolean;
+  includeGeogrid: boolean;
 };
 
 type AnalysisNewFormOptions = {
@@ -107,6 +113,33 @@ export function createAnalysisNewForm(options: AnalysisNewFormOptions): Analysis
     step: "0.1",
     placeholder: "opcional",
   });
+  const reportProfileSelect = createElement("select", "atom-input") as HTMLSelectElement;
+  reportProfileSelect.innerHTML = `
+    <option value="client_audit" selected>Client audit</option>
+    <option value="classic">Classic</option>
+  `;
+  const launchResearchInput = createElement("input", "atom-input") as HTMLInputElement;
+  launchResearchInput.type = "checkbox";
+  launchResearchInput.checked = false;
+  const reportCadenceSelect = createElement("select", "atom-input") as HTMLSelectElement;
+  reportCadenceSelect.innerHTML = `
+    <option value="one_off" selected>One-off</option>
+    <option value="monthly">Monthly</option>
+    <option value="quarterly">Quarterly</option>
+  `;
+  const studyResolutionModeSelect = createElement("select", "atom-input") as HTMLSelectElement;
+  studyResolutionModeSelect.innerHTML = `
+    <option value="auto_ttl" selected>Auto TTL</option>
+    <option value="reuse_latest">Reuse latest</option>
+    <option value="refresh_now">Refresh now</option>
+  `;
+  const includeCompetitorsInput = createElement("input", "atom-input") as HTMLInputElement;
+  includeCompetitorsInput.type = "checkbox";
+  includeCompetitorsInput.checked = true;
+  const includeGeogridInput = createElement("input", "atom-input") as HTMLInputElement;
+  includeGeogridInput.type = "checkbox";
+  includeGeogridInput.checked = false;
+  const researchHelp = createElement("div", "muted");
 
   appendLabeled(form, "Nombre", nameInput);
   appendLabeled(form, "Fuentes para el pipeline", sourceScopeSelect);
@@ -127,6 +160,21 @@ export function createAnalysisNewForm(options: AnalysisNewFormOptions): Analysis
     "TripAdvisor pages percent",
     tripadvisorPagesPercentInput
   );
+  appendLabeled(form, "Perfil de reporte", reportProfileSelect);
+  appendLabeled(form, "Lanzar research", launchResearchInput);
+  const researchHelpRow = appendLabeled(form, "Modo research", researchHelp);
+  appendLabeled(form, "Cadencia", reportCadenceSelect);
+  const studyResolutionModeRow = appendLabeled(
+    form,
+    "Resolución estudio",
+    studyResolutionModeSelect
+  );
+  const includeCompetitorsRow = appendLabeled(
+    form,
+    "Usar benchmark / competidores",
+    includeCompetitorsInput
+  );
+  const includeGeogridRow = appendLabeled(form, "Incluir geogrid", includeGeogridInput);
 
   const updateFieldVisibility = (): void => {
     const sourceScope = sourceScopeSelect.value as "all" | "google_maps" | "tripadvisor";
@@ -135,6 +183,8 @@ export function createAnalysisNewForm(options: AnalysisNewFormOptions): Analysis
     const strategy = strategySelect.value;
     const isInteractive = strategy === "interactive";
     const isForceEnabled = forceInput.checked;
+    const isClassic = reportProfileSelect.value === "classic";
+    const shouldLaunchResearch = !isClassic && launchResearchInput.checked;
 
     toggleRow(googleNameRow, includesGoogle);
     toggleRow(strategyRow, includesGoogle);
@@ -158,11 +208,46 @@ export function createAnalysisNewForm(options: AnalysisNewFormOptions): Analysis
         "scroll_copy es el modo recomendado. Scroll rounds es el tope duro de scrolls. " +
         "Stable rounds es cuántas vueltas seguidas sin reseñas nuevas esperamos antes de parar.";
     }
+
+    launchResearchInput.disabled = isClassic;
+    studyResolutionModeSelect.disabled = !shouldLaunchResearch;
+    includeCompetitorsInput.disabled = !shouldLaunchResearch;
+    includeGeogridInput.disabled = !shouldLaunchResearch;
+    toggleRow(researchHelpRow, true);
+    toggleRow(studyResolutionModeRow, shouldLaunchResearch);
+    toggleRow(includeCompetitorsRow, shouldLaunchResearch);
+    toggleRow(includeGeogridRow, shouldLaunchResearch);
+
+    if (isClassic) {
+      launchResearchInput.checked = false;
+      studyResolutionModeSelect.value = "auto_ttl";
+      includeCompetitorsInput.checked = false;
+      includeGeogridInput.checked = false;
+      researchHelp.textContent = "Classic genera el reporte actual y no lanza research comercial.";
+      return;
+    }
+
+    if (!shouldLaunchResearch) {
+      studyResolutionModeSelect.value = "auto_ttl";
+      includeCompetitorsInput.checked = false;
+      includeGeogridInput.checked = false;
+      researchHelp.textContent =
+        "Sin research, al terminar el scrape se lanzará el client audit base usando reseñas y análisis guardados.";
+      return;
+    }
+
+    if (!includeCompetitorsInput.checked) {
+      includeCompetitorsInput.checked = true;
+    }
+    researchHelp.textContent =
+      "Con research, al cerrar el scrape se encadena la hidratación comercial: benchmark reutilizable o refresh, competidores y geogrid opcional.";
   };
 
   sourceScopeSelect.addEventListener("change", updateFieldVisibility);
   strategySelect.addEventListener("change", updateFieldVisibility);
   forceInput.addEventListener("change", updateFieldVisibility);
+  reportProfileSelect.addEventListener("change", updateFieldVisibility);
+  launchResearchInput.addEventListener("change", updateFieldVisibility);
   updateFieldVisibility();
 
   const actions = createElement("div", "form-actions");
@@ -173,6 +258,9 @@ export function createAnalysisNewForm(options: AnalysisNewFormOptions): Analysis
 
   form.addEventListener("submit", (event) => {
     event.preventDefault();
+    const reportProfile = reportProfileSelect.value as "classic" | "client_audit";
+    const reportComplexity =
+      reportProfile === "client_audit" && launchResearchInput.checked ? "hydrated" : "basic";
     options.onSubmit({
       name: nameInput.value.trim(),
       sourceScope: sourceScopeSelect.value as "all" | "google_maps" | "tripadvisor",
@@ -187,6 +275,15 @@ export function createAnalysisNewForm(options: AnalysisNewFormOptions): Analysis
       stableRounds: stableInput.value,
       tripadvisorMaxPages: tripadvisorMaxPagesInput.value,
       tripadvisorPagesPercent: tripadvisorPagesPercentInput.value,
+      reportProfile,
+      reportComplexity,
+      reportCadence: reportCadenceSelect.value as "one_off" | "monthly" | "quarterly",
+      studyResolutionMode: studyResolutionModeSelect.value as
+        | "auto_ttl"
+        | "reuse_latest"
+        | "refresh_now",
+      includeCompetitors: includeCompetitorsInput.checked,
+      includeGeogrid: includeGeogridInput.checked,
     });
   });
 

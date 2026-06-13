@@ -111,6 +111,12 @@ def test_tripadvisor_enqueue_forces_live_and_launches_live_session() -> None:
             sources=["tripadvisor"],
             execution_mode="automatic",
             live_display_mode="xvfb",
+            report_profile="client_audit",
+            report_complexity="hydrated",
+            report_cadence="one_off",
+            study_resolution_mode="refresh_now",
+            include_competitors=True,
+            include_geogrid=True,
         )
     )
 
@@ -122,10 +128,19 @@ def test_tripadvisor_enqueue_forces_live_and_launches_live_session() -> None:
     assert result["effective_execution_mode_by_source"]["tripadvisor"] == "live"
     assert result["live_display_mode"] == "xvfb"
     assert result["scrape_round_id"] == "round-1"
+    assert result["analysis_request"]["report_profile"] == "client_audit"
+    assert result["analysis_request"]["report_complexity"] == "hydrated"
+    assert result["analysis_request"]["study_resolution_mode"] == "refresh_now"
+    assert result["analysis_request"]["include_competitors"] is True
+    assert result["analysis_request"]["include_geogrid"] is True
     assert result["jobs_by_source"]["tripadvisor"]["tripadvisor_live_session"]["launched"] is True
     assert live_launcher.calls[0]["job_id"] == "job-1"
     assert live_launcher.calls[0]["live_display_mode"] == "xvfb"
     assert round_runtime.register_calls[0]["source_job_id"] == "job-1"
+    assert round_runtime.open_calls[0]["analysis_request"]["report_profile"] == "client_audit"
+    assert round_runtime.open_calls[0]["analysis_request"]["report_complexity"] == "hydrated"
+    assert round_runtime.open_calls[0]["analysis_request"]["study_resolution_mode"] == "refresh_now"
+    assert round_runtime.open_calls[0]["analysis_request"]["include_geogrid"] is True
 
 
 def test_tripadvisor_relaunch_forces_live_and_launches_live_session() -> None:

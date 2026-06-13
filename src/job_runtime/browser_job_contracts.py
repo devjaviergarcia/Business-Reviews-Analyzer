@@ -16,7 +16,9 @@ DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET: BrowserRuntimeTarget = "local_browser"
 DEFAULT_SERVER_WORKER_RUNTIME_TARGET: BrowserRuntimeTarget = "server_worker"
 DEFAULT_BROWSER_FALLBACK_POLICY: BrowserFallbackPolicy = "suggest_live"
 
-LOCAL_BROWSER_JOB_TYPES = frozenset({"business_analyze", "crm_lead_discovery", "geo_grid_study"})
+LOCAL_BROWSER_JOB_TYPES = frozenset(
+    {"business_analyze", "crm_lead_discovery", "geo_grid_study", "benchmark_local_study"}
+)
 LOCAL_BROWSER_QUEUE_NAMES = frozenset({"scrape", "scrape_google_maps", "scrape_tripadvisor"})
 
 

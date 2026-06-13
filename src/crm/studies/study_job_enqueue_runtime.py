@@ -5,6 +5,7 @@ from typing import Any, Awaitable, Callable
 from src.crm.benchmark import normalize_grid_size
 from src.job_runtime.browser_job_contracts import (
     DEFAULT_BROWSER_EXECUTION_MODE,
+    DEFAULT_BROWSER_LIVE_DISPLAY_MODE,
     DEFAULT_BROWSER_FALLBACK_POLICY,
     DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
 )
@@ -66,6 +67,9 @@ class StudyJobEnqueueRuntime:
         limit: int = 100,
         source: str = "auto_live_google_maps",
         title: str | None = None,
+        execution_mode: str | None = None,
+        live_display_mode: str | None = None,
+        requested_by: str | None = None,
     ) -> dict[str, Any]:
         normalized_source = str(source or "").strip().lower()
         if normalized_source in self._live_google_discovery_aliases:
@@ -95,8 +99,17 @@ class StudyJobEnqueueRuntime:
         payload = base_payload.model_copy(update={"benchmark_run_id": benchmark_run_id})
         queued = await self._enqueue_job(
             task_payload=payload,
-            queue_name="crm",
+            queue_name="scrape_google_maps",
             job_type="benchmark_local_study",
+            source="google_maps",
+            runtime_target=DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
+            execution_mode=str(execution_mode or DEFAULT_BROWSER_EXECUTION_MODE).strip().lower()
+            or DEFAULT_BROWSER_EXECUTION_MODE,
+            live_display_mode=str(live_display_mode or DEFAULT_BROWSER_LIVE_DISPLAY_MODE).strip().lower()
+            or DEFAULT_BROWSER_LIVE_DISPLAY_MODE,
+            requested_by=str(requested_by or "crm_benchmark_api").strip().lower() or "crm_benchmark_api",
+            fallback_policy=DEFAULT_BROWSER_FALLBACK_POLICY,
+            source_display_name="Google Maps",
         )
         await self._record_event(
             event_type="benchmark_study_job_queued",
@@ -108,6 +121,8 @@ class StudyJobEnqueueRuntime:
                 "category": payload.category,
                 "limit": payload.limit,
                 "source": payload.source,
+                "execution_mode": queued.get("execution_mode"),
+                "live_display_mode": queued.get("live_display_mode"),
             },
         )
         queued["benchmark_run_id"] = benchmark_run_id
@@ -124,6 +139,9 @@ class StudyJobEnqueueRuntime:
         grid_spacing_km: float | None = None,
         uule_radius_m: int | None = None,
         throttle_ms: int | None = None,
+        execution_mode: str | None = None,
+        live_display_mode: str | None = None,
+        requested_by: str | None = None,
     ) -> dict[str, Any]:
         normalized_keyword = str(keyword or "").strip()
         if not normalized_keyword:
@@ -185,8 +203,11 @@ class StudyJobEnqueueRuntime:
             job_type="geo_grid_study",
             source="google_maps",
             runtime_target=DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
-            execution_mode=DEFAULT_BROWSER_EXECUTION_MODE,
-            requested_by="crm_geo_grid_api",
+            execution_mode=str(execution_mode or DEFAULT_BROWSER_EXECUTION_MODE).strip().lower()
+            or DEFAULT_BROWSER_EXECUTION_MODE,
+            live_display_mode=str(live_display_mode or DEFAULT_BROWSER_LIVE_DISPLAY_MODE).strip().lower()
+            or DEFAULT_BROWSER_LIVE_DISPLAY_MODE,
+            requested_by=str(requested_by or "crm_geo_grid_api").strip().lower() or "crm_geo_grid_api",
             fallback_policy=DEFAULT_BROWSER_FALLBACK_POLICY,
             source_display_name="Google Maps",
         )
@@ -207,6 +228,8 @@ class StudyJobEnqueueRuntime:
                 "grid_spacing_km": safe_grid_spacing_km,
                 "uule_radius_m": safe_uule_radius_m,
                 "throttle_ms": safe_throttle_ms,
+                "execution_mode": queued.get("execution_mode"),
+                "live_display_mode": queued.get("live_display_mode"),
             },
         )
         queued["geo_grid_run_id"] = geo_grid_run_id

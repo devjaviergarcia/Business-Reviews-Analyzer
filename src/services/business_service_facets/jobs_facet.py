@@ -16,6 +16,7 @@ class BusinessServiceJobsFacet:
         root_business_id: str | None,
         requested_sources: tuple[str, ...] | list[str],
         requested_by: str | None,
+        analysis_request: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return await self._browser_scrape_round_runtime.open_round(
             canonical_name=canonical_name,
@@ -23,6 +24,7 @@ class BusinessServiceJobsFacet:
             root_business_id=root_business_id,
             requested_sources=requested_sources,
             requested_by=requested_by,
+            analysis_request=analysis_request,
         )
 
     async def _register_browser_scrape_round_source_job(
@@ -132,6 +134,12 @@ class BusinessServiceJobsFacet:
         tripadvisor_name: str | None = None,
         execution_mode: str | None = None,
         live_display_mode: str | None = None,
+        report_profile: str | None = None,
+        report_complexity: str | None = None,
+        report_cadence: str | None = None,
+        study_resolution_mode: str | None = None,
+        include_competitors: bool = True,
+        include_geogrid: bool = False,
         requested_by: str | None = None,
     ) -> dict:
         if self._enqueue_browser_scrape_jobs_use_case is not None:
@@ -150,6 +158,12 @@ class BusinessServiceJobsFacet:
                 tripadvisor_name=tripadvisor_name,
                 execution_mode=execution_mode,
                 live_display_mode=live_display_mode,
+                report_profile=report_profile,
+                report_complexity=report_complexity,
+                report_cadence=report_cadence,
+                study_resolution_mode=study_resolution_mode,
+                include_competitors=include_competitors,
+                include_geogrid=include_geogrid,
                 requested_by=requested_by,
             )
         return await self._browser_job_control_runtime.enqueue_business_scrape_jobs(
@@ -167,6 +181,12 @@ class BusinessServiceJobsFacet:
             tripadvisor_name=tripadvisor_name,
             execution_mode=execution_mode,
             live_display_mode=live_display_mode,
+            report_profile=report_profile,
+            report_complexity=report_complexity,
+            report_cadence=report_cadence,
+            study_resolution_mode=study_resolution_mode,
+            include_competitors=include_competitors,
+            include_geogrid=include_geogrid,
             requested_by=requested_by,
         )
 
@@ -201,6 +221,12 @@ class BusinessServiceJobsFacet:
         source_job_id: str | None = None,
         source_mode: str | None = None,
         selected_source: str | None = None,
+        report_profile: str | None = None,
+        report_complexity: str | None = None,
+        report_cadence: str | None = None,
+        study_resolution_mode: str | None = None,
+        include_competitors: bool = True,
+        include_geogrid: bool = False,
     ) -> dict[str, Any]:
         return await self._business_job_runtime.enqueue_business_analysis_generate_job(
             business_id=business_id,
@@ -211,6 +237,12 @@ class BusinessServiceJobsFacet:
             source_job_id=source_job_id,
             source_mode=source_mode,
             selected_source=selected_source,
+            report_profile=report_profile,
+            report_complexity=report_complexity,
+            report_cadence=report_cadence,
+            study_resolution_mode=study_resolution_mode,
+            include_competitors=include_competitors,
+            include_geogrid=include_geogrid,
         )
 
     async def get_scrape_job(self, job_id: str) -> dict:
@@ -366,6 +398,15 @@ class BusinessServiceJobsFacet:
             job_type_filter="analysis_generate",
         )
 
+    async def get_latest_analysis_job_for_business(
+        self,
+        *,
+        business_id: str,
+    ) -> dict[str, Any] | None:
+        return await self.job_service.find_latest_analysis_job_for_business(
+            business_id=business_id,
+        )
+
     async def list_report_jobs(
         self,
         *,
@@ -378,7 +419,7 @@ class BusinessServiceJobsFacet:
             page_size=page_size,
             status_filter=status_filter,
             queue_names=["report"],
-            job_type_filter="report_generate",
+            job_type_filter=None,
         )
 
     def resolve_report_artifact_path(self, *, path: str) -> Path:

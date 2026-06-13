@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal, Mapping
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.job_runtime.browser_job_contracts import (
     DEFAULT_BROWSER_EXECUTION_MODE,
@@ -35,6 +35,7 @@ JobType = Literal[
     "business_analyze",
     "business_reanalyze",
     "analysis_generate",
+    "report_prepare",
     "report_generate",
     "crm_lead_discovery",
     "geo_grid_study",
@@ -46,6 +47,10 @@ JobType = Literal[
 ReportFormat = Literal["pdf", "typst", "html", "json"]
 ReportSourceMode = Literal["auto", "combined", "single"]
 ReportSelectedSource = Literal["google_maps", "tripadvisor"]
+ReportProfile = Literal["classic", "client_audit"]
+ReportComplexity = Literal["basic", "hydrated"]
+ReportCadence = Literal["one_off", "monthly", "quarterly"]
+StudyResolutionMode = Literal["auto_ttl", "reuse_latest", "refresh_now"]
 CRMLeadPipelineSource = Literal["google_maps", "tripadvisor"]
 
 
@@ -239,6 +244,12 @@ class AnalysisGenerateTaskPayload(BaseModel):
     scrape_round_id: str | None = None
     source_mode: ReportSourceMode = "auto"
     selected_source: ReportSelectedSource | None = None
+    report_profile: ReportProfile = "client_audit"
+    report_complexity: ReportComplexity = "basic"
+    report_cadence: ReportCadence = "one_off"
+    study_resolution_mode: StudyResolutionMode = "auto_ttl"
+    include_competitors: bool = True
+    include_geogrid: bool = False
 
     model_config = ConfigDict(extra="forbid")
 
@@ -290,6 +301,44 @@ class AnalysisGenerateTaskPayload(BaseModel):
         cleaned = str(value).strip().lower()
         return cleaned or None
 
+    @field_validator("report_profile", mode="before")
+    @classmethod
+    def normalize_report_profile(cls, value: object) -> object:
+        cleaned = str(value or "client_audit").strip().lower()
+        return cleaned or "client_audit"
+
+    @field_validator("report_complexity", mode="before")
+    @classmethod
+    def normalize_report_complexity(cls, value: object) -> object:
+        cleaned = str(value or "basic").strip().lower()
+        return cleaned or "basic"
+
+    @field_validator("report_cadence", mode="before")
+    @classmethod
+    def normalize_report_cadence(cls, value: object) -> object:
+        cleaned = str(value or "one_off").strip().lower()
+        return cleaned or "one_off"
+
+    @field_validator("study_resolution_mode", mode="before")
+    @classmethod
+    def normalize_study_resolution_mode(cls, value: object) -> object:
+        cleaned = str(value or "auto_ttl").strip().lower()
+        return cleaned or "auto_ttl"
+
+    @model_validator(mode="after")
+    def normalize_report_shape(self) -> "AnalysisGenerateTaskPayload":
+        if self.report_profile == "classic":
+            self.report_complexity = "basic"
+            self.study_resolution_mode = "auto_ttl"
+            self.include_competitors = False
+            self.include_geogrid = False
+            return self
+        if self.report_complexity != "hydrated":
+            self.study_resolution_mode = "auto_ttl"
+            self.include_competitors = False
+            self.include_geogrid = False
+        return self
+
 
 class AnalysisGenerateJobEnvelope(BaseModel):
     queue_name: Literal["analysis"] = "analysis"
@@ -308,6 +357,13 @@ class ReportGenerateTaskPayload(BaseModel):
     source_job_id: str | None = None
     source_mode: ReportSourceMode = "auto"
     selected_source: ReportSelectedSource | None = None
+    report_profile: ReportProfile = "client_audit"
+    report_complexity: ReportComplexity = "basic"
+    report_cadence: ReportCadence = "one_off"
+    study_resolution_mode: StudyResolutionMode = "auto_ttl"
+    include_competitors: bool = True
+    include_geogrid: bool = False
+    preparation_id: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -343,11 +399,157 @@ class ReportGenerateTaskPayload(BaseModel):
         cleaned = str(value).strip().lower()
         return cleaned or None
 
+    @field_validator("report_profile", mode="before")
+    @classmethod
+    def normalize_report_profile(cls, value: object) -> object:
+        cleaned = str(value or "client_audit").strip().lower()
+        return cleaned or "client_audit"
+
+    @field_validator("report_complexity", mode="before")
+    @classmethod
+    def normalize_report_complexity(cls, value: object) -> object:
+        cleaned = str(value or "basic").strip().lower()
+        return cleaned or "basic"
+
+    @field_validator("report_cadence", mode="before")
+    @classmethod
+    def normalize_report_cadence(cls, value: object) -> object:
+        cleaned = str(value or "one_off").strip().lower()
+        return cleaned or "one_off"
+
+    @field_validator("study_resolution_mode", mode="before")
+    @classmethod
+    def normalize_study_resolution_mode(cls, value: object) -> object:
+        cleaned = str(value or "auto_ttl").strip().lower()
+        return cleaned or "auto_ttl"
+
+    @field_validator("preparation_id", mode="before")
+    @classmethod
+    def normalize_preparation_id(cls, value: object) -> object:
+        if value is None:
+            return None
+        cleaned = str(value).strip()
+        return cleaned or None
+
+    @model_validator(mode="after")
+    def normalize_report_shape(self) -> "ReportGenerateTaskPayload":
+        if self.report_profile == "classic":
+            self.report_complexity = "basic"
+            self.study_resolution_mode = "auto_ttl"
+            self.include_competitors = False
+            self.include_geogrid = False
+            self.preparation_id = None
+            return self
+        if self.report_complexity != "hydrated":
+            self.study_resolution_mode = "auto_ttl"
+            self.include_competitors = False
+            self.include_geogrid = False
+            self.preparation_id = None
+        return self
+
+
+class ReportPreparationTaskPayload(BaseModel):
+    preparation_id: str
+    business_id: str
+    analysis_id: str
+    output_format: ReportFormat = "pdf"
+    locale: str | None = None
+    template_id: str | None = None
+    source_job_id: str | None = None
+    source_mode: ReportSourceMode = "auto"
+    selected_source: ReportSelectedSource | None = None
+    report_profile: ReportProfile = "client_audit"
+    report_complexity: ReportComplexity = "hydrated"
+    report_cadence: ReportCadence = "one_off"
+    study_resolution_mode: StudyResolutionMode = "auto_ttl"
+    include_competitors: bool = True
+    include_geogrid: bool = False
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("preparation_id", "business_id", "analysis_id")
+    @classmethod
+    def validate_required_ids(cls, value: str) -> str:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            raise ValueError("Required id field cannot be empty.")
+        return cleaned
+
+    @field_validator("output_format", mode="before")
+    @classmethod
+    def normalize_output_format(cls, value: object) -> object:
+        if value is None:
+            return "pdf"
+        cleaned = str(value).strip().lower()
+        return cleaned or "pdf"
+
+    @field_validator("source_mode", mode="before")
+    @classmethod
+    def normalize_source_mode(cls, value: object) -> object:
+        if value is None:
+            return "auto"
+        cleaned = str(value).strip().lower()
+        return cleaned or "auto"
+
+    @field_validator("selected_source", mode="before")
+    @classmethod
+    def normalize_selected_source(cls, value: object) -> object:
+        if value is None:
+            return None
+        cleaned = str(value).strip().lower()
+        return cleaned or None
+
+    @field_validator("report_profile", mode="before")
+    @classmethod
+    def normalize_report_profile(cls, value: object) -> object:
+        cleaned = str(value or "client_audit").strip().lower()
+        return cleaned or "client_audit"
+
+    @field_validator("report_complexity", mode="before")
+    @classmethod
+    def normalize_report_complexity(cls, value: object) -> object:
+        cleaned = str(value or "hydrated").strip().lower()
+        return cleaned or "hydrated"
+
+    @field_validator("report_cadence", mode="before")
+    @classmethod
+    def normalize_report_cadence(cls, value: object) -> object:
+        cleaned = str(value or "one_off").strip().lower()
+        return cleaned or "one_off"
+
+    @field_validator("study_resolution_mode", mode="before")
+    @classmethod
+    def normalize_study_resolution_mode(cls, value: object) -> object:
+        cleaned = str(value or "auto_ttl").strip().lower()
+        return cleaned or "auto_ttl"
+
+    @model_validator(mode="after")
+    def normalize_report_shape(self) -> "ReportPreparationTaskPayload":
+        if self.report_profile == "classic":
+            self.report_complexity = "basic"
+            self.study_resolution_mode = "auto_ttl"
+            self.include_competitors = False
+            self.include_geogrid = False
+            return self
+        if self.report_complexity != "hydrated":
+            self.study_resolution_mode = "auto_ttl"
+            self.include_competitors = False
+            self.include_geogrid = False
+        return self
+
 
 class ReportGenerateJobEnvelope(BaseModel):
     queue_name: Literal["report"] = "report"
     job_type: Literal["report_generate"] = "report_generate"
     payload: ReportGenerateTaskPayload
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ReportPreparationJobEnvelope(BaseModel):
+    queue_name: Literal["report"] = "report"
+    job_type: Literal["report_prepare"] = "report_prepare"
+    payload: ReportPreparationTaskPayload
 
     model_config = ConfigDict(extra="forbid")
 
@@ -520,7 +722,7 @@ class CRMLeadDiscoveryJobEnvelope(BaseModel):
 
 
 class BenchmarkLocalStudyJobEnvelope(BaseModel):
-    queue_name: Literal["crm"] = "crm"
+    queue_name: Literal["crm", "scrape_google_maps"] = "scrape_google_maps"
     job_type: Literal["benchmark_local_study"] = "benchmark_local_study"
     payload: BenchmarkLocalStudyTaskPayload
 
@@ -554,6 +756,7 @@ class CRMCampaignDispatchJobEnvelope(BaseModel):
 WorkerTaskPayload = (
     AnalyzeBusinessTaskPayload
     | AnalysisGenerateTaskPayload
+    | ReportPreparationTaskPayload
     | ReportGenerateTaskPayload
     | CRMLeadDiscoveryTaskPayload
     | GeoGridStudyTaskPayload
@@ -637,6 +840,49 @@ def parse_analysis_generate_payload(job_doc: Mapping[str, Any]) -> AnalysisGener
                 if job_doc.get("selected_source") is not None
                 else None
             ),
+            "report_profile": str(job_doc.get("report_profile") or "client_audit"),
+            "report_complexity": str(job_doc.get("report_complexity") or "basic"),
+            "report_cadence": str(job_doc.get("report_cadence") or "one_off"),
+            "study_resolution_mode": str(job_doc.get("study_resolution_mode") or "auto_ttl"),
+            "include_competitors": bool(job_doc.get("include_competitors", True)),
+            "include_geogrid": bool(job_doc.get("include_geogrid", False)),
+        }
+    )
+
+
+def parse_report_prepare_payload(job_doc: Mapping[str, Any]) -> ReportPreparationTaskPayload:
+    raw_payload = job_doc.get("payload")
+    if isinstance(raw_payload, dict):
+        envelope = ReportPreparationJobEnvelope.model_validate(
+            {
+                "queue_name": str(job_doc.get("queue_name") or "report"),
+                "job_type": str(job_doc.get("job_type") or "report_prepare"),
+                "payload": raw_payload,
+            }
+        )
+        return envelope.payload
+
+    return ReportPreparationTaskPayload.model_validate(
+        {
+            "preparation_id": str(job_doc.get("preparation_id", "")).strip(),
+            "business_id": str(job_doc.get("business_id", "")).strip(),
+            "analysis_id": str(job_doc.get("analysis_id", "")).strip(),
+            "output_format": str(job_doc.get("output_format") or job_doc.get("format") or "pdf"),
+            "locale": str(job_doc.get("locale") or "").strip() or None,
+            "template_id": str(job_doc.get("template_id") or "").strip() or None,
+            "source_job_id": str(job_doc.get("source_job_id") or "").strip() or None,
+            "source_mode": str(job_doc.get("source_mode") or "auto"),
+            "selected_source": (
+                str(job_doc.get("selected_source")).strip()
+                if job_doc.get("selected_source") is not None
+                else None
+            ),
+            "report_profile": str(job_doc.get("report_profile") or "client_audit"),
+            "report_complexity": str(job_doc.get("report_complexity") or "hydrated"),
+            "report_cadence": str(job_doc.get("report_cadence") or "one_off"),
+            "study_resolution_mode": str(job_doc.get("study_resolution_mode") or "auto_ttl"),
+            "include_competitors": bool(job_doc.get("include_competitors", True)),
+            "include_geogrid": bool(job_doc.get("include_geogrid", False)),
         }
     )
 
@@ -668,6 +914,13 @@ def parse_report_generate_payload(job_doc: Mapping[str, Any]) -> ReportGenerateT
                 if job_doc.get("selected_source") is not None
                 else None
             ),
+            "report_profile": str(job_doc.get("report_profile") or "client_audit"),
+            "report_complexity": str(job_doc.get("report_complexity") or "basic"),
+            "report_cadence": str(job_doc.get("report_cadence") or "one_off"),
+            "study_resolution_mode": str(job_doc.get("study_resolution_mode") or "auto_ttl"),
+            "include_competitors": bool(job_doc.get("include_competitors", True)),
+            "include_geogrid": bool(job_doc.get("include_geogrid", False)),
+            "preparation_id": str(job_doc.get("preparation_id") or "").strip() or None,
         }
     )
 
@@ -677,7 +930,7 @@ def parse_crm_lead_discovery_payload(job_doc: Mapping[str, Any]) -> CRMLeadDisco
     if isinstance(raw_payload, dict):
         envelope = CRMLeadDiscoveryJobEnvelope.model_validate(
             {
-                "queue_name": str(job_doc.get("queue_name") or "crm"),
+                "queue_name": str(job_doc.get("queue_name") or "scrape_google_maps"),
                 "job_type": str(job_doc.get("job_type") or "crm_lead_discovery"),
                 "payload": raw_payload,
             }
@@ -790,6 +1043,7 @@ def build_worker_job_envelope(
 ) -> (
     AnalyzeBusinessJobEnvelope
     | AnalysisGenerateJobEnvelope
+    | ReportPreparationJobEnvelope
     | ReportGenerateJobEnvelope
     | CRMLeadDiscoveryJobEnvelope
     | GeoGridStudyJobEnvelope
@@ -818,6 +1072,15 @@ def build_worker_job_envelope(
             payload=task_payload,
         )
 
+    if normalized_queue == "report" and normalized_job_type == "report_prepare":
+        if not isinstance(task_payload, ReportPreparationTaskPayload):
+            raise TypeError("Expected ReportPreparationTaskPayload for report/report_prepare.")
+        return ReportPreparationJobEnvelope(
+            queue_name="report",
+            job_type="report_prepare",
+            payload=task_payload,
+        )
+
     if normalized_queue == "report" and normalized_job_type == "report_generate":
         if not isinstance(task_payload, ReportGenerateTaskPayload):
             raise TypeError("Expected ReportGenerateTaskPayload for report/report_generate.")
@@ -838,11 +1101,13 @@ def build_worker_job_envelope(
             payload=task_payload,
         )
 
-    if normalized_queue == "crm" and normalized_job_type == "benchmark_local_study":
+    if normalized_queue in {"crm", "scrape_google_maps"} and normalized_job_type == "benchmark_local_study":
         if not isinstance(task_payload, BenchmarkLocalStudyTaskPayload):
-            raise TypeError("Expected BenchmarkLocalStudyTaskPayload for crm/benchmark_local_study.")
+            raise TypeError(
+                "Expected BenchmarkLocalStudyTaskPayload for crm|scrape_google_maps/benchmark_local_study."
+            )
         return BenchmarkLocalStudyJobEnvelope(
-            queue_name="crm",
+            queue_name=normalized_queue,
             job_type="benchmark_local_study",
             payload=task_payload,
         )

@@ -26,6 +26,9 @@ class EnqueueGeoGridStudyJobUseCase:
         grid_spacing_km: float | None = None,
         uule_radius_m: int | None = None,
         throttle_ms: int | None = None,
+        execution_mode: str | None = None,
+        live_display_mode: str | None = None,
+        requested_by: str | None = None,
     ) -> dict[str, Any]:
         await self._ensure_indexes()
         return await self._study_job_enqueue_runtime.enqueue_geo_grid_study_job(
@@ -37,4 +40,7 @@ class EnqueueGeoGridStudyJobUseCase:
             grid_spacing_km=grid_spacing_km,
             uule_radius_m=uule_radius_m,
             throttle_ms=throttle_ms,
+            execution_mode=execution_mode,
+            live_display_mode=live_display_mode,
+            requested_by=requested_by,
         )

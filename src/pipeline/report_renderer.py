@@ -14,6 +14,7 @@ from src.pipeline.report_rendering.artifact_layout import (
     build_final_report_artifact_layout,
     build_preview_report_artifact_layout,
 )
+from src.pipeline.client_audit.report_document import build_client_audit_report_html
 from src.pipeline.report_rendering.final_report_document import build_final_report_html
 from src.pipeline.report_rendering.pdf_export import render_pdf_from_html
 from src.pipeline.report_rendering.preview_report_document import build_preview_report_html
@@ -61,11 +62,21 @@ class StructuredReportRenderer(ReportRenderingSectionsMixin):
             encoding="utf-8",
         )
 
-        html_content = build_final_report_html(
-            renderer=self,
-            report_payload=report_payload,
-            intro_context_text=intro_context_text,
-        )
+        report_profile = str(report_payload.get("report_profile") or "classic").strip().lower() or "classic"
+        if report_profile == "client_audit":
+            html_content = build_client_audit_report_html(
+                renderer=self,
+                report_payload=report_payload,
+                intro_context_text=intro_context_text,
+            )
+            display_name = f"Auditoría local - {business_name}"
+        else:
+            html_content = build_final_report_html(
+                renderer=self,
+                report_payload=report_payload,
+                intro_context_text=intro_context_text,
+            )
+            display_name = f"Reporte final - {business_name}"
         artifact_layout.html_path.write_text(html_content, encoding="utf-8")
 
         annexes_payload = report_payload.get("annexes")
@@ -107,7 +118,7 @@ class StructuredReportRenderer(ReportRenderingSectionsMixin):
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "output_format": normalized_format,
-            "display_name": f"Reporte final - {business_name}",
+            "display_name": display_name,
             "json": {
                 "path": str(artifact_layout.json_path.resolve()),
                 "filename": artifact_layout.json_path.name,

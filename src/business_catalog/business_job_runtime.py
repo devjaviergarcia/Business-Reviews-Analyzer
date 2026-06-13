@@ -34,6 +34,12 @@ class BusinessJobRuntime:
         source_job_id: str | None = None,
         source_mode: str | None = None,
         selected_source: str | None = None,
+        report_profile: str | None = None,
+        report_complexity: str | None = None,
+        report_cadence: str | None = None,
+        study_resolution_mode: str | None = None,
+        include_competitors: bool = True,
+        include_geogrid: bool = False,
     ) -> dict[str, Any]:
         parsed_business_id = self._parse_object_id(business_id, field_name='business_id')
         businesses = self._database_factory()[self._businesses_collection_name]
@@ -49,6 +55,14 @@ class BusinessJobRuntime:
             source_job_id=str(source_job_id or '').strip() or None,
             source_mode=str(source_mode or 'auto').strip().lower() or 'auto',
             selected_source=str(selected_source).strip().lower() if selected_source is not None else None,
+            report_profile=str(report_profile or 'client_audit').strip().lower() or 'client_audit',
+            report_complexity=str(report_complexity or 'basic').strip().lower() or 'basic',
+            report_cadence=str(report_cadence or 'one_off').strip().lower() or 'one_off',
+            study_resolution_mode=(
+                str(study_resolution_mode or 'auto_ttl').strip().lower() or 'auto_ttl'
+            ),
+            include_competitors=bool(include_competitors),
+            include_geogrid=bool(include_geogrid),
         )
         return await self._job_service.enqueue_analysis_generate_job(task_payload=payload)
 
@@ -75,7 +89,7 @@ class BusinessJobRuntime:
     def ensure_job_is_report(job_payload: dict[str, Any]) -> None:
         queue_name = str(job_payload.get('queue_name') or '').strip().lower()
         job_type = str(job_payload.get('job_type') or '').strip().lower()
-        if job_type != 'report_generate' or queue_name != 'report':
+        if job_type not in {'report_generate', 'report_prepare'} or queue_name != 'report':
             raise ValueError(
-                'Job is not a report job. Expected job_type=report_generate and queue_name=report.'
+                'Job is not a report job. Expected job_type=report_generate|report_prepare and queue_name=report.'
             )

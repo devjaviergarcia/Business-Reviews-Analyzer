@@ -11,12 +11,19 @@ from bson.errors import InvalidId
 
 from src.config import settings
 from src.database import get_database
-from src.dependencies import create_worker_job_broker
+from src.dependencies import create_crm_service, create_worker_job_broker
 from src.pipeline.advanced_report_builder import AdvancedBusinessReportBuilder
+from src.pipeline.client_audit import ClientAuditPreparationRuntime
+from src.pipeline.client_audit.report_payload_builder import build_client_audit_report_payload
 from src.pipeline.report_renderer import StructuredReportRenderer
+from src.services.analysis_job_service import AnalysisJobService
 from src.workers.base_queue_worker import QueuedJobWorkerBase
 from src.workers.broker import WorkerJobBroker
-from src.workers.contracts import AnalysisJobStatus, parse_report_generate_payload
+from src.workers.contracts import (
+    AnalysisJobStatus,
+    parse_report_generate_payload,
+    parse_report_prepare_payload,
+)
 
 LOGGER = logging.getLogger("report_worker")
 logging.basicConfig(
@@ -47,11 +54,48 @@ class ReportWorker(QueuedJobWorkerBase):
         super().__init__(job_broker=job_broker or create_worker_job_broker())
         self._report_builder = report_builder or AdvancedBusinessReportBuilder()
         self._report_renderer = report_renderer or StructuredReportRenderer()
+        self._client_audit_preparation_runtime = ClientAuditPreparationRuntime(
+            job_service=AnalysisJobService(),
+            crm_service=create_crm_service(),
+        )
 
     async def _process_job(self, job: dict) -> None:
         job_id = job.get("_id")
         job_type = str(job.get("job_type") or "").strip() or "unknown"
         try:
+            if job_type == "report_prepare":
+                preparation_payload = parse_report_prepare_payload(job)
+                await self._job_broker.append_event(
+                    job_id=job_id,
+                    stage="study_hydration_started",
+                    message="Client audit hydration preparation started.",
+                    status=AnalysisJobStatus.RUNNING,
+                    data={
+                        "queue_name": self.queue_name,
+                        "job_type": job_type,
+                        "payload": preparation_payload.model_dump(mode="python"),
+                    },
+                )
+                hydration_result = await self._client_audit_preparation_runtime.process_preparation_task(
+                    task_payload=preparation_payload,
+                    job_id=job_id,
+                )
+                await self._job_broker.append_event(
+                    job_id=job_id,
+                    stage="study_hydration_completed",
+                    message="Client audit hydration preparation completed.",
+                    status=AnalysisJobStatus.RUNNING,
+                    data=hydration_result,
+                )
+                await self._job_broker.mark_done(job_id=job_id, result=hydration_result)
+                LOGGER.info(
+                    "Report preparation job done id=%s preparation_id=%s hydration_status=%s",
+                    job_id,
+                    preparation_payload.preparation_id,
+                    hydration_result.get("hydration_status"),
+                )
+                return
+
             task_payload = parse_report_generate_payload(job)
             await self._job_broker.append_event(
                 job_id=job_id,
@@ -142,6 +186,16 @@ class ReportWorker(QueuedJobWorkerBase):
                 **advanced_report,
                 "report_metadata": report_metadata,
             }
+            final_report_payload = await self._build_render_report_payload(
+                task_payload=task_payload,
+                business_doc=business_doc,
+                analysis_doc=analysis_doc,
+                advanced_report=advanced_report,
+                source_availability=source_availability,
+                report_source_mode=report_source_mode,
+                report_sources_included=report_sources_included,
+                report_source_counts=report_source_counts,
+            )
 
             intro_context = self._build_intro_context_text(
                 business_name=str(business_doc.get("name", "") or "").strip(),
@@ -149,7 +203,7 @@ class ReportWorker(QueuedJobWorkerBase):
                 review_docs=review_docs,
             )
             artifacts = await self._report_renderer.render(
-                report_payload=advanced_report,
+                report_payload=final_report_payload,
                 intro_context_text=intro_context,
                 business_id=business_id,
                 analysis_id=str(task_payload.analysis_id),
@@ -173,12 +227,17 @@ class ReportWorker(QueuedJobWorkerBase):
                 {
                     "$set": {
                         "advanced_report": advanced_report,
+                        "final_report_payload": final_report_payload,
                         "preview_report": preview_report,
                         "report_intro_context": intro_context,
                         "report_artifacts": artifacts,
                         "preview_report_artifacts": preview_artifacts,
                         "report_generated_at": now,
                         "preview_report_generated_at": now,
+                        "report_profile": final_report_payload.get("report_profile"),
+                        "report_complexity": final_report_payload.get("report_complexity"),
+                        "report_cadence": final_report_payload.get("report_cadence"),
+                        "report_preparation_id": task_payload.preparation_id,
                         "report_source_mode": report_source_mode,
                         "report_sources_included": report_sources_included,
                         "report_source_counts": report_source_counts,
@@ -203,6 +262,11 @@ class ReportWorker(QueuedJobWorkerBase):
                     "report_sources_included": report_sources_included,
                     "source_counts": report_source_counts,
                     "report_sections": list((advanced_report.get("sections") or {}).keys()),
+                    "report_profile": final_report_payload.get("report_profile"),
+                    "report_complexity": final_report_payload.get("report_complexity"),
+                    "report_cadence": final_report_payload.get("report_cadence"),
+                    "report_preparation_id": task_payload.preparation_id,
+                    "study_hydration": final_report_payload.get("study_hydration"),
                     "report_artifacts": artifacts,
                     "preview_report_sections": list((preview_report.get("sections") or {}).keys()),
                     "preview_report_artifacts": preview_artifacts,
@@ -218,6 +282,11 @@ class ReportWorker(QueuedJobWorkerBase):
                     "report_source_mode": report_source_mode,
                     "report_sources_included": report_sources_included,
                     "source_counts": report_source_counts,
+                    "report_profile": final_report_payload.get("report_profile"),
+                    "report_complexity": final_report_payload.get("report_complexity"),
+                    "report_cadence": final_report_payload.get("report_cadence"),
+                    "report_preparation_id": task_payload.preparation_id,
+                    "study_hydration": final_report_payload.get("study_hydration"),
                     "report_version": advanced_report.get("report_version"),
                     "section_count": len((advanced_report.get("sections") or {})),
                     "stored_in_analysis": True,
@@ -236,6 +305,80 @@ class ReportWorker(QueuedJobWorkerBase):
                 job_type,
                 exc,
             )
+
+    async def _build_render_report_payload(
+        self,
+        *,
+        task_payload: Any,
+        business_doc: dict[str, Any],
+        analysis_doc: dict[str, Any],
+        advanced_report: dict[str, Any],
+        source_availability: dict[str, Any],
+        report_source_mode: str,
+        report_sources_included: list[str],
+        report_source_counts: dict[str, int],
+    ) -> dict[str, Any]:
+        generated_at = datetime.now(timezone.utc).isoformat()
+        report_profile = str(task_payload.report_profile or "classic").strip().lower() or "classic"
+        if report_profile == "client_audit":
+            return await self._build_client_audit_render_payload(
+                task_payload=task_payload,
+                business_doc=business_doc,
+                analysis_doc=analysis_doc,
+                advanced_report=advanced_report,
+                source_availability=source_availability,
+                report_source_mode=report_source_mode,
+                report_sources_included=report_sources_included,
+                report_source_counts=report_source_counts,
+                generated_at=generated_at,
+            )
+        return {
+            **advanced_report,
+            "generated_at": generated_at,
+            "report_profile": "classic",
+            "report_complexity": "basic",
+            "report_cadence": str(task_payload.report_cadence or "one_off").strip().lower() or "one_off",
+        }
+
+    async def _build_client_audit_render_payload(
+        self,
+        *,
+        task_payload: Any,
+        business_doc: dict[str, Any],
+        analysis_doc: dict[str, Any],
+        advanced_report: dict[str, Any],
+        source_availability: dict[str, Any],
+        report_source_mode: str,
+        report_sources_included: list[str],
+        report_source_counts: dict[str, int],
+        generated_at: str,
+    ) -> dict[str, Any]:
+        preparation: dict[str, Any] | None = None
+        preparation_id = str(task_payload.preparation_id or "").strip()
+        if preparation_id:
+            try:
+                preparation = await self._client_audit_preparation_runtime.get_preparation(
+                    preparation_id=preparation_id
+                )
+            except Exception:
+                preparation = None
+        render_payload = build_client_audit_report_payload(
+            business_doc=business_doc,
+            analysis_doc=analysis_doc,
+            advanced_report=advanced_report,
+            source_availability=source_availability,
+            source_mode=report_source_mode,
+            sources_included=report_sources_included,
+            source_counts=report_source_counts,
+            report_profile="client_audit",
+            report_complexity=str(task_payload.report_complexity or "basic").strip().lower() or "basic",
+            report_cadence=str(task_payload.report_cadence or "one_off").strip().lower() or "one_off",
+            include_competitors=bool(task_payload.include_competitors),
+            include_geogrid=bool(task_payload.include_geogrid),
+            preparation=preparation,
+        )
+        render_payload["generated_at"] = generated_at
+        return render_payload
 
     async def _load_report_review_docs(
         self,

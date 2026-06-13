@@ -124,6 +124,33 @@ class BusinessServiceConstructionFacet:
 
     @classmethod
 
+    def build_geo_grid_scraper(cls) -> GoogleMapsScraper:
+        """GeoGrid scraper isolated from the shared persistent Chrome profile.
+
+        GeoGrid does not need session persistence. Running it in incognito mode
+        prevents profile lock collisions with regular Google Maps scraping or
+        any visible browser session already using `playwright-data`.
+        """
+        return GoogleMapsScraper(
+            headless=settings.scraper_headless,
+            incognito=True,
+            slow_mo_ms=settings.scraper_slow_mo_ms,
+            user_data_dir=settings.scraper_user_data_dir,
+            browser_channel=settings.scraper_browser_channel,
+            maps_url=settings.scraper_maps_url,
+            timeout_ms=settings.scraper_timeout_ms,
+            min_click_delay_ms=settings.scraper_min_click_delay_ms,
+            max_click_delay_ms=settings.scraper_max_click_delay_ms,
+            min_key_delay_ms=settings.scraper_min_key_delay_ms,
+            max_key_delay_ms=settings.scraper_max_key_delay_ms,
+            stealth_mode=settings.scraper_stealth_mode,
+            harden_headless=settings.scraper_harden_headless,
+            extra_chromium_args=settings.scraper_extra_chromium_args,
+            reviews_strategy="scroll_copy",
+        )
+
+    @classmethod
+
     def build_default_tripadvisor_scraper(cls) -> TripadvisorScraper:
         return TripadvisorScraper(
             headless=settings.scraper_headless,

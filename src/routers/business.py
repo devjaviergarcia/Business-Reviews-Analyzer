@@ -14,15 +14,19 @@ from src.business_catalog import (
 from src.dependencies import (
     create_business_query_service,
     create_business_service,
+    create_crm_service,
     create_enqueue_browser_scrape_jobs_use_case,
     create_relaunch_browser_scrape_job_use_case,
 )
+from src.pipeline.client_audit import ClientAuditPreparationRuntime
 from src.services.business_service import BusinessService
 from src.services.business_query_service import BusinessQueryService
+from src.services.crm_service import CRMService
 
 router = APIRouter(prefix="/business")
 BusinessServiceDep = Annotated[BusinessService, Depends(create_business_service)]
 BusinessQueryServiceDep = Annotated[BusinessQueryService, Depends(create_business_query_service)]
+CRMServiceDep = Annotated[CRMService, Depends(create_crm_service)]
 EnqueueBrowserScrapeJobsUseCaseDep = Annotated[
     EnqueueBrowserScrapeJobsUseCase,
     Depends(create_enqueue_browser_scrape_jobs_use_case),
@@ -119,8 +123,28 @@ class ScrapeBusinessJobsRequest(AnalyzeBusinessRequest):
     tripadvisor_name: str | None = None
     execution_mode: Literal["automatic", "live"] = "automatic"
     live_display_mode: Literal["native", "xvfb"] = "native"
+    report_profile: Literal["classic", "client_audit"] = "client_audit"
+    report_complexity: Literal["basic", "hydrated"] = "basic"
+    report_cadence: Literal["one_off", "monthly", "quarterly"] = "one_off"
+    study_resolution_mode: Literal["auto_ttl", "reuse_latest", "refresh_now"] = "auto_ttl"
+    include_competitors: bool = True
+    include_geogrid: bool = False
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_report_shape(self) -> "ScrapeBusinessJobsRequest":
+        if self.report_profile == "classic":
+            self.report_complexity = "basic"
+            self.study_resolution_mode = "auto_ttl"
+            self.include_competitors = False
+            self.include_geogrid = False
+            return self
+        if self.report_complexity != "hydrated":
+            self.study_resolution_mode = "auto_ttl"
+            self.include_competitors = False
+            self.include_geogrid = False
+        return self
 
 
 class ReanalyzeStoredReviewsRequest(BaseModel):
@@ -195,6 +219,12 @@ class AnalyzeStoredReviewsJobRequest(BaseModel):
     source_job_id: str | None = None
     source_mode: Literal["auto", "combined", "single"] = "auto"
     selected_source: Literal["google_maps", "tripadvisor"] | None = None
+    report_profile: Literal["classic", "client_audit"] = "client_audit"
+    report_complexity: Literal["basic", "hydrated"] = "basic"
+    report_cadence: Literal["one_off", "monthly", "quarterly"] = "one_off"
+    study_resolution_mode: Literal["auto_ttl", "reuse_latest", "refresh_now"] = "auto_ttl"
+    include_competitors: bool = True
+    include_geogrid: bool = False
 
     model_config = ConfigDict(extra="forbid")
 
@@ -205,11 +235,22 @@ class AnalyzeStoredReviewsJobRequest(BaseModel):
             raise ValueError("selected_source is required when source_mode='single'.")
         if mode != "single":
             self.selected_source = None
+        if self.report_profile == "classic":
+            self.report_complexity = "basic"
+            self.include_competitors = False
+            self.include_geogrid = False
         return self
 
 
 class OpenReportArtifactRequest(BaseModel):
     path: str = Field(min_length=1)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RelaunchHydrationDependencyRequest(BaseModel):
+    execution_mode: Literal["automatic", "live"] = "automatic"
+    live_display_mode: Literal["native", "xvfb"] = "native"
 
     model_config = ConfigDict(extra="forbid")
 
@@ -287,6 +328,12 @@ async def enqueue_scrape_jobs(
             tripadvisor_name=payload.tripadvisor_name,
             execution_mode=payload.execution_mode,
             live_display_mode=payload.live_display_mode,
+            report_profile=payload.report_profile,
+            report_complexity=payload.report_complexity,
+            report_cadence=payload.report_cadence,
+            study_resolution_mode=payload.study_resolution_mode,
+            include_competitors=payload.include_competitors,
+            include_geogrid=payload.include_geogrid,
             requested_by="business_router",
         )
     except ValueError as exc:
@@ -615,6 +662,12 @@ async def enqueue_analyze_job(
             source_job_id=payload.source_job_id,
             source_mode=payload.source_mode,
             selected_source=payload.selected_source,
+            report_profile=payload.report_profile,
+            report_complexity=payload.report_complexity,
+            report_cadence=payload.report_cadence,
+            study_resolution_mode=payload.study_resolution_mode,
+            include_competitors=payload.include_competitors,
+            include_geogrid=payload.include_geogrid,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -647,6 +700,24 @@ async def get_analyze_job(job_id: str, service: BusinessServiceDep) -> dict:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/{business_id}/analyze/latest-job", tags=["Analyze"])
+async def get_latest_analyze_job_for_business(
+    business_id: str,
+    service: BusinessServiceDep,
+) -> dict:
+    try:
+        payload = await service.get_latest_analysis_job_for_business(business_id=business_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    if payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No analysis job found for business '{business_id}'.",
+        )
+    return payload
 
 
 @router.delete("/analyze/jobs/{job_id}", tags=["Analyze"])
@@ -818,6 +889,44 @@ async def open_report_artifact_in_system(
 async def get_report_job(job_id: str, service: BusinessServiceDep) -> dict:
     try:
         return await service.get_report_job(job_id=job_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/report/preparations/{preparation_id}", tags=["Analyze"])
+async def get_report_preparation(
+    preparation_id: str,
+    service: BusinessServiceDep,
+    crm_service: CRMServiceDep,
+) -> dict:
+    runtime = ClientAuditPreparationRuntime(job_service=service.job_service, crm_service=crm_service)
+    preparation = await runtime.get_preparation(preparation_id=preparation_id)
+    if preparation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Report preparation '{preparation_id}' not found.",
+        )
+    return preparation
+
+
+@router.post("/report/preparations/{preparation_id}/dependencies/{dependency_name}/relaunch", tags=["Analyze"])
+async def relaunch_report_preparation_dependency(
+    preparation_id: str,
+    dependency_name: str,
+    payload: RelaunchHydrationDependencyRequest,
+    service: BusinessServiceDep,
+    crm_service: CRMServiceDep,
+) -> dict:
+    runtime = ClientAuditPreparationRuntime(job_service=service.job_service, crm_service=crm_service)
+    try:
+        return await runtime.relaunch_dependency(
+            preparation_id=preparation_id,
+            dependency_name=dependency_name,
+            execution_mode=payload.execution_mode,
+            live_display_mode=payload.live_display_mode,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except LookupError as exc:

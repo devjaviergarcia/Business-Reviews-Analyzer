@@ -79,6 +79,12 @@ export function createAnalysisView(deps: AnalysisViewDeps): ViewModule {
           force: values.force,
           strategy: values.strategy,
           force_mode: values.forceMode || null,
+          report_profile: values.reportProfile,
+          report_complexity: values.reportComplexity,
+          report_cadence: values.reportCadence,
+          study_resolution_mode: values.studyResolutionMode,
+          include_competitors: values.includeCompetitors,
+          include_geogrid: values.includeGeogrid,
         };
         if (values.launchMode === "live_native") {
           payload.execution_mode = "live";
@@ -189,6 +195,12 @@ export function createAnalysisView(deps: AnalysisViewDeps): ViewModule {
         if (poolSize !== null) {
           payload.max_reviews_pool = poolSize;
         }
+        payload.report_profile = values.reportProfile;
+        payload.report_complexity = values.reportComplexity;
+        payload.report_cadence = values.reportCadence;
+        payload.study_resolution_mode = values.studyResolutionMode;
+        payload.include_competitors = values.includeCompetitors;
+        payload.include_geogrid = values.includeGeogrid;
         payload.business_id = selectedCatalogBusinessId;
         const response = await deps.apiClient.post<Record<string, unknown>>(
           "/business/analyze/jobs",

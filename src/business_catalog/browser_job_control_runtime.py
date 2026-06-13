@@ -210,6 +210,12 @@ class BrowserJobControlRuntime:
         tripadvisor_name: str | None = None,
         execution_mode: str | None = None,
         live_display_mode: str | None = None,
+        report_profile: str | None = None,
+        report_complexity: str | None = None,
+        report_cadence: str | None = None,
+        study_resolution_mode: str | None = None,
+        include_competitors: bool = True,
+        include_geogrid: bool = False,
         requested_by: str | None = None,
     ) -> dict[str, Any]:
         business_name = self._validate_business_name(name)
@@ -249,12 +255,23 @@ class BrowserJobControlRuntime:
             or DEFAULT_BROWSER_LIVE_DISPLAY_MODE
         )
         normalized_requested_by = str(requested_by or "").strip().lower().replace(" ", "_") or "business_api"
+        analysis_request = {
+            "report_profile": str(report_profile or "client_audit").strip().lower() or "client_audit",
+            "report_complexity": str(report_complexity or "basic").strip().lower() or "basic",
+            "report_cadence": str(report_cadence or "one_off").strip().lower() or "one_off",
+            "study_resolution_mode": (
+                str(study_resolution_mode or "auto_ttl").strip().lower() or "auto_ttl"
+            ),
+            "include_competitors": bool(include_competitors),
+            "include_geogrid": bool(include_geogrid),
+        }
         scrape_round = await self._open_browser_scrape_round(
             canonical_name=business_name,
             canonical_name_normalized=canonical_name_normalized,
             root_business_id=root_business_id,
             requested_sources=selected_sources,
             requested_by=normalized_requested_by,
+            analysis_request=analysis_request,
         )
         scrape_round_id = str(scrape_round.get("round_id") or "").strip() or None
         effective_execution_mode_by_source: dict[str, str] = {}
@@ -336,12 +353,13 @@ class BrowserJobControlRuntime:
             "execution_mode": normalized_execution_mode,
             "live_display_mode": normalized_live_display_mode,
             "effective_execution_mode_by_source": effective_execution_mode_by_source,
-                "runtime_target": DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
-                "local_browser_runtime": runtime_availability,
-                "sources_requested": list(selected_sources),
-                "source_names": source_names,
-                "jobs_by_source": jobs_by_source,
-            }
+            "runtime_target": DEFAULT_LOCAL_BROWSER_RUNTIME_TARGET,
+            "local_browser_runtime": runtime_availability,
+            "analysis_request": analysis_request,
+            "sources_requested": list(selected_sources),
+            "source_names": source_names,
+            "jobs_by_source": jobs_by_source,
+        }
         )
 
     async def resolve_business_id_for_scrape_job(self, job_payload: dict[str, Any]) -> str | None:

@@ -17,8 +17,19 @@ type JobsViewHandle = ViewModule & {
 type JobFilterMode = "active" | "all";
 type SourceFilter = "all" | "google_maps" | "tripadvisor";
 type DrawerPosition = "right" | "bottom";
-type NodeKey = "scrape_google_maps" | "scrape_tripadvisor" | "analysis" | "report";
-type NodeStatus = "idle" | "queued" | "running" | "done" | "failed" | "needs_human" | "waiting";
+type NodeKey = "scrape_google_maps" | "scrape_tripadvisor" | "analysis" | "study_hydration" | "report";
+type NodeStatus =
+  | "idle"
+  | "queued"
+  | "running"
+  | "done"
+  | "failed"
+  | "needs_human"
+  | "waiting"
+  | "skipped"
+  | "reused"
+  | "ready"
+  | "not_in_study";
 type ConnectorState = "idle" | "active" | "done" | "failed" | "waiting" | "human";
 type ScrapeSource = "google_maps" | "tripadvisor";
 type LiveDisplayMode = "native" | "xvfb";
@@ -102,7 +113,7 @@ type ConnectorHandle = {
   root: HTMLElement;
 };
 
-type StreamKind = "scrape" | "analysis" | "report";
+type StreamKind = "scrape" | "analysis" | "hydration" | "report";
 
 const ACTIVE_STATUSES = new Set(["queued", "running", "retrying", "partial", "needs_human"]);
 const SCRAPE_STAGE_PROGRESS: Record<string, number> = {
@@ -128,6 +139,15 @@ const REPORT_STAGE_PROGRESS: Record<string, number> = {
   queued: 8,
   report_worker_started: 32,
   report_worker_completed: 92,
+  done: 100,
+};
+const HYDRATION_STAGE_PROGRESS: Record<string, number> = {
+  queued: 8,
+  study_hydration_queued: 12,
+  study_hydration_started: 26,
+  waiting_benchmark: 42,
+  waiting_geogrid: 64,
+  study_hydration_completed: 92,
   done: 100,
 };
 
@@ -213,9 +233,17 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
 
   const analysisCol = createElement("div", "jobs6-analysis-col");
   const analysisNode = createPipelineNodeCard("analysis", "ANALYZE", "analysis");
-  const analysisToReportConnector = createConnector("inline");
+  const analysisToHydrationConnector = createConnector("inline");
+  const hydrationNode = createPipelineNodeCard("study_hydration", "STUDY HYDRATION", "hydration");
+  const hydrationToReportConnector = createConnector("inline");
   const reportNode = createPipelineNodeCard("report", "REPORT PDF", "report");
-  analysisCol.append(analysisNode.root, analysisToReportConnector.root, reportNode.root);
+  analysisCol.append(
+    analysisNode.root,
+    analysisToHydrationConnector.root,
+    hydrationNode.root,
+    hydrationToReportConnector.root,
+    reportNode.root
+  );
 
   pipelineWrap.append(sourcesStack, connectorsCol, analysisCol);
 
@@ -299,6 +327,112 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     drawerTripadvisorPagesPercentInput,
     drawerRelaunchConfigHint
   );
+  const drawerAnalysisLaunchConfigTitle = createElement(
+    "h4",
+    "jobs6-drawer-section-title hidden",
+    "Lanzar analysis"
+  );
+  const drawerAnalysisLaunchConfig = createElement("div", "jobs6-drawer-block hidden");
+  const drawerAnalysisReportProfileSelect = createElement("select", "atom-input") as HTMLSelectElement;
+  drawerAnalysisReportProfileSelect.innerHTML =
+    '<option value="client_audit" selected>Client audit</option><option value="classic">Classic</option>';
+  const drawerAnalysisLaunchResearchInput = createElement(
+    "input",
+    "atom-input"
+  ) as HTMLInputElement;
+  drawerAnalysisLaunchResearchInput.type = "checkbox";
+  drawerAnalysisLaunchResearchInput.checked = false;
+  const drawerAnalysisStudyResolutionModeSelect = createElement(
+    "select",
+    "atom-input"
+  ) as HTMLSelectElement;
+  drawerAnalysisStudyResolutionModeSelect.innerHTML =
+    '<option value="auto_ttl" selected>Auto TTL</option><option value="reuse_latest">Reuse latest</option><option value="refresh_now">Refresh now</option>';
+  const drawerAnalysisIncludeCompetitorsInput = createElement(
+    "input",
+    "atom-input"
+  ) as HTMLInputElement;
+  drawerAnalysisIncludeCompetitorsInput.type = "checkbox";
+  drawerAnalysisIncludeCompetitorsInput.checked = true;
+  const drawerAnalysisIncludeGeogridInput = createElement(
+    "input",
+    "atom-input"
+  ) as HTMLInputElement;
+  drawerAnalysisIncludeGeogridInput.type = "checkbox";
+  drawerAnalysisIncludeGeogridInput.checked = false;
+  const drawerAnalysisLaunchHint = createElement("div", "muted", "");
+  const drawerAnalysisReportProfileRow = appendDrawerField(
+    "Perfil reporte",
+    drawerAnalysisReportProfileSelect
+  );
+  const drawerAnalysisLaunchResearchRow = appendDrawerField(
+    "Lanzar research",
+    drawerAnalysisLaunchResearchInput
+  );
+  const drawerAnalysisStudyResolutionModeRow = appendDrawerField(
+    "Resolución estudio",
+    drawerAnalysisStudyResolutionModeSelect
+  );
+  const drawerAnalysisIncludeCompetitorsRow = appendDrawerField(
+    "Incluir competidores",
+    drawerAnalysisIncludeCompetitorsInput
+  );
+  const drawerAnalysisIncludeGeogridRow = appendDrawerField(
+    "Incluir geogrid",
+    drawerAnalysisIncludeGeogridInput
+  );
+  drawerAnalysisLaunchConfig.append(
+    drawerAnalysisReportProfileRow,
+    drawerAnalysisLaunchResearchRow,
+    drawerAnalysisStudyResolutionModeRow,
+    drawerAnalysisIncludeCompetitorsRow,
+    drawerAnalysisIncludeGeogridRow,
+    drawerAnalysisLaunchHint
+  );
+  const drawerHydrationDependenciesTitle = createElement(
+    "h4",
+    "jobs6-drawer-section-title hidden",
+    "Dependencias hydration"
+  );
+  const drawerHydrationDependenciesBlock = createElement("div", "jobs6-drawer-block hidden");
+  const drawerHydrationDependenciesSummary = createElement(
+    "pre",
+    "code-block jobs6-drawer-transitions",
+    ""
+  );
+  const drawerHydrationDependenciesHint = createElement(
+    "div",
+    "muted",
+    "Benchmark y geogrid se pueden relanzar desde aquí. El modo live usa el display seleccionado abajo."
+  );
+  const drawerHydrationDependencyActions = createElement("div", "form-actions");
+  const drawerRelaunchBenchmarkAutoButton = createButton({
+    label: "Benchmark auto",
+    tone: "white",
+  });
+  const drawerRelaunchBenchmarkLiveButton = createButton({
+    label: "Benchmark live",
+    tone: "turquoise",
+  });
+  const drawerRelaunchGeogridAutoButton = createButton({
+    label: "Geogrid auto",
+    tone: "white",
+  });
+  const drawerRelaunchGeogridLiveButton = createButton({
+    label: "Geogrid live",
+    tone: "turquoise",
+  });
+  drawerHydrationDependencyActions.append(
+    drawerRelaunchBenchmarkAutoButton,
+    drawerRelaunchBenchmarkLiveButton,
+    drawerRelaunchGeogridAutoButton,
+    drawerRelaunchGeogridLiveButton
+  );
+  drawerHydrationDependenciesBlock.append(
+    drawerHydrationDependenciesSummary,
+    drawerHydrationDependencyActions,
+    drawerHydrationDependenciesHint
+  );
   const drawerNodeActionsTitle = createElement("h4", "jobs6-drawer-section-title", "Acciones");
   const drawerLiveModeTitle = createElement("h4", "jobs6-drawer-section-title", "Modo live");
   const drawerLiveModeBlock = createElement("div", "jobs6-drawer-block");
@@ -318,6 +452,10 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
   const drawerNodeActions = createElement("div", "form-actions");
   const drawerRelaunchButton = createButton({ label: "Relanzar", tone: "turquoise" });
   const drawerRelaunchFromZeroButton = createButton({ label: "Relanzar de 0", tone: "turquoise" });
+  const drawerForceAnalyzeButton = createButton({
+    label: "Forzar analyze sin rescrape",
+    tone: "orange",
+  });
   const drawerLaunchLiveButton = createButton({ label: "Lanzar Live TA", tone: "turquoise" });
   const drawerSkipTripadvisorButton = createButton({
     label: "Omitir TA y continuar",
@@ -330,6 +468,7 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
   drawerNodeActions.append(
     drawerRelaunchButton,
     drawerRelaunchFromZeroButton,
+    drawerForceAnalyzeButton,
     drawerLaunchLiveButton,
     drawerSkipTripadvisorButton,
     drawerDeleteButton,
@@ -351,6 +490,10 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     drawerTripadvisorLiveLog,
     drawerRelaunchConfigTitle,
     drawerRelaunchConfig,
+    drawerAnalysisLaunchConfigTitle,
+    drawerAnalysisLaunchConfig,
+    drawerHydrationDependenciesTitle,
+    drawerHydrationDependenciesBlock,
     drawerLiveModeTitle,
     drawerLiveModeBlock,
     drawerNodeActionsTitle,
@@ -365,6 +508,7 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     scrape_google_maps: googleNode,
     scrape_tripadvisor: tripNode,
     analysis: analysisNode,
+    study_hydration: hydrationNode,
     report: reportNode,
   };
 
@@ -376,12 +520,17 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
   let deletingScrapeJobId: string | null = null;
 
   let analysisJobId: string | null = null;
+  let preparationJobId: string | null = null;
+  let hydrationPreparationId: string | null = null;
+  let hydrationPreparationSnapshot: Record<string, unknown> | null = null;
   let reportJobId: string | null = null;
   let scrapeSourceJobIds: Partial<Record<ScrapeSource, string>> = {};
 
   let scrapeStreams: Partial<Record<ScrapeSource, EventSource>> = {};
   let analysisStream: EventSource | null = null;
   let analysisStreamJobId: string | null = null;
+  let preparationStream: EventSource | null = null;
+  let preparationStreamJobId: string | null = null;
   let reportStream: EventSource | null = null;
   let reportStreamJobId: string | null = null;
   let loadedScrapeEvents: Record<ScrapeSource, number> = {
@@ -389,6 +538,7 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     tripadvisor: 0,
   };
   let loadedAnalysisEvents = 0;
+  let loadedPreparationEvents = 0;
   let loadedReportEvents = 0;
 
   let jobsPollTimer: number | null = null;
@@ -438,6 +588,12 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
   sessionRefreshButton.addEventListener("click", () => {
     void loadTripadvisorSessionState();
   });
+  drawerAnalysisReportProfileSelect.addEventListener("change", () => {
+    syncDrawerAnalysisLaunchConfig();
+  });
+  drawerAnalysisLaunchResearchInput.addEventListener("change", () => {
+    syncDrawerAnalysisLaunchConfig();
+  });
   drawerTripadvisorLiveRefreshButton.addEventListener("click", () => {
     void loadTripadvisorLiveSessionTail({ force: true });
   });
@@ -467,6 +623,9 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     if (analysisJobId) {
       startAnalysisStream(analysisJobId);
     }
+    if (preparationJobId) {
+      startPreparationStream(preparationJobId);
+    }
     if (reportJobId) {
       startReportStream(reportJobId);
     }
@@ -485,8 +644,23 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
   drawerRelaunchFromZeroButton.addEventListener("click", () => {
     void relaunchCurrentDrawerNode({ restartFromZero: true });
   });
+  drawerForceAnalyzeButton.addEventListener("click", () => {
+    void forceAnalyzeWithoutRescrape();
+  });
   drawerLaunchLiveButton.addEventListener("click", () => {
     void launchCurrentScrapeJobLive();
+  });
+  drawerRelaunchBenchmarkAutoButton.addEventListener("click", () => {
+    void relaunchHydrationDependency("benchmark", "automatic");
+  });
+  drawerRelaunchBenchmarkLiveButton.addEventListener("click", () => {
+    void relaunchHydrationDependency("benchmark", "live");
+  });
+  drawerRelaunchGeogridAutoButton.addEventListener("click", () => {
+    void relaunchHydrationDependency("geogrid", "automatic");
+  });
+  drawerRelaunchGeogridLiveButton.addEventListener("click", () => {
+    void relaunchHydrationDependency("geogrid", "live");
   });
   drawerSkipTripadvisorButton.addEventListener("click", () => {
     void skipCurrentTripadvisorNode();
@@ -580,6 +754,7 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
         selectedBusinessKey = null;
         selectedBusinessGroup = null;
         analysisJobId = null;
+        preparationJobId = null;
         reportJobId = null;
         scrapeSourceJobIds = {};
         resetStreams();
@@ -781,6 +956,8 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     for (const key of Object.keys(base) as NodeKey[]) {
       nodes[key] = base[key];
     }
+    hydrationPreparationId = null;
+    hydrationPreparationSnapshot = null;
     logsLines = [];
     logs.textContent = "";
     renderPipeline();
@@ -800,9 +977,13 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
 
     scrapeSourceJobIds = {};
     analysisJobId = null;
+    preparationJobId = null;
+    hydrationPreparationId = null;
+    hydrationPreparationSnapshot = null;
     reportJobId = null;
     loadedScrapeEvents = { google_maps: 0, tripadvisor: 0 };
     loadedAnalysisEvents = 0;
+    loadedPreparationEvents = 0;
     loadedReportEvents = 0;
 
     selectedMeta.textContent = `Cargando negocio ${selectedBusinessGroup.businessName}...`;
@@ -836,22 +1017,65 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
         (sourceDetails.tripadvisor ? resolveAnalysisJobId(sourceDetails.tripadvisor) : null);
       analysisJobId = preferredAnalysisJob;
 
+      if (!analysisJobId) {
+        const fallbackBusinessId = String(selectedBusinessGroup.rootBusinessId || "").trim();
+        if (fallbackBusinessId) {
+          try {
+            const latestAnalysisJob = await deps.apiClient.get<AnalyzeJobItem>(
+              `/business/${encodeURIComponent(fallbackBusinessId)}/analyze/latest-job`
+            );
+            const latestAnalysisJobId = String(latestAnalysisJob.job_id || "").trim();
+            if (latestAnalysisJobId) {
+              analysisJobId = latestAnalysisJobId;
+            }
+          } catch (error) {
+            const fallbackMessage = formatError(error).toLowerCase();
+            if (!fallbackMessage.includes("404") && !fallbackMessage.includes("not found")) {
+              throw error;
+            }
+          }
+        }
+      }
+
       if (analysisJobId) {
-        await loadAnalysisJobSnapshot(analysisJobId);
-        reportJobId = resolveReportJobId(nodes.analysis);
+        const analysisDetail = await loadAnalysisJobSnapshot(analysisJobId);
+        const hydratedReport = analysisDetail ? isHydratedClientAuditJob(analysisDetail) : false;
+        preparationJobId = analysisDetail ? resolvePreparationJobId(analysisDetail) : null;
+        if (hydratedReport) {
+          if (preparationJobId) {
+            const preparationDetail = await loadPreparationJobSnapshot(preparationJobId);
+            reportJobId = preparationDetail ? resolveFinalReportJobId(preparationDetail) : null;
+          } else {
+            nodes.study_hydration = createInitialNodes().study_hydration;
+            nodes.study_hydration.status = "queued";
+            nodes.study_hydration.stage = "study_hydration_pending";
+            nodes.study_hydration.message = "La hidratación está pendiente de encolarse o sincronizarse.";
+          }
+        } else {
+          hydrationPreparationId = null;
+          hydrationPreparationSnapshot = null;
+          nodes.study_hydration = createSkippedHydrationNode();
+          reportJobId = analysisDetail ? resolveReportJobId(analysisDetail) : null;
+        }
         if (reportJobId) {
           await loadReportJobSnapshot(reportJobId);
         } else {
           nodes.report = createInitialNodes().report;
-          nodes.report.status = "waiting";
-          nodes.report.stage = "report_not_enqueued";
-          nodes.report.message = "No hay job de report asociado para este análisis.";
+          nodes.report.status = hydratedReport ? "waiting" : "waiting";
+          nodes.report.stage = hydratedReport ? "waiting_study_hydration" : "report_not_enqueued";
+          nodes.report.message = hydratedReport
+            ? "Esperando a que termine study hydration para encolar el render final."
+            : "No hay job de report asociado para este análisis.";
         }
       } else {
         nodes.analysis = createInitialNodes().analysis;
         nodes.analysis.status = "waiting";
         nodes.analysis.stage = "analysis_not_enqueued";
         nodes.analysis.message = "No hay job de análisis asociado para este negocio.";
+        nodes.study_hydration = createInitialNodes().study_hydration;
+        nodes.study_hydration.status = "waiting";
+        nodes.study_hydration.stage = "waiting_analysis";
+        nodes.study_hydration.message = "Esperando a que exista un job de análisis.";
         nodes.report = createInitialNodes().report;
         nodes.report.status = "waiting";
         nodes.report.stage = "waiting_analysis";
@@ -869,6 +1093,9 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
       }
       if (analysisJobId) {
         startAnalysisStream(analysisJobId);
+      }
+      if (preparationJobId) {
+        startPreparationStream(preparationJobId);
       }
       if (reportJobId) {
         startReportStream(reportJobId);
@@ -932,7 +1159,10 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     };
   }
 
-  async function loadAnalysisJobSnapshot(jobId: string, options?: { appendLogs?: boolean }): Promise<void> {
+  async function loadAnalysisJobSnapshot(
+    jobId: string,
+    options?: { appendLogs?: boolean }
+  ): Promise<AnalyzeJobItem | null> {
     const appendLogs = options?.appendLogs !== false;
     try {
       const detail = await deps.apiClient.get<AnalyzeJobItem>(
@@ -941,7 +1171,7 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
       loadedAnalysisEvents = Array.isArray(detail.events) ? detail.events.length : 0;
       updateNodeFromJobSnapshot(nodes.analysis, detail, "analysis");
       nodes.analysis.events = Array.isArray(detail.events) ? detail.events : [];
-      const nextReportJobId = resolveReportJobId(detail) || resolveReportJobId(nodes.analysis);
+      const nextReportJobId = resolveReportJobId(detail);
       if (nextReportJobId && nextReportJobId !== reportJobId) {
         reportJobId = nextReportJobId;
       }
@@ -950,11 +1180,57 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
           appendLogLine(formatLogLine(event, "analysis", "analysis"));
         }
       }
+      return detail;
     } catch (error) {
       nodes.analysis.status = "failed";
       nodes.analysis.error = formatError(error);
       nodes.analysis.message = "No se pudo cargar el job de análisis.";
       nodes.analysis.progress = 100;
+      return null;
+    }
+  }
+
+  async function loadPreparationJobSnapshot(
+    jobId: string,
+    options?: { appendLogs?: boolean }
+  ): Promise<AnalyzeJobItem | null> {
+    const appendLogs = options?.appendLogs !== false;
+    try {
+      const detail = await deps.apiClient.get<AnalyzeJobItem>(
+        `/business/report/jobs/${encodeURIComponent(jobId)}`
+      );
+      const resolvedPreparationId = resolvePreparationDocumentId(detail);
+      if (resolvedPreparationId) {
+        hydrationPreparationId = resolvedPreparationId;
+        await loadHydrationPreparationDocument(resolvedPreparationId);
+        const latestPrepareJobId = resolveLatestPrepareJobIdFromPreparation(hydrationPreparationSnapshot);
+        if (latestPrepareJobId && latestPrepareJobId !== jobId) {
+          preparationJobId = latestPrepareJobId;
+          return await loadPreparationJobSnapshot(latestPrepareJobId, options);
+        }
+      } else {
+        hydrationPreparationId = null;
+        hydrationPreparationSnapshot = null;
+      }
+      loadedPreparationEvents = Array.isArray(detail.events) ? detail.events.length : 0;
+      updateHydrationNodeFromJobSnapshot(nodes.study_hydration, detail);
+      nodes.study_hydration.events = Array.isArray(detail.events) ? detail.events : [];
+      const nextReportJobId = resolveFinalReportJobId(detail);
+      if (nextReportJobId && nextReportJobId !== reportJobId) {
+        reportJobId = nextReportJobId;
+      }
+      if (appendLogs) {
+        for (const event of nodes.study_hydration.events) {
+          appendLogLine(formatLogLine(event, "hydration", "hydration"));
+        }
+      }
+      return detail;
+    } catch (error) {
+      nodes.study_hydration.status = "failed";
+      nodes.study_hydration.error = formatError(error);
+      nodes.study_hydration.message = "No se pudo cargar el job de study hydration.";
+      nodes.study_hydration.progress = 100;
+      return null;
     }
   }
 
@@ -978,6 +1254,48 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
       nodes.report.message = "No se pudo cargar el job de report.";
       nodes.report.progress = 100;
     }
+  }
+
+  async function loadHydrationPreparationDocument(
+    preparationId: string
+  ): Promise<Record<string, unknown> | null> {
+    try {
+      const preparation = await deps.apiClient.get<Record<string, unknown>>(
+        `/business/report/preparations/${encodeURIComponent(preparationId)}`
+      );
+      hydrationPreparationSnapshot = preparation;
+      applyHydrationPreparationToNode(preparation);
+      return preparation;
+    } catch (error) {
+      hydrationPreparationSnapshot = null;
+      appendLogLine(`[sync][hydration-preparation] ${formatError(error)}`);
+      return null;
+    }
+  }
+
+  function applyHydrationPreparationToNode(preparation: Record<string, unknown> | null): void {
+    if (!preparation) return;
+    const derivedStatus = deriveHydrationResultStatus(preparation);
+    const hydrationStatus = String((preparation.hydration_status as string | undefined) || "").trim();
+    const latestPrepareJobId = resolveLatestPrepareJobIdFromPreparation(preparation);
+    if (latestPrepareJobId) {
+      nodes.study_hydration.jobId = latestPrepareJobId;
+    }
+    if (derivedStatus) {
+      nodes.study_hydration.status = derivedStatus;
+    }
+    if (hydrationStatus) {
+      nodes.study_hydration.stage = hydrationStatus;
+    }
+    const described = describeHydrationState(preparation);
+    if (described) {
+      nodes.study_hydration.message = described;
+    }
+    nodes.study_hydration.progress = estimateHydrationProgress(
+      nodes.study_hydration.stage,
+      nodes.study_hydration.status,
+      nodes.study_hydration.progress
+    );
   }
 
   function updateNodeFromJobSnapshot(
@@ -1017,6 +1335,31 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
       node.progress = estimateAnalysisProgress(stage, status, node.progress);
     } else {
       node.progress = estimateReportProgress(stage, status, node.progress);
+    }
+  }
+
+  function updateHydrationNodeFromJobSnapshot(node: PipelineNodeState, job: AnalyzeJobItem): void {
+    const status = normalizeNodeStatus(job.status, job.progress?.stage);
+    const stage = String(job.progress?.stage || "").trim();
+    const message = String(job.progress?.message || "").trim();
+    const result = isRecord(job.result) ? job.result : null;
+
+    node.status = deriveHydrationSnapshotStatus(job, result) || status;
+    node.stage = stage;
+    node.message = message || describeHydrationState(result);
+    node.jobId = String(job.job_id || "").trim() || null;
+    node.lastUpdated = String(job.updated_at || "").trim() || null;
+    node.attempts = toInteger((job as unknown as Record<string, unknown>).attempts);
+    node.durationSeconds = computeDurationSeconds(job.started_at, job.finished_at);
+    node.error = String(job.error || "").trim() || null;
+    node.progress = estimateHydrationProgress(stage, node.status, node.progress);
+    node.outputUrl = null;
+
+    if (result) {
+      const finalReportJobId = String((result.final_report_job_id as string | undefined) || "").trim();
+      if (finalReportJobId) {
+        reportJobId = finalReportJobId;
+      }
     }
   }
 
@@ -1115,12 +1458,6 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
       if (analysisJobId) {
         void syncAnalysisSnapshot(analysisJobId);
       }
-      const nextReportJobId = resolveReportJobId(nodes.analysis);
-      if (nextReportJobId && nextReportJobId !== reportJobId) {
-        reportJobId = nextReportJobId;
-        startReportStream(nextReportJobId);
-        void syncReportSnapshot(nextReportJobId);
-      }
     });
 
     stream.addEventListener("heartbeat", (event) => {
@@ -1141,6 +1478,64 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
 
     stream.onerror = () => {
       appendLogLine("[stream][analysis] desconectado");
+    };
+  }
+
+  function startPreparationStream(jobId: string): void {
+    if (preparationStreamJobId === jobId && preparationStream) {
+      return;
+    }
+    stopPreparationStream();
+    preparationStreamJobId = jobId;
+
+    const stream = deps.apiClient.createEventSource(
+      `/business/report/jobs/${encodeURIComponent(jobId)}/events?from_index=${loadedPreparationEvents}`
+    );
+    preparationStream = stream;
+
+    stream.addEventListener("progress", (event) => {
+      const payload = parseEventData(event as MessageEvent<string>);
+      if (!payload) return;
+      const eventIndex = toInteger(payload.index);
+      if (eventIndex !== null) {
+        loadedPreparationEvents = Math.max(loadedPreparationEvents, eventIndex);
+      } else {
+        loadedPreparationEvents += 1;
+      }
+      applyPreparationEvent(payload);
+    });
+
+    stream.addEventListener("done", (event) => {
+      const payload = parseEventData(event as MessageEvent<string>);
+      const resolvedStatus = deriveHydrationResultStatus(payload);
+      nodes.study_hydration.status = resolvedStatus ?? "ready";
+      nodes.study_hydration.progress = 100;
+      appendLogLine(`[done][study_hydration] ${String(payload?.status || "done")}`);
+      renderPipeline();
+      stopPreparationStream();
+      if (preparationJobId) {
+        void syncPreparationSnapshot(preparationJobId);
+      }
+    });
+
+    stream.addEventListener("heartbeat", (event) => {
+      const payload = parseEventData(event as MessageEvent<string>);
+      if (!payload) return;
+      if (typeof payload.status === "string") {
+        nodes.study_hydration.status = normalizeNodeStatus(payload.status, nodes.study_hydration.stage);
+      }
+      renderPipeline();
+    });
+
+    stream.addEventListener("error", (event) => {
+      const payload = parseEventData(event as MessageEvent<string>);
+      if (payload?.error) {
+        appendLogLine(`[error][study_hydration] ${String(payload.error)}`);
+      }
+    });
+
+    stream.onerror = () => {
+      appendLogLine("[stream][study_hydration] desconectado");
     };
   }
 
@@ -1210,13 +1605,53 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
       const nextAnalysisId = resolveAnalysisJobId(detail);
       if (nextAnalysisId && nextAnalysisId !== analysisJobId) {
         analysisJobId = nextAnalysisId;
-        await loadAnalysisJobSnapshot(nextAnalysisId, { appendLogs: false });
+        const analysisDetail = await loadAnalysisJobSnapshot(nextAnalysisId, { appendLogs: false });
         startAnalysisStream(nextAnalysisId);
-        const nextReportJobId = resolveReportJobId(nodes.analysis);
-        if (nextReportJobId) {
-          reportJobId = nextReportJobId;
-          await loadReportJobSnapshot(nextReportJobId, { appendLogs: false });
-          startReportStream(nextReportJobId);
+        const hydratedReport = analysisDetail ? isHydratedClientAuditJob(analysisDetail) : false;
+        if (hydratedReport) {
+          preparationJobId = analysisDetail ? resolvePreparationJobId(analysisDetail) : null;
+          if (preparationJobId) {
+            const preparationDetail = await loadPreparationJobSnapshot(preparationJobId, { appendLogs: false });
+            startPreparationStream(preparationJobId);
+            const nextReportJobId = preparationDetail ? resolveFinalReportJobId(preparationDetail) : null;
+            if (nextReportJobId) {
+              reportJobId = nextReportJobId;
+              await loadReportJobSnapshot(nextReportJobId, { appendLogs: false });
+              startReportStream(nextReportJobId);
+            } else {
+              reportJobId = null;
+              nodes.report = createInitialNodes().report;
+              nodes.report.status = "waiting";
+              nodes.report.stage = "waiting_study_hydration";
+              nodes.report.message = "Esperando a que study hydration encole el reporte final.";
+            }
+          } else {
+            nodes.study_hydration = createInitialNodes().study_hydration;
+            nodes.study_hydration.status = "queued";
+            nodes.study_hydration.stage = "study_hydration_pending";
+            nodes.study_hydration.message = "Esperando a que se materialice el job de study hydration.";
+            reportJobId = null;
+            nodes.report = createInitialNodes().report;
+            nodes.report.status = "waiting";
+            nodes.report.stage = "waiting_study_hydration";
+            nodes.report.message = "Esperando a que study hydration encole el reporte final.";
+          }
+        } else {
+          hydrationPreparationId = null;
+          hydrationPreparationSnapshot = null;
+          nodes.study_hydration = createSkippedHydrationNode();
+          const nextReportJobId = analysisDetail ? resolveReportJobId(analysisDetail) : null;
+          if (nextReportJobId) {
+            reportJobId = nextReportJobId;
+            await loadReportJobSnapshot(nextReportJobId, { appendLogs: false });
+            startReportStream(nextReportJobId);
+          } else {
+            reportJobId = null;
+            nodes.report = createInitialNodes().report;
+            nodes.report.status = "waiting";
+            nodes.report.stage = "report_not_enqueued";
+            nodes.report.message = "No hay job de report asociado para este análisis.";
+          }
         }
       }
       renderPipeline();
@@ -1228,18 +1663,85 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
 
   async function syncAnalysisSnapshot(jobId: string): Promise<void> {
     try {
-      await loadAnalysisJobSnapshot(jobId, { appendLogs: false });
-      const nextReportJobId = resolveReportJobId(nodes.analysis);
-      if (nextReportJobId && nextReportJobId !== reportJobId) {
-        reportJobId = nextReportJobId;
+      const analysisDetail = await loadAnalysisJobSnapshot(jobId, { appendLogs: false });
+      if (!analysisDetail) {
+        renderPipeline();
+        renderDrawer();
+        return;
+      }
+      if (isHydratedClientAuditJob(analysisDetail)) {
+        preparationJobId = resolvePreparationJobId(analysisDetail);
+        if (preparationJobId) {
+          const preparationDetail = await loadPreparationJobSnapshot(preparationJobId, { appendLogs: false });
+          startPreparationStream(preparationJobId);
+          const nextReportJobId = preparationDetail ? resolveFinalReportJobId(preparationDetail) : null;
+          if (nextReportJobId && nextReportJobId !== reportJobId) {
+            reportJobId = nextReportJobId;
+          } else if (!nextReportJobId) {
+            reportJobId = null;
+            nodes.report = createInitialNodes().report;
+            nodes.report.status = "waiting";
+            nodes.report.stage = "waiting_study_hydration";
+            nodes.report.message = "Esperando a que study hydration encole el reporte final.";
+          }
+        } else {
+          nodes.study_hydration = createInitialNodes().study_hydration;
+          nodes.study_hydration.status = "queued";
+          nodes.study_hydration.stage = "study_hydration_pending";
+          nodes.study_hydration.message = "Esperando a que se materialice el job de study hydration.";
+          reportJobId = null;
+          nodes.report = createInitialNodes().report;
+          nodes.report.status = "waiting";
+          nodes.report.stage = "waiting_study_hydration";
+          nodes.report.message = "Esperando a que study hydration encole el reporte final.";
+        }
+      } else {
+        hydrationPreparationId = null;
+        hydrationPreparationSnapshot = null;
+        nodes.study_hydration = createSkippedHydrationNode();
+        const nextReportJobId = resolveReportJobId(analysisDetail);
+        if (nextReportJobId && nextReportJobId !== reportJobId) {
+          reportJobId = nextReportJobId;
+        } else if (!nextReportJobId) {
+          reportJobId = null;
+          nodes.report = createInitialNodes().report;
+          nodes.report.status = "waiting";
+          nodes.report.stage = "report_not_enqueued";
+          nodes.report.message = "No hay job de report asociado para este análisis.";
+        }
       }
       if (reportJobId) {
         await loadReportJobSnapshot(reportJobId, { appendLogs: false });
+        startReportStream(reportJobId);
       }
       renderPipeline();
       renderDrawer();
     } catch (error) {
       appendLogLine(`[sync][analysis] ${formatError(error)}`);
+    }
+  }
+
+  async function syncPreparationSnapshot(jobId: string): Promise<void> {
+    try {
+      const preparationDetail = await loadPreparationJobSnapshot(jobId, { appendLogs: false });
+      const nextReportJobId = preparationDetail ? resolveFinalReportJobId(preparationDetail) : null;
+      if (nextReportJobId && nextReportJobId !== reportJobId) {
+        reportJobId = nextReportJobId;
+      } else if (!nextReportJobId) {
+        reportJobId = null;
+        nodes.report = createInitialNodes().report;
+        nodes.report.status = "waiting";
+        nodes.report.stage = "waiting_study_hydration";
+        nodes.report.message = "Esperando a que study hydration encole el reporte final.";
+      }
+      if (reportJobId) {
+        await loadReportJobSnapshot(reportJobId, { appendLogs: false });
+        startReportStream(reportJobId);
+      }
+      renderPipeline();
+      renderDrawer();
+    } catch (error) {
+      appendLogLine(`[sync][study_hydration] ${formatError(error)}`);
     }
   }
 
@@ -1336,6 +1838,18 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
       nodes.analysis.comments = comments;
     }
 
+    const preparationIdFromEvent = String(eventData.preparation_job_id || "").trim();
+    if (preparationIdFromEvent && preparationIdFromEvent !== preparationJobId) {
+      preparationJobId = preparationIdFromEvent;
+      nodes.study_hydration.jobId = preparationIdFromEvent;
+      nodes.study_hydration.status = "queued";
+      nodes.study_hydration.stage = "study_hydration_queued";
+      nodes.study_hydration.message = `Study hydration encolado: ${preparationIdFromEvent}`;
+      nodes.study_hydration.progress = Math.max(nodes.study_hydration.progress, 12);
+      startPreparationStream(preparationIdFromEvent);
+      void syncPreparationSnapshot(preparationIdFromEvent);
+    }
+
     const reportIdFromEvent = String(eventData.report_job_id || "").trim();
     if (reportIdFromEvent && reportIdFromEvent !== reportJobId) {
       reportJobId = reportIdFromEvent;
@@ -1357,6 +1871,61 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     });
 
     appendLogLine(formatLogLine(payload, "analysis", "analysis"));
+    renderPipeline();
+    renderDrawer();
+  }
+
+  function applyPreparationEvent(payload: Record<string, unknown>): void {
+    const stage = String(payload.stage || "").trim();
+    const message = String(payload.message || "").trim();
+    const status = String(payload.status || "").trim();
+    const eventData = isRecord(payload.data) ? payload.data : {};
+
+    if (status) {
+      nodes.study_hydration.status = normalizeNodeStatus(status, stage);
+    }
+    if (stage) {
+      nodes.study_hydration.stage = stage;
+    }
+    if (message) {
+      nodes.study_hydration.message = message;
+    } else {
+      const hydrationMessage = describeHydrationState(eventData);
+      if (hydrationMessage) {
+        nodes.study_hydration.message = hydrationMessage;
+      }
+    }
+    nodes.study_hydration.progress = estimateHydrationProgress(
+      stage,
+      nodes.study_hydration.status,
+      nodes.study_hydration.progress
+    );
+
+    const derivedStatus = deriveHydrationResultStatus(eventData);
+    if (derivedStatus) {
+      nodes.study_hydration.status = derivedStatus;
+    }
+    const finalReportJobId = String(eventData.final_report_job_id || "").trim();
+    if (finalReportJobId && finalReportJobId !== reportJobId) {
+      reportJobId = finalReportJobId;
+      nodes.report.jobId = finalReportJobId;
+      nodes.report.status = "queued";
+      nodes.report.stage = "report_handoff_queued";
+      nodes.report.message = `Report job encolado: ${finalReportJobId}`;
+      nodes.report.progress = Math.max(nodes.report.progress, 8);
+      startReportStream(finalReportJobId);
+      void syncReportSnapshot(finalReportJobId);
+    }
+
+    nodes.study_hydration.events.push({
+      status,
+      stage,
+      message,
+      data: eventData,
+      created_at: String(payload.created_at || ""),
+    });
+
+    appendLogLine(formatLogLine(payload, "hydration", "hydration"));
     renderPipeline();
     renderDrawer();
   }
@@ -1410,7 +1979,7 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
 
   function renderPipeline(): void {
     const summaryText = selectedBusinessGroup
-      ? `Negocio ${selectedBusinessGroup.businessName} • Google: ${nodes.scrape_google_maps.status.toUpperCase()} • Tripadvisor: ${nodes.scrape_tripadvisor.status.toUpperCase()} • Analysis: ${nodes.analysis.status.toUpperCase()} • Report: ${nodes.report.status.toUpperCase()}`
+      ? `Negocio ${selectedBusinessGroup.businessName} • Google: ${nodes.scrape_google_maps.status.toUpperCase()} • Tripadvisor: ${nodes.scrape_tripadvisor.status.toUpperCase()} • Analysis: ${nodes.analysis.status.toUpperCase()} • Study: ${nodes.study_hydration.status.toUpperCase()} • Report: ${nodes.report.status.toUpperCase()}`
       : "Selecciona un negocio para visualizar el pipeline.";
     selectedMeta.textContent = summaryText;
 
@@ -1427,9 +1996,50 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
       resolveConnectorState(nodes.scrape_tripadvisor, nodes.analysis)
     );
     paintConnector(
-      analysisToReportConnector,
-      resolveAnalysisToReportConnectorState(nodes.analysis, nodes.report)
+      analysisToHydrationConnector,
+      resolveAnalysisToHydrationConnectorState(nodes.analysis, nodes.study_hydration, nodes.report)
     );
+    paintConnector(
+      hydrationToReportConnector,
+      resolveHydrationToReportConnectorState(nodes.study_hydration, nodes.report)
+    );
+  }
+
+  function syncDrawerAnalysisLaunchConfig(): void {
+    const isClassic = drawerAnalysisReportProfileSelect.value === "classic";
+    const launchResearch = !isClassic && drawerAnalysisLaunchResearchInput.checked;
+    drawerAnalysisLaunchResearchInput.disabled = isClassic;
+    drawerAnalysisStudyResolutionModeSelect.disabled = !launchResearch;
+    drawerAnalysisIncludeCompetitorsInput.disabled = !launchResearch;
+    drawerAnalysisIncludeGeogridInput.disabled = !launchResearch;
+    drawerAnalysisStudyResolutionModeRow.classList.toggle("hidden", !launchResearch);
+    drawerAnalysisIncludeCompetitorsRow.classList.toggle("hidden", !launchResearch);
+    drawerAnalysisIncludeGeogridRow.classList.toggle("hidden", !launchResearch);
+
+    if (isClassic) {
+      drawerAnalysisLaunchResearchInput.checked = false;
+      drawerAnalysisStudyResolutionModeSelect.value = "auto_ttl";
+      drawerAnalysisIncludeCompetitorsInput.checked = false;
+      drawerAnalysisIncludeGeogridInput.checked = false;
+      drawerAnalysisLaunchHint.textContent =
+        "Classic genera el reporte actual y no lanza study hydration.";
+      return;
+    }
+
+    if (!launchResearch) {
+      drawerAnalysisStudyResolutionModeSelect.value = "auto_ttl";
+      drawerAnalysisIncludeCompetitorsInput.checked = false;
+      drawerAnalysisIncludeGeogridInput.checked = false;
+      drawerAnalysisLaunchHint.textContent =
+        "Sin research se lanza el client audit base usando solo las reseñas y análisis guardados.";
+      return;
+    }
+
+    if (!drawerAnalysisIncludeCompetitorsInput.checked) {
+      drawerAnalysisIncludeCompetitorsInput.checked = true;
+    }
+    drawerAnalysisLaunchHint.textContent =
+      "Con research se activa study hydration: benchmark reutilizable o refresh, competidores y geogrid opcional.";
   }
 
   function openDrawer(nodeKey: NodeKey): void {
@@ -1463,12 +2073,16 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
       drawerTripadvisorLiveLog.textContent = "";
       drawerRelaunchConfigTitle.classList.add("hidden");
       drawerRelaunchConfig.classList.add("hidden");
+      drawerAnalysisLaunchConfigTitle.classList.add("hidden");
+      drawerAnalysisLaunchConfig.classList.add("hidden");
       drawerActionStatus.textContent = "";
       drawerManualButton.classList.add("hidden");
+      drawerForceAnalyzeButton.classList.add("hidden");
       drawerLaunchLiveButton.classList.add("hidden");
       drawerSkipTripadvisorButton.classList.add("hidden");
       drawerRelaunchButton.removeAttribute("disabled");
       drawerRelaunchFromZeroButton.removeAttribute("disabled");
+      drawerForceAnalyzeButton.removeAttribute("disabled");
       drawerRelaunchFromZeroButton.classList.remove("hidden");
       drawerLaunchLiveButton.removeAttribute("disabled");
       drawerSkipTripadvisorButton.removeAttribute("disabled");
@@ -1495,33 +2109,72 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     drawerError.textContent = node.error ? `ERROR: ${node.error}` : "Sin error.";
 
     const eventKind: StreamKind =
-      node.key === "analysis" ? "analysis" : node.key === "report" ? "report" : "scrape";
+      node.key === "analysis"
+        ? "analysis"
+        : node.key === "report"
+          ? "report"
+          : node.key === "study_hydration"
+            ? "hydration"
+            : "scrape";
     const transitions = node.events
       .slice(-30)
       .map((event) => formatLogLine(event, eventKind, node.sourceBadge));
     drawerTransitions.textContent = transitions.join("\n");
 
     drawerManualButton.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
-    drawerLaunchLiveButton.classList.toggle("hidden", node.key === "analysis" || node.key === "report");
+    drawerForceAnalyzeButton.classList.toggle(
+      "hidden",
+      node.key !== "analysis" || Boolean(node.jobId)
+    );
+    const showHydrationDependencyControls = node.key === "study_hydration";
+    drawerLaunchLiveButton.classList.toggle(
+      "hidden",
+      node.key === "analysis" || node.key === "report" || node.key === "study_hydration"
+    );
     drawerSkipTripadvisorButton.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
     drawerLaunchLiveButton.textContent =
       node.key === "scrape_tripadvisor" ? "Abrir Needs Human TA" : "Lanzar Live";
-    drawerLiveModeTitle.classList.toggle("hidden", node.key === "analysis" || node.key === "report");
-    drawerLiveModeBlock.classList.toggle("hidden", node.key === "analysis" || node.key === "report");
+    drawerLiveModeTitle.classList.toggle(
+      "hidden",
+      node.key === "analysis" || node.key === "report"
+    );
+    drawerLiveModeBlock.classList.toggle(
+      "hidden",
+      node.key === "analysis" || node.key === "report"
+    );
     drawerRelaunchConfigTitle.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
     drawerRelaunchConfig.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
     drawerTripadvisorLiveTitle.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
     drawerTripadvisorLiveSummary.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
     drawerTripadvisorLiveActions.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
     drawerTripadvisorLiveLog.classList.toggle("hidden", node.key !== "scrape_tripadvisor");
-    drawerRelaunchFromZeroButton.classList.toggle("hidden", node.key === "analysis" || node.key === "report");
+    drawerHydrationDependenciesTitle.classList.toggle("hidden", !showHydrationDependencyControls);
+    drawerHydrationDependenciesBlock.classList.toggle("hidden", !showHydrationDependencyControls);
+    drawerRelaunchFromZeroButton.classList.toggle(
+      "hidden",
+      node.key === "analysis" || node.key === "report" || node.key === "study_hydration"
+    );
+    const showAnalysisLaunchConfig = node.key === "analysis" && !node.jobId;
+    drawerAnalysisLaunchConfigTitle.classList.toggle("hidden", !showAnalysisLaunchConfig);
+    drawerAnalysisLaunchConfig.classList.toggle("hidden", !showAnalysisLaunchConfig);
     drawerRelaunchButton.toggleAttribute("disabled", !node.jobId);
-    drawerRelaunchFromZeroButton.toggleAttribute("disabled", !node.jobId || node.key === "analysis" || node.key === "report");
-    drawerLaunchLiveButton.toggleAttribute("disabled", (node.key === "analysis" || node.key === "report") || !node.jobId);
+    drawerForceAnalyzeButton.toggleAttribute(
+      "disabled",
+      node.key !== "analysis" || Boolean(node.jobId) || !selectedBusinessGroup?.rootBusinessId
+    );
+    drawerRelaunchFromZeroButton.toggleAttribute(
+      "disabled",
+      !node.jobId || node.key === "analysis" || node.key === "report" || node.key === "study_hydration"
+    );
+    drawerLaunchLiveButton.toggleAttribute(
+      "disabled",
+      (node.key === "analysis" || node.key === "report" || node.key === "study_hydration") || !node.jobId
+    );
     drawerSkipTripadvisorButton.toggleAttribute("disabled", node.key !== "scrape_tripadvisor" || !node.jobId);
     drawerDeleteButton.toggleAttribute("disabled", !node.jobId);
     drawerOutputButton.toggleAttribute("disabled", !node.outputUrl);
     drawerCopyJobButton.toggleAttribute("disabled", !node.jobId);
+    renderHydrationDependencyDetails();
 
     if (node.key === "scrape_tripadvisor" && node.jobId) {
       const job = findJobById(node.jobId);
@@ -1563,6 +2216,10 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
       drawerLiveModeSelect.value = liveDisplayMode === "xvfb" ? "xvfb" : "native";
     } else {
       drawerLiveModeSelect.value = "native";
+    }
+
+    if (showAnalysisLaunchConfig) {
+      syncDrawerAnalysisLaunchConfig();
     }
 
     if (node.key === "scrape_tripadvisor") {
@@ -1609,7 +2266,7 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
       const basePath =
         node.key === "analysis"
           ? "/business/analyze/jobs"
-          : node.key === "report"
+          : node.key === "report" || node.key === "study_hydration"
             ? "/business/report/jobs"
             : "/business/scrape/jobs";
       const endpoint = `${basePath}/${encodeURIComponent(node.jobId)}/relaunch`;
@@ -1676,6 +2333,10 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
         analysisJobId = relaunchedJobId;
         await syncAnalysisSnapshot(relaunchedJobId);
         startAnalysisStream(relaunchedJobId);
+      } else if (node.key === "study_hydration") {
+        preparationJobId = relaunchedJobId;
+        await syncPreparationSnapshot(relaunchedJobId);
+        startPreparationStream(relaunchedJobId);
       } else if (node.key === "report") {
         reportJobId = relaunchedJobId;
         await syncReportSnapshot(relaunchedJobId);
@@ -1693,9 +2354,63 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
           await loadSelectedBusiness(group.key);
         }
       }
-      if (node.key === "analysis" || node.key === "report") {
+      if (node.key === "analysis" || node.key === "study_hydration" || node.key === "report") {
         void loadJobsList();
       }
+    } catch (error) {
+      drawerActionStatus.textContent = `ERROR: ${formatError(error)}`;
+    }
+  }
+
+  async function forceAnalyzeWithoutRescrape(): Promise<void> {
+    const node = getDrawerNode();
+    if (!node || node.key !== "analysis") {
+      drawerActionStatus.textContent = "Esta acción solo aplica al nodo de analysis.";
+      return;
+    }
+    const businessId = String(selectedBusinessGroup?.rootBusinessId || "").trim();
+    if (!businessId) {
+      drawerActionStatus.textContent =
+        "No se ha podido resolver el business_id para lanzar analysis sin rescrape.";
+      return;
+    }
+
+    drawerActionStatus.textContent = "Encolando analysis desde reseñas guardadas...";
+    try {
+      const sourceJobId = resolvePreferredSourceJobIdForBusiness(selectedBusinessGroup);
+      const reportProfile =
+        drawerAnalysisReportProfileSelect.value === "classic" ? "classic" : "client_audit";
+      const launchResearch =
+        reportProfile === "client_audit" && drawerAnalysisLaunchResearchInput.checked;
+      const reportComplexity = launchResearch ? "hydrated" : "basic";
+      const includeCompetitors = launchResearch && drawerAnalysisIncludeCompetitorsInput.checked;
+      const includeGeogrid = launchResearch && drawerAnalysisIncludeGeogridInput.checked;
+      const response = await deps.apiClient.post<{ job_id?: string }>(
+        "/business/analyze/jobs",
+        {
+          business_id: businessId,
+          source_job_id: sourceJobId || undefined,
+          report_profile: reportProfile,
+          report_complexity: reportComplexity,
+          report_cadence: "one_off",
+          study_resolution_mode: launchResearch
+            ? drawerAnalysisStudyResolutionModeSelect.value
+            : "auto_ttl",
+          include_competitors: includeCompetitors,
+          include_geogrid: includeGeogrid,
+        }
+      );
+      const forcedAnalysisJobId = String(response?.job_id || "").trim();
+      if (!forcedAnalysisJobId) {
+        throw new Error("La API no devolvió job_id para analysis.");
+      }
+      analysisJobId = forcedAnalysisJobId;
+      drawerActionStatus.textContent = `Analysis encolado: ${forcedAnalysisJobId}`;
+      await syncAnalysisSnapshot(forcedAnalysisJobId);
+      startAnalysisStream(forcedAnalysisJobId);
+      renderPipeline();
+      renderDrawer();
+      void loadJobsList();
     } catch (error) {
       drawerActionStatus.textContent = `ERROR: ${formatError(error)}`;
     }
@@ -1740,6 +2455,89 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
 
   function getSelectedLiveDisplayMode(): LiveDisplayMode {
     return drawerLiveModeSelect.value === "xvfb" ? "xvfb" : "native";
+  }
+
+  function renderHydrationDependencyDetails(): void {
+    const snapshot = hydrationPreparationSnapshot;
+    const isHydrationDrawer = drawerNodeKey === "study_hydration";
+    const benchmark = isRecord(snapshot?.dependencies) && isRecord(snapshot.dependencies.benchmark)
+      ? snapshot.dependencies.benchmark
+      : null;
+    const geogrid = isRecord(snapshot?.dependencies) && isRecord(snapshot.dependencies.geogrid)
+      ? snapshot.dependencies.geogrid
+      : null;
+    const includeGeogrid = Boolean(snapshot?.include_geogrid);
+
+    drawerHydrationDependenciesSummary.textContent = isHydrationDrawer
+      ? [
+          `preparation_id: ${String((snapshot?.report_preparation_id as string | undefined) || hydrationPreparationId || "-").trim() || "-"}`,
+          `hydration_status: ${String((snapshot?.hydration_status as string | undefined) || "-").trim() || "-"}`,
+          `presence_state: ${String((snapshot?.business_presence_state as string | undefined) || "-").trim() || "-"}`,
+          `latest_prepare_job_id: ${resolveLatestPrepareJobIdFromPreparation(snapshot) || "-"}`,
+          `benchmark: ${benchmark ? `${String((benchmark.status as string | undefined) || "-").trim() || "-"} • job ${String((benchmark.job_id as string | undefined) || "-").trim() || "-"} • run ${String((benchmark.benchmark_run_id as string | undefined) || "-").trim() || "-"}` : "-"}`,
+          `geogrid: ${geogrid ? `${String((geogrid.status as string | undefined) || "-").trim() || "-"} • job ${String((geogrid.job_id as string | undefined) || "-").trim() || "-"} • run ${String((geogrid.geo_grid_run_id as string | undefined) || "-").trim() || "-"}` : "skipped"}`,
+        ].join("\n")
+      : "";
+
+    drawerRelaunchBenchmarkAutoButton.classList.toggle("hidden", !isHydrationDrawer);
+    drawerRelaunchBenchmarkLiveButton.classList.toggle("hidden", !isHydrationDrawer);
+    drawerRelaunchGeogridAutoButton.classList.toggle("hidden", !isHydrationDrawer || !includeGeogrid);
+    drawerRelaunchGeogridLiveButton.classList.toggle("hidden", !isHydrationDrawer || !includeGeogrid);
+
+    drawerRelaunchBenchmarkAutoButton.toggleAttribute("disabled", !isHydrationDrawer || !hydrationPreparationId);
+    drawerRelaunchBenchmarkLiveButton.toggleAttribute("disabled", !isHydrationDrawer || !hydrationPreparationId);
+    drawerRelaunchGeogridAutoButton.toggleAttribute(
+      "disabled",
+      !isHydrationDrawer || !hydrationPreparationId || !includeGeogrid
+    );
+    drawerRelaunchGeogridLiveButton.toggleAttribute(
+      "disabled",
+      !isHydrationDrawer || !hydrationPreparationId || !includeGeogrid
+    );
+  }
+
+  async function relaunchHydrationDependency(
+    dependencyName: "benchmark" | "geogrid",
+    executionMode: "automatic" | "live"
+  ): Promise<void> {
+    if (!hydrationPreparationId) {
+      drawerActionStatus.textContent = "No hay preparation_id disponible para relanzar hydration.";
+      return;
+    }
+    const liveDisplayMode = executionMode === "live" ? getSelectedLiveDisplayMode() : "native";
+    drawerActionStatus.textContent =
+      executionMode === "live"
+        ? `Relanzando ${dependencyName} en live (${liveDisplayMode})...`
+        : `Relanzando ${dependencyName} en automático...`;
+    try {
+      const response = await deps.apiClient.post<Record<string, unknown>>(
+        `/business/report/preparations/${encodeURIComponent(
+          hydrationPreparationId
+        )}/dependencies/${encodeURIComponent(dependencyName)}/relaunch`,
+        {
+          execution_mode: executionMode,
+          live_display_mode: liveDisplayMode,
+        }
+      );
+      hydrationPreparationSnapshot = response;
+      applyHydrationPreparationToNode(response);
+      renderPipeline();
+      renderDrawer();
+      drawerActionStatus.textContent =
+        executionMode === "live"
+          ? `${dependencyName} relanzado en live (${liveDisplayMode}).`
+          : `${dependencyName} relanzado en automático.`;
+      void loadJobsList();
+      if (selectedBusinessKey) {
+        window.setTimeout(() => {
+          if (selectedBusinessKey) {
+            void loadSelectedBusiness(selectedBusinessKey);
+          }
+        }, 2000);
+      }
+    } catch (error) {
+      drawerActionStatus.textContent = `ERROR: ${formatError(error)}`;
+    }
   }
 
   async function confirmManualTripadvisorSession(): Promise<void> {
@@ -1843,7 +2641,7 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
       const basePath =
         node.key === "analysis"
           ? "/business/analyze/jobs"
-          : node.key === "report"
+          : node.key === "report" || node.key === "study_hydration"
             ? "/business/report/jobs"
             : "/business/scrape/jobs";
       await deps.apiClient.delete(`${basePath}/${encodeURIComponent(node.jobId)}`);
@@ -1862,6 +2660,15 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
       if (analysisJobId === node.jobId && node.key === "analysis") {
         analysisJobId = null;
         nodes.analysis = createInitialNodes().analysis;
+        renderPipeline();
+        renderDrawer();
+        return;
+      }
+      if (preparationJobId === node.jobId && node.key === "study_hydration") {
+        preparationJobId = null;
+        hydrationPreparationId = null;
+        hydrationPreparationSnapshot = null;
+        nodes.study_hydration = createInitialNodes().study_hydration;
         renderPipeline();
         renderDrawer();
         return;
@@ -2131,9 +2938,11 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
   function resetStreams(): void {
     stopScrapeStream();
     stopAnalysisStream();
+    stopPreparationStream();
     stopReportStream();
     loadedScrapeEvents = { google_maps: 0, tripadvisor: 0 };
     loadedAnalysisEvents = 0;
+    loadedPreparationEvents = 0;
     loadedReportEvents = 0;
   }
 
@@ -2158,6 +2967,13 @@ export function createJobsView(deps: JobsViewDeps): JobsViewHandle {
     analysisStream.close();
     analysisStream = null;
     analysisStreamJobId = null;
+  }
+
+  function stopPreparationStream(): void {
+    if (!preparationStream) return;
+    preparationStream.close();
+    preparationStream = null;
+    preparationStreamJobId = null;
   }
 
   function stopReportStream(): void {
@@ -2261,6 +3077,12 @@ function createConnector(mode: "default" | "inline" = "default"): ConnectorHandl
   };
 }
 
+function appendDrawerField(labelText: string, input: HTMLElement): HTMLDivElement {
+  const wrapper = createElement("div", "jobs6-drawer-form-row") as HTMLDivElement;
+  wrapper.append(createElement("label", "form-label", labelText), input);
+  return wrapper;
+}
+
 function paintConnector(handle: ConnectorHandle, state: ConnectorState): void {
   const isInline = handle.root.classList.contains("jobs6-connector--inline");
   handle.root.className = `jobs6-connector jobs6-connector--${state}${isInline ? " jobs6-connector--inline" : ""}`;
@@ -2277,21 +3099,40 @@ function resolveConnectorState(scrapeNode: PipelineNodeState, analysisNode: Pipe
   return "idle";
 }
 
-function resolveAnalysisToReportConnectorState(
+function resolveAnalysisToHydrationConnectorState(
   analysisNode: PipelineNodeState,
+  hydrationNode: PipelineNodeState,
   reportNode: PipelineNodeState
 ): ConnectorState {
-  if (reportNode.status === "failed") return "failed";
-  if (reportNode.status === "needs_human") return "human";
-  if (reportNode.status === "queued") return "waiting";
-  if (reportNode.status === "running") return "active";
-  if (analysisNode.status === "failed") return "failed";
-  if (analysisNode.status === "done" && reportNode.status === "done") return "done";
-  if (analysisNode.status === "done" && reportNode.status === "waiting") {
-    return "active";
+  if (analysisNode.status === "failed" || hydrationNode.status === "failed") return "failed";
+  if (analysisNode.status === "running") return "active";
+  if (analysisNode.status === "queued" || analysisNode.status === "waiting") return "waiting";
+  if (!isHydrationDoneLike(hydrationNode.status) && (hydrationNode.status === "queued" || hydrationNode.status === "running")) {
+    return hydrationNode.status === "running" ? "active" : "waiting";
   }
-  if (analysisNode.status === "running" || analysisNode.status === "queued") return "waiting";
+  if (analysisNode.status === "done" && isHydrationDoneLike(hydrationNode.status)) {
+    if (reportNode.status === "running" || reportNode.status === "queued") return "done";
+    return "done";
+  }
   return "idle";
+}
+
+function resolveHydrationToReportConnectorState(
+  hydrationNode: PipelineNodeState,
+  reportNode: PipelineNodeState
+): ConnectorState {
+  if (hydrationNode.status === "failed" || reportNode.status === "failed") return "failed";
+  if (reportNode.status === "running") return "active";
+  if (reportNode.status === "queued") return "waiting";
+  if (isHydrationDoneLike(hydrationNode.status) && reportNode.status === "done") return "done";
+  if (isHydrationDoneLike(hydrationNode.status) && reportNode.status === "waiting") return "active";
+  if (hydrationNode.status === "running") return "active";
+  if (hydrationNode.status === "queued" || hydrationNode.status === "waiting") return "waiting";
+  return "idle";
+}
+
+function isHydrationDoneLike(status: NodeStatus): boolean {
+  return status === "done" || status === "ready" || status === "reused" || status === "skipped" || status === "not_in_study";
 }
 
 function paintNode(handle: PipelineNodeCardHandle, node: PipelineNodeState | undefined): void {
@@ -2387,6 +3228,23 @@ function createInitialNodes(): Record<NodeKey, PipelineNodeState> {
       outputUrl: null,
       events: [],
     },
+    study_hydration: {
+      key: "study_hydration",
+      title: "STUDY HYDRATION",
+      sourceBadge: "hydration",
+      status: "idle",
+      stage: "",
+      message: "",
+      progress: 0,
+      attempts: null,
+      comments: null,
+      durationSeconds: null,
+      lastUpdated: null,
+      error: null,
+      jobId: null,
+      outputUrl: null,
+      events: [],
+    },
     report: {
       key: "report",
       title: "REPORT PDF",
@@ -2407,6 +3265,16 @@ function createInitialNodes(): Record<NodeKey, PipelineNodeState> {
   };
 }
 
+function createSkippedHydrationNode(): PipelineNodeState {
+  return {
+    ...createInitialNodes().study_hydration,
+    status: "skipped",
+    stage: "study_hydration_skipped",
+    message: "Este informe no requiere hidratación de benchmark/geogrid.",
+    progress: 100,
+  };
+}
+
 function resolveAnalysisJobId(job: AnalyzeJobItem): string | null {
   const result = isRecord(job.result) ? job.result : null;
   const handoff = result && isRecord(result.analysis_handoff) ? result.analysis_handoff : null;
@@ -2423,6 +3291,25 @@ function resolveAnalysisJobId(job: AnalyzeJobItem): string | null {
     if (candidate) {
       return candidate;
     }
+  }
+  return null;
+}
+
+function resolvePreferredSourceJobIdForBusiness(group: BusinessScrapeGroup | null): string | null {
+  if (!group) return null;
+  if (group.latestSource) {
+    const preferred = String(group.jobsBySource[group.latestSource]?.job_id || "").trim();
+    if (preferred) {
+      return preferred;
+    }
+  }
+  const googleJobId = String(group.jobsBySource.google_maps?.job_id || "").trim();
+  if (googleJobId) {
+    return googleJobId;
+  }
+  const tripadvisorJobId = String(group.jobsBySource.tripadvisor?.job_id || "").trim();
+  if (tripadvisorJobId) {
+    return tripadvisorJobId;
   }
   return null;
 }
@@ -2452,6 +3339,81 @@ function resolveReportJobId(analysisSource: PipelineNodeState | AnalyzeJobItem):
     return String(messageCandidate[0]).trim();
   }
   return null;
+}
+
+function resolvePreparationJobId(analysisSource: PipelineNodeState | AnalyzeJobItem): string | null {
+  const asJob = analysisSource as AnalyzeJobItem;
+  const result = isRecord(asJob.result) ? asJob.result : null;
+  const handoff = result && isRecord(result.study_hydration_handoff) ? result.study_hydration_handoff : null;
+  const fromResult = String((handoff?.preparation_job_id as string | undefined) || "").trim();
+  if (fromResult) {
+    return fromResult;
+  }
+
+  const rawEvents = Array.isArray(asJob.events) ? asJob.events : [];
+  for (const event of [...rawEvents].reverse()) {
+    const data = isRecord(event?.data) ? event.data : null;
+    const candidate = String((data?.preparation_job_id as string | undefined) || "").trim();
+    if (candidate) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function resolvePreparationDocumentId(preparationSource: PipelineNodeState | AnalyzeJobItem): string | null {
+  const asJob = preparationSource as AnalyzeJobItem;
+  const result = isRecord(asJob.result) ? asJob.result : null;
+  const payload = isRecord(asJob.payload) ? asJob.payload : null;
+  const fromResult = String((result?.report_preparation_id as string | undefined) || "").trim();
+  if (fromResult) {
+    return fromResult;
+  }
+  const fromPayload = String((payload?.preparation_id as string | undefined) || "").trim();
+  if (fromPayload) {
+    return fromPayload;
+  }
+  return null;
+}
+
+function resolveLatestPrepareJobIdFromPreparation(
+  preparation: Record<string, unknown> | null | undefined
+): string | null {
+  if (!preparation) return null;
+  const candidate = String((preparation.latest_prepare_job_id as string | undefined) || "").trim();
+  return candidate || null;
+}
+
+function resolveFinalReportJobId(reportSource: PipelineNodeState | AnalyzeJobItem): string | null {
+  const asJob = reportSource as AnalyzeJobItem;
+  const result = isRecord(asJob.result) ? asJob.result : null;
+  const fromResult = String((result?.final_report_job_id as string | undefined) || "").trim();
+  if (fromResult) {
+    return fromResult;
+  }
+  const rawEvents = Array.isArray(asJob.events) ? asJob.events : [];
+  for (const event of [...rawEvents].reverse()) {
+    const data = isRecord(event?.data) ? event.data : null;
+    const candidate = String((data?.final_report_job_id as string | undefined) || "").trim();
+    if (candidate) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function isHydratedClientAuditJob(source: PipelineNodeState | AnalyzeJobItem): boolean {
+  const asJob = source as AnalyzeJobItem;
+  const result = isRecord(asJob.result) ? asJob.result : null;
+  const payload = isRecord(asJob.payload) ? asJob.payload : null;
+  const resultProfile = String((result?.report_profile as string | undefined) || "").trim().toLowerCase();
+  const resultComplexity = String((result?.report_complexity as string | undefined) || "").trim().toLowerCase();
+  if (resultProfile === "client_audit" && resultComplexity === "hydrated") {
+    return true;
+  }
+  const payloadProfile = String((payload?.report_profile as string | undefined) || "").trim().toLowerCase();
+  const payloadComplexity = String((payload?.report_complexity as string | undefined) || "").trim().toLowerCase();
+  return payloadProfile === "client_audit" && payloadComplexity === "hydrated";
 }
 
 function resolveReportOutputPath(result: Record<string, unknown>, apiBaseUrl: string): string | null {
@@ -2743,9 +3705,14 @@ function normalizeNodeStatus(rawStatus: string | undefined, stage: string | unde
   const normalizedStage = String(stage || "").trim().toLowerCase();
 
   if (status === "needs_human" || normalizedStage.includes("needs_human")) return "needs_human";
+  if (status === "skipped" || normalizedStage.includes("skipped")) return "skipped";
+  if (status === "reused" || normalizedStage.includes("reused")) return "reused";
+  if (status === "ready" || normalizedStage.includes("ready")) return "ready";
+  if (status === "not_in_study" || normalizedStage.includes("not_in_study")) return "not_in_study";
   if (status === "failed" || normalizedStage === "failed" || normalizedStage.includes("source_failed")) return "failed";
   if (status === "done" || normalizedStage === "done") return "done";
   if (status === "running") return "running";
+  if (status === "waiting" || normalizedStage.includes("waiting")) return "waiting";
   if (status === "queued" || normalizedStage === "queued") return "queued";
   if (status === "retrying" || status === "partial") return "running";
   return "idle";
@@ -2754,12 +3721,16 @@ function normalizeNodeStatus(rawStatus: string | undefined, stage: string | unde
 function normalizeStatusFlagText(status: NodeStatus): string {
   if (status === "needs_human") return "NEEDS_HUMAN";
   if (status === "waiting") return "WAITING";
+  if (status === "not_in_study") return "NOT_IN_STUDY";
   return status.toUpperCase();
 }
 
 function statusClassFromRaw(status: string | NodeStatus | undefined): string {
   const normalized = String(status || "").trim().toLowerCase();
   if (normalized === "needs_human") return "needs-human";
+  if (normalized === "skipped") return "waiting";
+  if (normalized === "reused" || normalized === "ready") return "done";
+  if (normalized === "not_in_study") return "waiting";
   if (normalized === "waiting") return "waiting";
   if (normalized === "running") return "running";
   if (normalized === "queued") return "queued";
@@ -2792,6 +3763,18 @@ function estimateAnalysisProgress(stage: string, status: NodeStatus, current: nu
   return current;
 }
 
+function estimateHydrationProgress(stage: string, status: NodeStatus, current: number): number {
+  if (isHydrationDoneLike(status) || status === "done") return 100;
+  if (status === "failed") return Math.max(current, 100);
+  const normalizedStage = String(stage || "").trim().toLowerCase();
+  if (normalizedStage in HYDRATION_STAGE_PROGRESS) {
+    return Math.max(current, HYDRATION_STAGE_PROGRESS[normalizedStage]);
+  }
+  if (status === "running") return Math.max(current, 26);
+  if (status === "queued" || status === "waiting") return Math.max(current, 8);
+  return current;
+}
+
 function estimateReportProgress(stage: string, status: NodeStatus, current: number): number {
   if (status === "done") return 100;
   if (status === "failed") return Math.max(current, 100);
@@ -2802,6 +3785,62 @@ function estimateReportProgress(stage: string, status: NodeStatus, current: numb
   if (status === "running") return Math.max(current, 22);
   if (status === "queued") return Math.max(current, 8);
   return current;
+}
+
+function deriveHydrationSnapshotStatus(
+  job: AnalyzeJobItem,
+  result: Record<string, unknown> | null
+): NodeStatus | null {
+  const genericStatus = normalizeNodeStatus(job.status, job.progress?.stage);
+  if (genericStatus === "failed" || genericStatus === "queued" || genericStatus === "running") {
+    return genericStatus;
+  }
+  return deriveHydrationResultStatus(result);
+}
+
+function deriveHydrationResultStatus(payload: Record<string, unknown> | null | undefined): NodeStatus | null {
+  if (!payload) return null;
+  const hydrationStatus = String((payload.hydration_status as string | undefined) || "").trim().toLowerCase();
+  const presence = String((payload.business_presence_state as string | undefined) || "").trim().toLowerCase();
+  const hasStudyAbsence =
+    presence === "not_in_latest_study" ||
+    presence === "not_in_fresh_study" ||
+    presence === "study_scope_unresolved";
+
+  if (hydrationStatus === "ready_reused") return hasStudyAbsence ? "not_in_study" : "reused";
+  if (hydrationStatus === "ready_refreshed") return hasStudyAbsence ? "not_in_study" : "ready";
+  if (hydrationStatus === "ready_partial") {
+    if (hasStudyAbsence) {
+      return "not_in_study";
+    }
+    return "ready";
+  }
+  if (hydrationStatus === "waiting_benchmark" || hydrationStatus === "waiting_geogrid") return "waiting";
+  if (hydrationStatus === "failed_scope_resolution" || hydrationStatus === "failed_hydration") return "failed";
+  if (hasStudyAbsence) {
+    return "not_in_study";
+  }
+  return null;
+}
+
+function describeHydrationState(payload: Record<string, unknown> | null): string {
+  if (!payload) return "";
+  const hydrationStatus = String((payload.hydration_status as string | undefined) || "").trim().toLowerCase();
+  const benchmark = isRecord(payload.dependencies) && isRecord(payload.dependencies.benchmark)
+    ? payload.dependencies.benchmark
+    : null;
+  const geogrid = isRecord(payload.dependencies) && isRecord(payload.dependencies.geogrid)
+    ? payload.dependencies.geogrid
+    : null;
+  const benchmarkStatus = String((benchmark?.status as string | undefined) || "").trim();
+  const geogridStatus = String((geogrid?.status as string | undefined) || "").trim();
+  if (benchmarkStatus || geogridStatus) {
+    const bits = [];
+    if (benchmarkStatus) bits.push(`benchmark: ${benchmarkStatus}`);
+    if (geogridStatus) bits.push(`geogrid: ${geogridStatus}`);
+    return `${hydrationStatus || "study_hydration"} • ${bits.join(" · ")}`;
+  }
+  return hydrationStatus;
 }
 
 function clampPercent(value: number): number {
